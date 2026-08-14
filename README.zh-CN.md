@@ -20,7 +20,7 @@ DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表�
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.0.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.1.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
@@ -31,17 +31,48 @@ DeepSeekEyes → 你的 DeepSeek 模型 + Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，缩略图和会话记录都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 视觉模型选择
+## 全 GUI 配置（0.1.1 Alpha）
 
-默认行为是扫描所有已经注册的 Harness Provider，只采用明确声明了以下能力的模型：
+安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
-```yaml
-input: [text, image]
+1. 打开 **设置 → 模型**，按 Harness 原有方式添加文本 Provider、视觉 Provider、模型和 API Key。
+2. 打开 **设置 → 插件 → 可配置 → DeepSeekEyes**。
+3. 在下拉框中选择：
+   - **DeepSeek 文本 Provider**；
+   - **视觉 Provider**；
+   - **视觉模型**（可从目录选择，也可直接输入模型 ID）。
+4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 上限。
+5. 点击 **保存并立即应用**，然后在对话模型选择器中选择 `DeepSeekEyes → 模型 + Eyes`。
+
+DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；不再要求把 `upstreamProvider`、`visionProvider` 或 `visionModel` 写进 `cordis.patch.yml`。
+
+## 自定义网关的图片能力
+
+自定义网关通常只能从接口发现模型 ID，Harness 会保守地把能力未知的模型当作纯文本。在 DeepSeekEyes 设置卡片选择一个 `llm-pi-ai` 自定义 Provider 后，会出现：
+
+```text
+将此自定义网关声明为支持图片输入
 ```
 
-纯文本模型、能力未知的模型和 DeepSeekEyes 自己都不会被选作视觉模型。第一次真实图片请求前，插件还会发送一张随机排列的 3×3 色块图；模型必须正确返回九个色块的实际顺序，才会进入用户图片读取阶段。这个检测每个进程、每条视觉路由执行一次，会产生一次很小的模型调用。
+打开后随同保存，插件通过 Harness 的精确 settings-path mutation 写入：
 
-如果系统内配置了多个视觉模型，可以在 `$DSH_HOME/cordis.patch.yml` 或 profile 的 `cordis.patch.yml` 中指定一个：
+```yaml
+defaultInput: [text, image]
+```
+
+这个写入保留同一 Provider 的 BaseURL、API 协议、模型列表、凭据引用和其他未展示字段，因此无需手改 `settings.yaml`。所有 `llm-pi-ai` 路由都可以显示此开关，以兼容内置路由下新增的自定义模型；目录已经明确声明图片能力时无需开启。
+
+能力声明不是最终放行条件：
+
+1. Host 先要求所选模型同时声明 `text` 和 `image`；
+2. 第一次真实图片请求前，再发送随机排列的 3×3 色块图；
+3. 模型必须返回九个色块的真实顺序，才会读取用户图片。
+
+因此把纯文本模型误设为视觉模型时，视觉探针会终止该轮，不会形成“两个纯文本模型互相猜图”。探针对每个进程、每条视觉路由只执行一次，会产生一次很小的模型调用。
+
+## YAML / 环境变量后备入口
+
+无 Web 设置界面的部署仍可使用原有配置：
 
 ```yaml
 - id: deepseekeyes
@@ -53,7 +84,7 @@ input: [text, image]
     maxClarifications: 3
 ```
 
-也可以通过启动环境指定：
+也可以通过启动环境指定视觉路由：
 
 ```sh
 export DEEPSEEKEYES_VISION_PROVIDER=openai
@@ -62,26 +93,6 @@ dsh web
 ```
 
 只设置 `visionProvider` 时，会选择该 Provider 下第一个明确支持图片的模型。不设置两者时，会按 Harness Provider/Model 的注册顺序自动选择第一个视觉模型。
-
-## 自定义网关模型
-
-自定义模型通常只会从模型接口得到 ID，Harness 会默认按纯文本处理。需要在模型页面或 `llm-pi-ai` 配置中明确声明图片输入，例如：
-
-```yaml
-llm-pi-ai:
-  providers:
-    my-gateway:
-      displayName: My Gateway
-      apiKeyEnv: MY_GATEWAY_API_KEY
-      api: openai-completions
-      baseURL: https://gateway.example/v1
-      models:
-        - id: my-vision-model
-          name: My Vision Model
-          input: [text, image]
-```
-
-声明之后仍会经过随机色块检测；错误声明不会直接放行。
 
 ## 数据保真
 
@@ -118,6 +129,7 @@ $DSH_HOME/deepseekeyes/evidence/
 | `upstreamProvider` | `deepseek-official` | DeepSeek 文本模型所在 Provider |
 | `visionProvider` | 自动检测 | Harness 中已有的视觉 Provider |
 | `visionModel` | 自动检测 | 视觉模型 ID |
+| `autoDetectVision` | `true` | 未选择视觉 Provider 时自动扫描 |
 | `activeProbe` | `true` | 启用随机像素能力检测 |
 | `maxClarifications` | `3` | 每次 DeepSeek 回答最多追加的视觉追问次数 |
 | `persistentEvidence` | `true` | 持久保存视觉证据 |
@@ -133,7 +145,7 @@ npm run check
 npm pack --dry-run
 ```
 
-已验证 DeepSeek Harness `0.1.0-rc.6`；实现参考的上游源码提交为 `47f943859bef60e4160492346772ded9b24f765a`。Node.js 版本要求为 `>=22.19`。
+设置接口和 Client 插槽按 DeepSeek Harness `0.1.0-rc.6` 验证；实现参考的上游源码提交为 `47f943859bef60e4160492346772ded9b24f765a`。Node.js 版本要求为 `>=22.19`。
 
 ## 卸载
 

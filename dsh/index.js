@@ -15,6 +15,7 @@ import {
   renderBaseEvidence,
   renderTargetEvidence,
 } from '../src/protocol.js'
+import { installHarnessSettings, SETTINGS_NAMESPACE } from '../src/settings.js'
 import { addUsage, collectStream, emptyUsage, replayWithUsage } from '../src/stream.js'
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
 
@@ -35,7 +36,21 @@ function visionWrappedModel(info, config) {
   }
 }
 
-async function* bridgeStream(ctx, config, router, evidenceManager, options) {
+function createRuntime(ctx, rawConfig, logger) {
+  const config = resolveConfig(rawConfig)
+  const router = new VisionRouter(ctx, config, logger)
+  const cache = new EvidenceCache({
+    directory: config.cacheDir,
+    persistent: config.persistentEvidence,
+    logger,
+  })
+  const probe = new VisionProbe(ctx, { enabled: config.activeProbe, logger })
+  const evidenceManager = new EvidenceManager(ctx, config, cache, probe)
+  return Object.freeze({ config, router, cache, probe, evidenceManager })
+}
+
+async function* bridgeStream(ctx, runtime, options) {
+  const { config, router, evidenceManager } = runtime
   if (!messagesHaveImages(options.messages)) {
     yield* ctx.llm.stream({ ...options, provider: config.upstreamProvider })
     return
@@ -97,30 +112,45 @@ async function* bridgeStream(ctx, config, router, evidenceManager, options) {
   }
 }
 
-/** Build the plain-object LLM adapter used by the out-of-tree DSH plugin. */
+/** Build the live-reconfigurable plain-object LLM adapter used by the out-of-tree DSH plugin. */
 export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
-  const config = resolveConfig(rawConfig)
   const logger = ctx.logger ?? console
-  const router = new VisionRouter(ctx, config, logger)
-  const cache = new EvidenceCache({
-    directory: config.cacheDir,
-    persistent: config.persistentEvidence,
-    logger,
-  })
-  const probe = new VisionProbe(ctx, { enabled: config.activeProbe, logger })
-  const evidenceManager = new EvidenceManager(ctx, config, cache, probe)
+  let runtime = createRuntime(ctx, rawConfig, logger)
   let lastCatalogFailure
 
-  const adapter = {
+  const state = {
+    get config() { return runtime.config },
+    get router() { return runtime.router },
+    get cache() { return runtime.cache },
+    get probe() { return runtime.probe },
+    get evidenceManager() { return runtime.evidenceManager },
+    reconfigure(nextConfig) {
+      const next = createRuntime(ctx, nextConfig, logger)
+      if (next.config.providerId !== runtime.config.providerId) {
+        throw new TypeError('deepseekeyes: providerId is fixed for the lifetime of the registered adapter')
+      }
+      runtime = next
+      lastCatalogFailure = undefined
+      return runtime.config
+    },
+    invalidate() {
+      runtime.router.invalidate()
+      runtime.probe.clear()
+      lastCatalogFailure = undefined
+    },
+  }
+
+  state.adapter = {
     providerInfo(provider) {
-      return { id: provider, name: config.displayName }
+      return { id: provider, name: runtime.config.displayName }
     },
     providerRetryPolicy() {
       return undefined
     },
     async listModels() {
+      const current = runtime
       try {
-        await router.resolve()
+        await current.router.resolve()
         lastCatalogFailure = undefined
       } catch (error) {
         const message = errorMessage(error)
@@ -130,37 +160,49 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
         }
         return []
       }
-      const models = await ctx.llm.listModels(config.upstreamProvider)
+      const models = await ctx.llm.listModels(current.config.upstreamProvider)
       return models
-        .filter((model) => !model.inputModalities?.includes('image'))
-        .map((model) => visionWrappedModel(model, config))
+        .filter(model => !model.inputModalities?.includes('image'))
+        .map(model => visionWrappedModel(model, current.config))
     },
     async resolveModel(_provider, model, signal) {
-      await router.resolve(signal)
-      const info = await ctx.llm.resolveModelInfo(config.upstreamProvider, model, signal)
+      const current = runtime
+      await current.router.resolve(signal)
+      const info = await ctx.llm.resolveModelInfo(current.config.upstreamProvider, model, signal)
       if (info.inputModalities?.includes('image')) {
         throw new DeepSeekEyesError(
-          `upstream model ${config.upstreamProvider}/${model} already accepts images and does not need DeepSeekEyes`,
+          `upstream model ${current.config.upstreamProvider}/${model} already accepts images and does not need DeepSeekEyes`,
           'UPSTREAM_ALREADY_MULTIMODAL',
         )
       }
-      return visionWrappedModel(info, config)
+      return visionWrappedModel(info, current.config)
     },
     stream(options) {
-      return bridgeStream(ctx, config, router, evidenceManager, options)
+      return bridgeStream(ctx, runtime, options)
     },
   }
 
-  return { adapter, config, router, cache, probe, evidenceManager }
+  return state
 }
 
 export function apply(ctx, rawConfig = {}) {
   const state = createDeepSeekEyesAdapter(ctx, rawConfig)
   ctx.llm.registerAdapter([state.config.providerId], state.adapter)
+
+  if (typeof ctx.llm.registerConfigurableProviders === 'function') {
+    ctx.llm.registerConfigurableProviders([{
+      provider: state.config.providerId,
+      displayName: state.config.displayName,
+      settingsNs: SETTINGS_NAMESPACE,
+      settingsPath: [],
+    }])
+  }
+  installHarnessSettings(ctx, state, rawConfig)
+
   if (typeof ctx.on === 'function') {
     ctx.on('llm/adapters-updated', () => {
-      state.router.invalidate()
-      state.probe.clear()
+      state.invalidate()
     })
   }
+  return state
 }

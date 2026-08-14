@@ -1,0 +1,139 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { apply } from '../dsh/index.js'
+import {
+  SettingsConfig,
+  SETTINGS_NAMESPACE,
+  settingsBase,
+  settingsInput,
+  validateSettings,
+} from '../src/settings.js'
+import { mockContext } from './_helpers.js'
+import { textStream } from '../src/stream.js'
+
+class FakeSettings {
+  constructor() {
+    this.registration = undefined
+  }
+
+  register(namespace, schema, options = {}) {
+    let current = schema(options.base ?? {})
+    options.validate?.(current)
+    const watchers = new Set()
+    const scope = {
+      get: () => current,
+      watch: (callback) => {
+        watchers.add(callback)
+        return () => watchers.delete(callback)
+      },
+      commit: (user) => {
+        const previous = current
+        const candidate = schema({ ...(options.base ?? {}), ...user })
+        options.validate?.(candidate)
+        current = candidate
+        for (const watcher of watchers) watcher(current, previous)
+      },
+    }
+    this.registration = { namespace, schema, options, scope }
+    return scope
+  }
+}
+
+function settingsContext() {
+  const ctx = mockContext()
+  ctx.settings = new FakeSettings()
+  ctx.inject = (services, callback) => {
+    if (services.includes('settings')) callback(ctx)
+  }
+  ctx.llm.directory = []
+  ctx.llm.registerConfigurableProviders = function register(entries) {
+    this.directory.push(...structuredClone(entries))
+    return () => { this.directory = [] }
+  }
+  ctx.llm.listConfigurableProviders = function list() {
+    return structuredClone(this.directory)
+  }
+  return ctx
+}
+
+test('Harness settings schema is serializable and keeps plugin identity outside the user layer', () => {
+  const json = SettingsConfig.toJSON()
+  assert.equal(typeof json, 'object')
+  assert.match(JSON.stringify(json), /upstreamProvider/)
+  assert.match(JSON.stringify(json), /maxClarifications/)
+
+  const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
+  assert.equal(base.upstreamProvider, 'deepseek-official')
+  assert.equal(base.activeProbe, false)
+  assert.equal('cacheDir' in base, false)
+  assert.equal('providerId' in base, false)
+
+  const merged = settingsInput(
+    { providerId: 'fixed-eyes', displayName: 'Fixed', cacheDir: false },
+    { providerId: 'wrong', upstreamProvider: 'custom-text' },
+  )
+  assert.equal(merged.providerId, 'fixed-eyes')
+  assert.equal(merged.displayName, 'Fixed')
+  assert.equal(merged.cacheDir, false)
+  assert.equal(merged.upstreamProvider, 'custom-text')
+})
+
+test('native settings registration exposes the namespace and reconfigures routing live', async () => {
+  const ctx = settingsContext()
+  let defaultCalls = 0
+  let alternateCalls = 0
+  ctx.llm.addProvider(
+    'deepseek-official',
+    [{ id: 'deepseek-model', inputModalities: ['text'] }],
+    () => { defaultCalls += 1; return textStream('default') },
+  )
+  ctx.llm.addProvider(
+    'alternate-deepseek',
+    [{ id: 'alternate-model', inputModalities: ['text'] }],
+    () => { alternateCalls += 1; return textStream('alternate') },
+  )
+  ctx.llm.addProvider(
+    'configured-eye',
+    [{ id: 'vision-model', inputModalities: ['text', 'image'] }],
+    () => textStream('{}'),
+  )
+
+  const state = apply(ctx, { activeProbe: false, cacheDir: false })
+  assert.equal(ctx.settings.registration.namespace, SETTINGS_NAMESPACE)
+  assert.deepEqual(ctx.llm.listConfigurableProviders(), [{
+    provider: 'deepseekeyes',
+    displayName: 'DeepSeekEyes',
+    settingsNs: 'deepseekeyes',
+    settingsPath: [],
+  }])
+
+  ctx.settings.registration.scope.commit({
+    upstreamProvider: 'alternate-deepseek',
+    visionProvider: 'configured-eye',
+    visionModel: 'vision-model',
+    activeProbe: false,
+  })
+
+  assert.equal(state.config.upstreamProvider, 'alternate-deepseek')
+  assert.equal(state.config.visionProvider, 'configured-eye')
+  assert.equal(state.config.visionModel, 'vision-model')
+  assert.equal(state.config.activeProbe, false)
+  assert.deepEqual(
+    (await ctx.llm.listModels('deepseekeyes')).map(model => model.id),
+    ['alternate-model'],
+  )
+
+  const chunks = []
+  for await (const chunk of ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'alternate-model',
+    messages: [],
+  })) chunks.push(chunk)
+  assert.equal(defaultCalls, 0)
+  assert.equal(alternateCalls, 1)
+
+  assert.throws(
+    () => ctx.settings.registration.scope.commit({ visionModel: 'vision-without-provider' }),
+    /requires visionProvider/,
+  )
+})

@@ -1,6 +1,6 @@
 {
   "name": "deepseekeyes",
-  "version": "0.1.0",
+  "version": "0.1.1-alpha.1",
   "description": "A transparent multimodal vision bridge for DeepSeek Harness that keeps image bytes intact and lets DeepSeek request visual clarification in one conversation.",
   "type": "module",
   "main": "./dsh/index.js",
@@ -8,11 +8,13 @@
     ".": "./dsh/index.js",
     "./dsh": "./dsh/index.js",
     "./core": "./src/index.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./lib/client.js"
   },
   "files": [
     "dsh",
     "src",
+    "lib",
     "examples",
     "cordis.patch.yml",
     "README.md",
@@ -23,9 +25,11 @@
   "scripts": {
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
-    "check": "node scripts/verify-package.mjs && npm test",
+    "check": "npm run build:client && node scripts/verify-package.mjs && npm test",
     "pack:dry": "npm pack --dry-run",
-    "pack:release": "npm pack"
+    "pack:release": "npm pack",
+    "build:client": "node scripts/build-client.mjs",
+    "prepack": "npm run check"
   },
   "engines": {
     "node": ">=22.19"
@@ -46,6 +50,23 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
     }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

@@ -12,6 +12,7 @@ export const SETTINGS_NAMESPACE = 'deepseekeyes'
 /** Fields owned by the live Harness settings section. */
 export const SETTINGS_FIELDS = Object.freeze([
   'upstreamProvider',
+  'upstreamModel',
   'visionProvider',
   'visionModel',
   'autoDetectVision',
@@ -25,6 +26,7 @@ export const SETTINGS_FIELDS = Object.freeze([
 /** Schemastery schema serialized by Harness and consumed by the native settings client. */
 export const SettingsConfig = z.object({
   upstreamProvider: z.string().default(DEFAULT_UPSTREAM_PROVIDER),
+  upstreamModel: z.string(),
   visionProvider: z.string(),
   visionModel: z.string(),
   autoDetectVision: z.boolean().default(true),

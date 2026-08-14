@@ -60,10 +60,12 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   const json = SettingsConfig.toJSON()
   assert.equal(typeof json, 'object')
   assert.match(JSON.stringify(json), /upstreamProvider/)
+  assert.match(JSON.stringify(json), /upstreamModel/)
   assert.match(JSON.stringify(json), /maxClarifications/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
   assert.equal(base.upstreamProvider, 'deepseek-official')
+  assert.equal(base.upstreamModel, undefined)
   assert.equal(base.activeProbe, false)
   assert.equal('cacheDir' in base, false)
   assert.equal('providerId' in base, false)
@@ -82,6 +84,7 @@ test('native settings registration exposes the namespace and reconfigures routin
   const ctx = settingsContext()
   let defaultCalls = 0
   let alternateCalls = 0
+  const alternateModels = []
   ctx.llm.addProvider(
     'deepseek-official',
     [{ id: 'deepseek-model', inputModalities: ['text'] }],
@@ -89,8 +92,15 @@ test('native settings registration exposes the namespace and reconfigures routin
   )
   ctx.llm.addProvider(
     'alternate-deepseek',
-    [{ id: 'alternate-model', inputModalities: ['text'] }],
-    () => { alternateCalls += 1; return textStream('alternate') },
+    [
+      { id: 'alternate-model-a', name: 'Alternate A', inputModalities: ['text'] },
+      { id: 'alternate-model-b', name: 'Alternate B', inputModalities: ['text'] },
+    ],
+    (options) => {
+      alternateCalls += 1
+      alternateModels.push(options.model)
+      return textStream('alternate')
+    },
   )
   ctx.llm.addProvider(
     'configured-eye',
@@ -109,28 +119,36 @@ test('native settings registration exposes the namespace and reconfigures routin
 
   ctx.settings.registration.scope.commit({
     upstreamProvider: 'alternate-deepseek',
+    upstreamModel: 'alternate-model-b',
     visionProvider: 'configured-eye',
     visionModel: 'vision-model',
     activeProbe: false,
   })
 
   assert.equal(state.config.upstreamProvider, 'alternate-deepseek')
+  assert.equal(state.config.upstreamModel, 'alternate-model-b')
   assert.equal(state.config.visionProvider, 'configured-eye')
   assert.equal(state.config.visionModel, 'vision-model')
   assert.equal(state.config.activeProbe, false)
-  assert.deepEqual(
-    (await ctx.llm.listModels('deepseekeyes')).map(model => model.id),
-    ['alternate-model'],
-  )
+  const models = await ctx.llm.listModels('deepseekeyes')
+  assert.deepEqual(models.map(model => model.id), ['alternate-model-b'])
+  assert.equal(models[0].name, 'Alternate B · vision-model Eyes')
+  assert.equal(models[0].description, 'Vision: configured-eye/vision-model · Final: alternate-deepseek/alternate-model-b')
 
   const chunks = []
   for await (const chunk of ctx.llm.stream({
     provider: 'deepseekeyes',
-    model: 'alternate-model',
+    model: 'alternate-model-b',
     messages: [],
   })) chunks.push(chunk)
   assert.equal(defaultCalls, 0)
   assert.equal(alternateCalls, 1)
+  assert.deepEqual(alternateModels, ['alternate-model-b'])
+
+  await assert.rejects(
+    ctx.llm.resolveModelInfo('deepseekeyes', 'alternate-model-a'),
+    (error) => error.code === 'UPSTREAM_MODEL_LOCKED',
+  )
 
   assert.throws(
     () => ctx.settings.registration.scope.commit({ visionModel: 'vision-without-provider' }),

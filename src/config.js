@@ -46,6 +46,10 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     'upstreamProvider',
     DEFAULT_UPSTREAM_PROVIDER,
   )
+  const upstreamModel = optionalString(
+    input.upstreamModel ?? environment.DEEPSEEKEYES_UPSTREAM_MODEL,
+    'upstreamModel',
+  )
   const visionProvider = optionalString(
     input.visionProvider ?? environment.DEEPSEEKEYES_VISION_PROVIDER,
     'visionProvider',
@@ -76,6 +80,7 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     providerId,
     displayName: requiredString(input.displayName, 'displayName', 'DeepSeekEyes'),
     upstreamProvider,
+    upstreamModel,
     visionProvider,
     visionModel,
     autoDetectVision: booleanValue(input.autoDetectVision, 'autoDetectVision', true),

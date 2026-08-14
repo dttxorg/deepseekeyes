@@ -12,11 +12,13 @@ import {
 test('GUI draft emits minimal live settings mutations and validates routing constraints', () => {
   const current = normalizeSettingsDraft({
     upstreamProvider: 'text-a',
+    upstreamModel: 'reasoner-a',
     visionProvider: 'eyes',
     visionModel: 'vision-a',
   })
-  const draft = { ...current, visionProvider: '', visionModel: '', maxClarifications: 5 }
+  const draft = { ...current, upstreamModel: '', visionProvider: '', visionModel: '', maxClarifications: 5 }
   assert.deepEqual(settingsPathOps(current, draft), [
+    { op: 'unset', path: ['upstreamModel'] },
     { op: 'unset', path: ['visionProvider'] },
     { op: 'unset', path: ['visionModel'] },
     { op: 'set', path: ['maxClarifications'], value: 5 },

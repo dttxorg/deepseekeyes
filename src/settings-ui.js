@@ -1,5 +1,6 @@
 const SETTINGS_FIELDS = Object.freeze([
   'upstreamProvider',
+  'upstreamModel',
   'visionProvider',
   'visionModel',
   'autoDetectVision',
@@ -10,7 +11,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'targetMaxTokens',
 ])
 
-const OPTIONAL_ROUTE_FIELDS = new Set(['visionProvider', 'visionModel'])
+const OPTIONAL_ROUTE_FIELDS = new Set(['upstreamModel', 'visionProvider', 'visionModel'])
 
 export function valueAt(root, path) {
   let current = root
@@ -24,6 +25,7 @@ export function valueAt(root, path) {
 export function normalizeSettingsDraft(value = {}) {
   return {
     upstreamProvider: typeof value.upstreamProvider === 'string' ? value.upstreamProvider : 'deepseek-official',
+    upstreamModel: typeof value.upstreamModel === 'string' ? value.upstreamModel : '',
     visionProvider: typeof value.visionProvider === 'string' ? value.visionProvider : '',
     visionModel: typeof value.visionModel === 'string' ? value.visionModel : '',
     autoDetectVision: value.autoDetectVision !== false,

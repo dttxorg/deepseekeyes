@@ -2,6 +2,7 @@
 - id: deepseekeyes
   config:
     upstreamProvider: deepseek-official
+    upstreamModel: deepseek-v4-pro
     visionProvider: openai
     visionModel: gpt-4.1
     activeProbe: true

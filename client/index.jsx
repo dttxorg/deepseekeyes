@@ -23,13 +23,18 @@ const zh = {
   loading: '正在读取 Harness 模型设置…',
   unavailable: 'DeepSeekEyes 设置尚未由 Host 暴露。',
   readOnly: '当前设置文件为只读。',
-  upstreamProvider: 'DeepSeek 文本 Provider',
-  upstreamHint: 'DeepSeekEyes 会把视觉证据交给这个文本 Provider 继续推理。',
-  visionProvider: '视觉 Provider',
+  upstreamProvider: '最终回答 Provider',
+  upstreamModel: '最终回答模型',
+  upstreamModelPlaceholder: '选择或输入模型 ID；留空则兼容显示该 Provider 的全部文本模型',
+  upstreamHint: '负责读取视觉证据、推理并最终回复用户。',
+  visionProvider: '后台读图 Provider',
   visionProviderAuto: '自动扫描视觉模型',
-  visionHint: '可直接选择 Harness「模型」页中已经添加的 Provider。',
-  visionModel: '视觉模型',
+  visionHint: '只负责读取原图并回答最终模型的细节追问。',
+  visionModel: '后台读图模型',
   visionModelPlaceholder: '选择或输入模型 ID；留空则选该 Provider 的首个视觉模型',
+  routeSummary: '当前路由：图片 → {vision} 读图 → {final} 最终回答',
+  automaticVision: '自动检测视觉模型',
+  allTextModels: '该 Provider 的会话所选模型',
   declareVision: '将此自定义网关声明为支持图片输入',
   declareVisionHint: '保存时写入 llm-pi-ai 的 defaultInput: [text, image]，无需手改 settings.yaml。',
   catalogManaged: '该 Provider 的图片能力由内置模型目录管理；插件会在 Host 端再次校验 text + image。',
@@ -52,8 +57,8 @@ const zh = {
   saved: '设置已保存并实时生效。',
   discard: '放弃更改',
   saveFailed: '保存失败：',
-  upstreamRequired: '请选择 DeepSeek 文本 Provider。',
-  recursiveUpstream: 'DeepSeekEyes 不能把自己设为文本 Provider。',
+  upstreamRequired: '请选择最终回答 Provider。',
+  recursiveUpstream: 'DeepSeekEyes 不能把自己设为最终回答 Provider。',
   visionProviderRequired: '填写视觉模型时必须同时选择视觉 Provider。',
   visionRouteRequired: '关闭自动检测时必须选择视觉 Provider。',
   maxClarificationsRange: '追问轮数必须是 0–8 的整数。',
@@ -69,13 +74,18 @@ const en = {
   loading: 'Loading Harness model settings…',
   unavailable: 'The Host has not exposed the DeepSeekEyes settings namespace.',
   readOnly: 'The settings document is read-only.',
-  upstreamProvider: 'DeepSeek text provider',
-  upstreamHint: 'DeepSeekEyes hands visual evidence to this text provider for reasoning.',
-  visionProvider: 'Vision provider',
+  upstreamProvider: 'Final answer provider',
+  upstreamModel: 'Final answer model',
+  upstreamModelPlaceholder: 'Choose or type a model ID; blank keeps all text models for compatibility',
+  upstreamHint: 'Reads visual evidence, reasons, and sends the final reply to the user.',
+  visionProvider: 'Background vision provider',
   visionProviderAuto: 'Automatically scan vision models',
-  visionHint: 'Choose a provider already configured on the Harness Models page.',
-  visionModel: 'Vision model',
+  visionHint: 'Only reads original images and answers detail requests from the final model.',
+  visionModel: 'Background vision model',
   visionModelPlaceholder: 'Choose or type a model ID; blank selects the first visual model',
+  routeSummary: 'Current route: image → {vision} reads it → {final} gives the final answer',
+  automaticVision: 'auto-detected vision model',
+  allTextModels: 'conversation-selected model from this provider',
   declareVision: 'Declare image input for this custom gateway',
   declareVisionHint: 'Writes llm-pi-ai defaultInput: [text, image] on save; no manual settings.yaml edit.',
   catalogManaged: 'Image capability is managed by this provider’s built-in catalog and rechecked by the Host.',
@@ -98,8 +108,8 @@ const en = {
   saved: 'Settings saved and applied live.',
   discard: 'Discard changes',
   saveFailed: 'Save failed: ',
-  upstreamRequired: 'Choose a DeepSeek text provider.',
-  recursiveUpstream: 'DeepSeekEyes cannot use itself as the text provider.',
+  upstreamRequired: 'Choose a final answer provider.',
+  recursiveUpstream: 'DeepSeekEyes cannot use itself as the final answer provider.',
   visionProviderRequired: 'A vision model requires a vision provider.',
   visionRouteRequired: 'Choose a vision provider when auto-detection is off.',
   maxClarificationsRange: 'Clarification rounds must be an integer from 0 through 8.',
@@ -138,6 +148,15 @@ function messageOf(error) {
 function numberFrom(event) {
   const value = Number(event.target.value)
   return Number.isFinite(value) ? value : event.target.value
+}
+
+function modelName(group, modelId, fallback) {
+  if (modelId === '') return fallback
+  return group?.models?.find(model => model.id === modelId)?.name ?? modelId
+}
+
+function routeSummary(template, vision, final) {
+  return template.replace('{vision}', vision).replace('{final}', final)
 }
 
 function DeepSeekEyesSettingsCard({ scope, api, t }) {
@@ -188,7 +207,11 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
     return catalog.providers.filter(entry => entry.provider !== PROVIDER_ID
       && (entry.active || selected.has(entry.provider)))
   }, [catalog.providers, draft.upstreamProvider, draft.visionProvider])
-  const providerGroup = useMemo(
+  const upstreamGroup = useMemo(
+    () => catalog.groups.find(group => group.id === draft.upstreamProvider),
+    [catalog.groups, draft.upstreamProvider],
+  )
+  const visionGroup = useMemo(
     () => catalog.groups.find(group => group.id === draft.visionProvider),
     [catalog.groups, draft.visionProvider],
   )
@@ -210,11 +233,18 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
     setDirty(true)
     setNotice(undefined)
   }
+  const updateProvider = (providerField, modelField, value) => {
+    setDraft(current => ({ ...current, [providerField]: value, [modelField]: '' }))
+    setDirty(true)
+    setNotice(undefined)
+  }
   const failureKey = settingsDraftFailure(draft, PROVIDER_ID)
   const readyGroup = catalog.groups.find(group => group.id === PROVIDER_ID && group.models.length > 0)
   const selectedFailure = catalog.failures.find(item => item.id === draft.visionProvider || item.id === draft.upstreamProvider)
   const saveBlocked = saving || snapshot.status !== 'ready' || !snapshot.writable || failureKey !== undefined
     || (!dirty && !declarationDirty)
+  const finalRouteName = modelName(upstreamGroup, draft.upstreamModel, t('allTextModels'))
+  const visionRouteName = modelName(visionGroup, draft.visionModel, t('automaticVision'))
 
   const discard = () => {
     setDraft(normalizeSettingsDraft(snapshot.value))
@@ -273,26 +303,44 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
         </summary>
         <div style={styles.body}>
           {!snapshot.writable ? <p style={styles.statusWarn}>{t('readOnly')}</p> : null}
-          <div style={styles.field}>
-            <label style={styles.label} htmlFor="deepseekeyes-upstream">{t('upstreamProvider')}</label>
-            <select
-              id="deepseekeyes-upstream"
-              style={styles.input}
-              value={draft.upstreamProvider}
-              disabled={saving || !snapshot.writable}
-              onChange={event => update('upstreamProvider', event.target.value)}
-            >
-              {providers.length === 0 ? <option value="">{t('noProviders')}</option> : null}
-              {!providers.some(item => item.provider === draft.upstreamProvider) && draft.upstreamProvider !== ''
-                ? <option value={draft.upstreamProvider}>{draft.upstreamProvider}</option>
-                : null}
-              {providers.map(item => (
-                <option key={item.provider} value={item.provider}>
-                  {item.displayName} ({item.provider}){item.active ? '' : t('inactive')}
-                </option>
-              ))}
-            </select>
-            <p style={styles.hint}>{t('upstreamHint')}</p>
+          <div style={styles.grid}>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-upstream">{t('upstreamProvider')}</label>
+              <select
+                id="deepseekeyes-upstream"
+                style={styles.input}
+                value={draft.upstreamProvider}
+                disabled={saving || !snapshot.writable}
+                onChange={event => updateProvider('upstreamProvider', 'upstreamModel', event.target.value)}
+              >
+                {providers.length === 0 ? <option value="">{t('noProviders')}</option> : null}
+                {!providers.some(item => item.provider === draft.upstreamProvider) && draft.upstreamProvider !== ''
+                  ? <option value={draft.upstreamProvider}>{draft.upstreamProvider}</option>
+                  : null}
+                {providers.map(item => (
+                  <option key={item.provider} value={item.provider}>
+                    {item.displayName} ({item.provider}){item.active ? '' : t('inactive')}
+                  </option>
+                ))}
+              </select>
+              <p style={styles.hint}>{t('upstreamHint')}</p>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-upstream-model">{t('upstreamModel')}</label>
+              <input
+                id="deepseekeyes-upstream-model"
+                list="deepseekeyes-upstream-models"
+                style={styles.input}
+                type="text"
+                value={draft.upstreamModel}
+                placeholder={t('upstreamModelPlaceholder')}
+                disabled={saving || !snapshot.writable || draft.upstreamProvider === ''}
+                onChange={event => update('upstreamModel', event.target.value)}
+              />
+              <datalist id="deepseekeyes-upstream-models">
+                {(upstreamGroup?.models ?? []).map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+              </datalist>
+            </div>
           </div>
 
           <div style={styles.grid}>
@@ -304,8 +352,7 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
                 value={draft.visionProvider}
                 disabled={saving || !snapshot.writable}
                 onChange={(event) => {
-                  update('visionProvider', event.target.value)
-                  setDraft(current => ({ ...current, visionProvider: event.target.value, visionModel: '' }))
+                  updateProvider('visionProvider', 'visionModel', event.target.value)
                   setDeclarationDirty(false)
                 }}
               >
@@ -331,10 +378,14 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
                 onChange={event => update('visionModel', event.target.value)}
               />
               <datalist id="deepseekeyes-vision-models">
-                {(providerGroup?.models ?? []).map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                {(visionGroup?.models ?? []).map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
               </datalist>
             </div>
           </div>
+
+          <p style={styles.statusOk}>
+            {routeSummary(t('routeSummary'), visionRouteName, finalRouteName)}
+          </p>
 
           {draft.visionProvider !== '' && visionTarget !== undefined
             ? (

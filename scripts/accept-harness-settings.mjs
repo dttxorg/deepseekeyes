@@ -73,6 +73,7 @@ await rpc('settings.mutate', {
   expectedRevision: 0,
   ops: [
     { op: 'set', path: ['upstreamProvider'], value: 'deepseek-official' },
+    { op: 'set', path: ['upstreamModel'], value: 'deepseek-v4-pro' },
     { op: 'set', path: ['visionProvider'], value: 'fixture-vision-gateway' },
     { op: 'set', path: ['visionModel'], value: 'fixture-vision-model' },
     { op: 'set', path: ['activeProbe'], value: false },
@@ -95,13 +96,20 @@ await rpc('settings.mutate', {
 await new Promise(resolve => setTimeout(resolve, 200))
 const after = await rpc('llm.models', {})
 const eyesModels = after.groups.find(group => group.id === 'deepseekeyes')?.models ?? []
-assert.deepEqual(eyesModels.map(model => model.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+assert.deepEqual(eyesModels.map(model => model.id), ['deepseek-v4-pro'])
+assert.equal(eyesModels[0].name, 'DeepSeek-V4-Pro · Fixture Vision Model Eyes')
+assert.equal(
+  eyesModels[0].description,
+  'Vision: fixture-vision-gateway/fixture-vision-model · Final: deepseek-official/deepseek-v4-pro',
+)
 
 const finalSettings = await rpc('settings.describe', {})
 const finalEyes = finalSettings.namespaces.find(entry => entry.ns === 'deepseekeyes')
 const finalGateway = finalSettings.namespaces.find(entry => entry.ns === 'llm-pi-ai')
   ?.user?.providers?.['fixture-vision-gateway']
 assert.equal(finalEyes.revision, 1)
+assert.equal(finalEyes.value.upstreamProvider, 'deepseek-official')
+assert.equal(finalEyes.value.upstreamModel, 'deepseek-v4-pro')
 assert.equal(finalEyes.value.visionProvider, 'fixture-vision-gateway')
 assert.equal(finalEyes.value.visionModel, 'fixture-vision-model')
 assert.equal(finalEyes.value.activeProbe, false)
@@ -113,6 +121,7 @@ assert.deepEqual(finalGateway.defaultInput, ['text', 'image'])
 const yaml = await readFile(settingsPath, 'utf8')
 for (const literal of [
   'deepseekeyes:',
+  'upstreamModel: deepseek-v4-pro',
   'visionProvider: fixture-vision-gateway',
   'visionModel: fixture-vision-model',
   'maxClarifications: 5',
@@ -133,6 +142,12 @@ console.log(JSON.stringify({
   providerDirectory: eyesDirectory,
   beforeVisionDeclaration: 'deepseekeyes catalog absent',
   afterVisionDeclaration: eyesModels.map(model => model.id),
+  explicitRoute: {
+    final: `${finalEyes.value.upstreamProvider}/${finalEyes.value.upstreamModel}`,
+    vision: `${finalEyes.value.visionProvider}/${finalEyes.value.visionModel}`,
+    wrapperName: eyesModels[0].name,
+    wrapperDescription: eyesModels[0].description,
+  },
   persistedSiblingFields: {
     baseURL: finalGateway.baseURL,
     model: finalGateway.models[0].id,

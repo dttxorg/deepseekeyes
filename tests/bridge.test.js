@@ -114,6 +114,73 @@ test('text-only turns delegate directly without spending a visual call', async (
   assert.equal(upstreamCalls, 1)
 })
 
+test('explicit final model locks catalog, text turns, image turns, and exposes both model roles', async () => {
+  const ctx = mockContext()
+  const upstreamModels = []
+  let visionCalls = 0
+  ctx.llm.addProvider(
+    'final-provider',
+    [
+      { id: 'reasoner-a', name: 'Reasoner A', inputModalities: ['text'] },
+      { id: 'reasoner-b', name: 'Reasoner B', inputModalities: ['text'] },
+    ],
+    (options) => {
+      upstreamModels.push(options.model)
+      return textStream(options.messages.some(message =>
+        message.content.some(block => block.type === 'text' && block.text.includes('DeepSeekEyes image evidence')))
+        ? 'image answer'
+        : 'text answer')
+    },
+  )
+  ctx.llm.addProvider(
+    'vision-provider',
+    [{ id: 'vision-m3', name: 'Vision M3', inputModalities: ['text', 'image'] }],
+    () => {
+      visionCalls += 1
+      return jsonStream(validBaseEvidence())
+    },
+  )
+  apply(ctx, {
+    upstreamProvider: 'final-provider',
+    upstreamModel: 'reasoner-b',
+    visionProvider: 'vision-provider',
+    visionModel: 'vision-m3',
+    activeProbe: false,
+    cacheDir: false,
+  })
+
+  const models = await ctx.llm.listModels('deepseekeyes')
+  assert.deepEqual(models.map(model => model.id), ['reasoner-b'])
+  assert.equal(models[0].name, 'Reasoner B · Vision M3 Eyes')
+  assert.equal(models[0].description, 'Vision: vision-provider/vision-m3 · Final: final-provider/reasoner-b')
+
+  const text = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'reasoner-b',
+    messages: [userMessage([{ type: 'text', text: 'hello' }])],
+  }))
+  assert.equal(text.text, 'text answer')
+
+  const ref = ctx.attachments.add(Buffer.from('original image'), { attachmentId: 'locked-route-image' })
+  const image = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'reasoner-b',
+    messages: [userMessage([{ type: 'image', attachment: ref }])],
+  }))
+  assert.equal(image.text, 'image answer')
+  assert.equal(visionCalls, 1)
+  assert.deepEqual(upstreamModels, ['reasoner-b', 'reasoner-b'])
+
+  await assert.rejects(
+    collectStream(ctx.llm.stream({
+      provider: 'deepseekeyes',
+      model: 'reasoner-a',
+      messages: [userMessage([{ type: 'text', text: 'stale session' }])],
+    })),
+    (error) => error.code === 'UPSTREAM_MODEL_LOCKED',
+  )
+})
+
 test('invalid visual evidence stops the DeepSeek dispatch', async () => {
   let upstreamCalls = 0
   const ctx = setupBridge({

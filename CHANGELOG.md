@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1-alpha.2 - 2026-08-15
+
+- Add an explicit `upstreamModel` setting and `DEEPSEEKEYES_UPSTREAM_MODEL` fallback.
+- Put final-answer Provider/Model and background-vision Provider/Model side by side in the native settings card.
+- Clear the final model when its Provider changes and persist the selected model through Harness settings.
+- Lock text-only and image turns to the configured final model; reject stale sessions that request another wrapper model.
+- List only the selected final model and identify both roles in the model name and description.
+- Show a live `image → vision → final answer` route summary before saving.
+
 ## 0.1.1-alpha.1 - 2026-08-14
 
 - Register a live `deepseekeyes` Harness settings namespace.

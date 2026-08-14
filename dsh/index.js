@@ -26,14 +26,26 @@ function appendSystem(system, addition) {
   return `${system ?? ''}${system === undefined || system === '' ? '' : '\n\n'}--- DeepSeekEyes private visual protocol ---\n${addition}`
 }
 
-function visionWrappedModel(info, config) {
+function visionWrappedModel(info, config, route) {
   return {
     ...info,
     provider: config.providerId,
-    name: `${info.name ?? info.id} + Eyes`,
-    description: 'DeepSeek text reasoning with a verified Harness multimodal model as its visual evidence source',
+    name: `${info.name ?? info.id} · ${route.name ?? route.model} Eyes`,
+    description: `Vision: ${route.provider}/${route.model} · Final: ${config.upstreamProvider}/${info.id}`,
     inputModalities: ['text', 'image'],
   }
+}
+
+function lockedUpstreamModel(config, requestedModel) {
+  if (config.upstreamModel !== undefined
+    && requestedModel !== undefined
+    && requestedModel !== config.upstreamModel) {
+    throw new DeepSeekEyesError(
+      `DeepSeekEyes is locked to final model ${config.upstreamProvider}/${config.upstreamModel}; requested ${requestedModel}`,
+      'UPSTREAM_MODEL_LOCKED',
+    )
+  }
+  return config.upstreamModel ?? requestedModel
 }
 
 function createRuntime(ctx, rawConfig, logger) {
@@ -51,8 +63,14 @@ function createRuntime(ctx, rawConfig, logger) {
 
 async function* bridgeStream(ctx, runtime, options) {
   const { config, router, evidenceManager } = runtime
+  const upstreamModel = lockedUpstreamModel(config, options.model)
+  const upstreamOptions = {
+    ...options,
+    provider: config.upstreamProvider,
+    ...(upstreamModel === undefined ? {} : { model: upstreamModel }),
+  }
   if (!messagesHaveImages(options.messages)) {
-    yield* ctx.llm.stream({ ...options, provider: config.upstreamProvider })
+    yield* ctx.llm.stream(upstreamOptions)
     return
   }
 
@@ -78,8 +96,7 @@ async function* bridgeStream(ctx, runtime, options) {
 
   for (let clarificationCount = 0; ; clarificationCount += 1) {
     const upstream = await collectStream(ctx.llm.stream({
-      ...options,
-      provider: config.upstreamProvider,
+      ...upstreamOptions,
       messages,
       system,
     }))
@@ -149,8 +166,9 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
     },
     async listModels() {
       const current = runtime
+      let route
       try {
-        await current.router.resolve()
+        route = await current.router.resolve()
         lastCatalogFailure = undefined
       } catch (error) {
         const message = errorMessage(error)
@@ -163,19 +181,22 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       const models = await ctx.llm.listModels(current.config.upstreamProvider)
       return models
         .filter(model => !model.inputModalities?.includes('image'))
-        .map(model => visionWrappedModel(model, current.config))
+        .filter(model => current.config.upstreamModel === undefined
+          || model.id === current.config.upstreamModel)
+        .map(model => visionWrappedModel(model, current.config, route))
     },
     async resolveModel(_provider, model, signal) {
       const current = runtime
-      await current.router.resolve(signal)
-      const info = await ctx.llm.resolveModelInfo(current.config.upstreamProvider, model, signal)
+      const route = await current.router.resolve(signal)
+      const upstreamModel = lockedUpstreamModel(current.config, model)
+      const info = await ctx.llm.resolveModelInfo(current.config.upstreamProvider, upstreamModel, signal)
       if (info.inputModalities?.includes('image')) {
         throw new DeepSeekEyesError(
           `upstream model ${current.config.upstreamProvider}/${model} already accepts images and does not need DeepSeekEyes`,
           'UPSTREAM_ALREADY_MULTIMODAL',
         )
       }
-      return visionWrappedModel(info, current.config)
+      return visionWrappedModel(info, current.config, route)
     },
     stream(options) {
       return bridgeStream(ctx, runtime, options)

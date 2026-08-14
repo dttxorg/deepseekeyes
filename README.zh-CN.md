@@ -20,13 +20,13 @@ DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表�
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.1.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.2.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
 
 ```text
-DeepSeekEyes → 你的 DeepSeek 模型 + Eyes
+DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 ```
 
 此后图片仍按 Harness 原生附件方式粘贴，缩略图和会话记录都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
@@ -37,14 +37,16 @@ DeepSeekEyes → 你的 DeepSeek 模型 + Eyes
 
 1. 打开 **设置 → 模型**，按 Harness 原有方式添加文本 Provider、视觉 Provider、模型和 API Key。
 2. 打开 **设置 → 插件 → 可配置 → DeepSeekEyes**。
-3. 在下拉框中选择：
-   - **DeepSeek 文本 Provider**；
-   - **视觉 Provider**；
-   - **视觉模型**（可从目录选择，也可直接输入模型 ID）。
+3. 分别选择两条明确路由：
+   - **最终回答 Provider**；
+   - **最终回答模型**（负责推理和回复用户）；
+   - **后台读图 Provider**；
+   - **后台读图模型**（只读取原图并回答细节追问）。
 4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 上限。
-5. 点击 **保存并立即应用**，然后在对话模型选择器中选择 `DeepSeekEyes → 模型 + Eyes`。
+5. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
+6. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
-DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；不再要求把 `upstreamProvider`、`visionProvider` 或 `visionModel` 写进 `cordis.patch.yml`。
+DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；不再要求把 `upstreamProvider`、`upstreamModel`、`visionProvider` 或 `visionModel` 写进 `cordis.patch.yml`。切换最终回答 Provider 时，界面会清空旧模型，避免把上一个 Provider 的模型 ID 带入新路由。
 
 ## 自定义网关的图片能力
 
@@ -78,21 +80,23 @@ defaultInput: [text, image]
 - id: deepseekeyes
   config:
     upstreamProvider: deepseek-official
+    upstreamModel: deepseek-v4-pro
     visionProvider: openai
     visionModel: gpt-4.1
     activeProbe: true
     maxClarifications: 3
 ```
 
-也可以通过启动环境指定视觉路由：
+也可以通过启动环境指定最终模型和视觉路由：
 
 ```sh
+export DEEPSEEKEYES_UPSTREAM_MODEL=deepseek-v4-pro
 export DEEPSEEKEYES_VISION_PROVIDER=openai
 export DEEPSEEKEYES_VISION_MODEL=gpt-4.1
 dsh web
 ```
 
-只设置 `visionProvider` 时，会选择该 Provider 下第一个明确支持图片的模型。不设置两者时，会按 Harness Provider/Model 的注册顺序自动选择第一个视觉模型。
+只设置 `visionProvider` 时，会选择该 Provider 下第一个明确支持图片的模型。不设置两者时，会按 Harness Provider/Model 的注册顺序自动选择第一个视觉模型。`upstreamModel` 留空时保留 0.1.1-alpha.1 的兼容行为，即把最终 Provider 下所有纯文本模型显示为可选；在 GUI 选定一个最终回答模型后，目录和每次文本/图片请求都会锁定到该模型。
 
 ## 数据保真
 
@@ -127,6 +131,7 @@ $DSH_HOME/deepseekeyes/evidence/
 |---|---:|---|
 | `providerId` | `deepseekeyes` | 虚拟 Provider ID |
 | `upstreamProvider` | `deepseek-official` | DeepSeek 文本模型所在 Provider |
+| `upstreamModel` | 兼容模式 | 最终推理与回答模型 ID；设置后目录和调用都锁定该模型 |
 | `visionProvider` | 自动检测 | Harness 中已有的视觉 Provider |
 | `visionModel` | 自动检测 | 视觉模型 ID |
 | `autoDetectVision` | `true` | 未选择视觉 Provider 时自动扫描 |

@@ -6,6 +6,7 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   const config = resolveConfig({}, {}, '/test-home')
   assert.equal(config.providerId, 'deepseekeyes')
   assert.equal(config.upstreamProvider, 'deepseek-official')
+  assert.equal(config.upstreamModel, undefined)
   assert.equal(config.visionProvider, undefined)
   assert.equal(config.activeProbe, true)
   assert.equal(config.cacheDir, '/test-home/.deepseekeyes/deepseekeyes/evidence')
@@ -14,11 +15,13 @@ test('configuration resolves Harness defaults and a private evidence path', () =
 test('configuration accepts environment-selected Harness vision route', () => {
   const config = resolveConfig({}, {
     DSH_HOME: '/dsh-home',
+    DEEPSEEKEYES_UPSTREAM_MODEL: 'deepseek-v4-pro',
     DEEPSEEKEYES_VISION_PROVIDER: 'configured-provider',
     DEEPSEEKEYES_VISION_MODEL: 'vision-1',
   }, '/unused')
   assert.equal(config.visionProvider, 'configured-provider')
   assert.equal(config.visionModel, 'vision-1')
+  assert.equal(config.upstreamModel, 'deepseek-v4-pro')
   assert.equal(config.cacheDir, '/dsh-home/deepseekeyes/evidence')
 })
 

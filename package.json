@@ -1,0 +1,17 @@
+{
+  "name": "deepseekeyes",
+  "version": "0.0.0-baseline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "exports": {
+    ".": "./dsh/index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

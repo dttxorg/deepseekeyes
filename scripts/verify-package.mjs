@@ -6,6 +6,7 @@ const required = [
   'dsh/index.js',
   'src/index.js',
   'src/settings.js',
+  'src/browser/index.js',
   'lib/client.js',
   'cordis.patch.yml',
   'README.md',
@@ -14,6 +15,10 @@ const required = [
 ]
 
 if (manifest.name !== 'deepseekeyes') throw new Error('package name must be deepseekeyes')
+if (manifest.version !== '0.2.0') throw new Error('release version must be 0.2.0')
+if (manifest.dependencies?.['playwright-core'] !== '1.61.1') {
+  throw new Error('browser computer use must pin playwright-core 1.61.1')
+}
 if (manifest.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('missing dsh.bundle.patch')
 if (manifest.exports?.['.'] !== './dsh/index.js') throw new Error('package root must export dsh/index.js')
 if (manifest.exports?.['./client'] !== './lib/client.js') throw new Error('package client export must point to lib/client.js')

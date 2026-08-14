@@ -1,0 +1,13 @@
+- id: deepseekeyes
+  config:
+    upstreamProvider: deepseek-official
+    visionProvider: openai
+    visionModel: gpt-4.1
+    activeProbe: true
+    browserComputerUse: true
+    browserHeadless: false
+    # Windows recommends msedge; macOS commonly uses chrome.
+    browserChannel: msedge
+    browserViewportWidth: 1440
+    browserViewportHeight: 900
+    browserSettleMs: 300

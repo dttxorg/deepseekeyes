@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { inflateSync } from 'node:zlib'
 
 export const name = 'deepseekeyes-dsh-acceptance'
-export const inject = ['llm', 'attachments']
+export const inject = ['llm', 'attachments', 'tools']
+
+const BROWSER_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>DSH Browser Acceptance</title></head><body><label for="value">Value</label><input id="value"><button id="commit">Commit</button><p id="result">pending</p><script>document.querySelector('#commit').onclick=()=>{document.querySelector('#result').textContent='committed:'+document.querySelector('#value').value}</script></body></html>`
 
 const COLORS = new Map([
   ['220,20,60', 'red'],
@@ -93,6 +97,7 @@ export function apply(ctx) {
   let baseCalls = 0
   let targetCalls = 0
   let probeCalls = 0
+  let browserStarted = false
   const adapter = {
     providerInfo(provider) {
       return { id: provider, name: provider }
@@ -180,7 +185,74 @@ export function apply(ctx) {
     }
   }
 
+  const runBrowser = async (url) => {
+    if (browserStarted || ctx.tools.get('browser') === undefined) return
+    browserStarted = true
+    const signal = new AbortController().signal
+    let call = 0
+    const execute = async (arguments_) => {
+      const result = await ctx.tools.execute({
+        callId: `browser-acceptance-${++call}`,
+        name: 'browser',
+        arguments: arguments_,
+        signal,
+      })
+      if (result.isError) throw new Error(result.content.map(block => block.text ?? '').join('\n'))
+      return result
+    }
+    try {
+      const opened = await execute({ action: 'open', url })
+      const imageBlocks = opened.content.filter(block => block.type === 'image').length
+      const input = opened.value.elements.find(element => element.role === 'textbox')
+      const typed = await execute({
+        action: 'type',
+        stateId: opened.value.stateId,
+        ref: input.ref,
+        value: 'dsh-runtime',
+      })
+      const button = typed.value.elements.find(element => element.role === 'button')
+      const clicked = await execute({
+        action: 'click',
+        stateId: typed.value.stateId,
+        ref: button.ref,
+      })
+      const asserted = await execute({
+        action: 'assert',
+        stateId: clicked.value.stateId,
+        selector: '#result',
+        assertion: 'text_equals',
+        expected: 'committed:dsh-runtime',
+      })
+      const closed = await execute({ action: 'close' })
+      console.log(`DEEPSEEKEYES_DSH_BROWSER_ACCEPTANCE:${JSON.stringify({
+        toolRegistered: true,
+        imageBlocks,
+        screenshotAttachment: opened.value.screenshot.attachmentId,
+        assertionPassed: asserted.value.actionResult.passed,
+        closed: closed.value.closed,
+      })}`)
+    } catch (error) {
+      console.error(`DEEPSEEKEYES_DSH_BROWSER_ACCEPTANCE_ERROR:${error?.stack ?? error}`)
+    }
+  }
+
   if (typeof ctx.on === 'function') ctx.on('llm/adapters-updated', () => void run())
   ctx.llm.registerAdapter(['mock-deepseek', 'mock-vision'], adapter)
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(async () => {
+      const server = createServer((_request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(BROWSER_PAGE)
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      const address = server.address()
+      queueMicrotask(() => void runBrowser(`http://127.0.0.1:${address.port}/`))
+      return async () => {
+        server.close()
+        await once(server, 'close')
+      }
+    }, 'deepseekeyes acceptance browser server')
+  }
   queueMicrotask(() => void run())
 }

@@ -114,6 +114,43 @@ test('text-only turns delegate directly without spending a visual call', async (
   assert.equal(upstreamCalls, 1)
 })
 
+test('browser screenshot inside a tool result is reread by Eyes before DeepSeek continues', async () => {
+  const bytes = Buffer.from('browser screenshot bytes')
+  let visionCalls = 0
+  const ctx = setupBridge({
+    visionHandler(options) {
+      visionCalls += 1
+      assert.equal(options.messages[0].content.some(block => block.type === 'image'), true)
+      return jsonStream(validBaseEvidence({ summary: 'Browser shows a successful form submission' }))
+    },
+    upstreamHandler(options) {
+      const wire = JSON.stringify(options.messages)
+      assert.equal(wire.includes('"type":"image"'), false)
+      assert.match(wire, /DeepSeekEyes browser state/)
+      assert.match(wire, /Browser shows a successful form submission/)
+      return textStream('浏览器状态已验证')
+    },
+  })
+  const ref = ctx.attachments.add(bytes, { width: 1280, height: 800 })
+  const toolResult = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'browser-call-1',
+    toolName: 'browser',
+    content: [
+      { type: 'text', text: '[DeepSeekEyes browser state]\n{"stateId":"browser-state:test"}' },
+      { type: 'image', attachment: ref },
+    ],
+  }])
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [toolResult],
+  }))
+  assert.equal(result.text, '浏览器状态已验证')
+  assert.equal(visionCalls, 1)
+  assert.equal(toolResult.content[0].content[1].type, 'image')
+})
+
 test('explicit final model locks catalog, text turns, image turns, and exposes both model roles', async () => {
   const ctx = mockContext()
   const upstreamModels = []

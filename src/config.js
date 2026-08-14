@@ -6,6 +6,12 @@ export const DEFAULT_UPSTREAM_PROVIDER = 'deepseek-official'
 export const DEFAULT_MAX_CLARIFICATIONS = 3
 export const DEFAULT_BASE_MAX_TOKENS = 8192
 export const DEFAULT_TARGET_MAX_TOKENS = 4096
+export const DEFAULT_BROWSER_TIMEOUT_MS = 15_000
+export const DEFAULT_BROWSER_SETTLE_MS = 300
+export const DEFAULT_BROWSER_VIEWPORT_WIDTH = 1440
+export const DEFAULT_BROWSER_VIEWPORT_HEIGHT = 900
+export const DEFAULT_BROWSER_MAX_ELEMENTS = 200
+export const DEFAULT_BROWSER_MAX_TEXT_CHARS = 20_000
 
 function optionalString(value, field) {
   if (value === undefined || value === null || value === '') return undefined
@@ -23,6 +29,15 @@ function booleanValue(value, field, fallback) {
   if (value === undefined) return fallback
   if (typeof value !== 'boolean') throw new TypeError(`deepseekeyes: ${field} must be boolean`)
   return value
+}
+
+function environmentBoolean(value, field) {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value === 'boolean') return value
+  const normalized = String(value).trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  throw new TypeError(`deepseekeyes: ${field} environment value must be true or false`)
 }
 
 function integerValue(value, field, fallback, minimum, maximum) {
@@ -65,6 +80,7 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     throw new TypeError('deepseekeyes: providerId and upstreamProvider must differ')
   }
 
+  const dshBase = optionalString(environment.DSH_HOME, 'DSH_HOME') ?? join(home, '.deepseekeyes')
   const configuredCacheDir = input.cacheDir ?? environment.DEEPSEEKEYES_CACHE_DIR
   let cacheDir
   if (configuredCacheDir === false) {
@@ -72,8 +88,18 @@ export function resolveConfig(input = {}, environment = process.env, home = home
   } else if (configuredCacheDir !== undefined) {
     cacheDir = requiredString(configuredCacheDir, 'cacheDir')
   } else {
-    const base = optionalString(environment.DSH_HOME, 'DSH_HOME') ?? join(home, '.deepseekeyes')
-    cacheDir = join(base, 'deepseekeyes', 'evidence')
+    cacheDir = join(dshBase, 'deepseekeyes', 'evidence')
+  }
+
+  const configuredBrowserArtifactsDir = input.browserArtifactsDir
+    ?? environment.DEEPSEEKEYES_BROWSER_ARTIFACTS_DIR
+  let browserArtifactsDir
+  if (configuredBrowserArtifactsDir === false) {
+    browserArtifactsDir = undefined
+  } else if (configuredBrowserArtifactsDir !== undefined) {
+    browserArtifactsDir = requiredString(configuredBrowserArtifactsDir, 'browserArtifactsDir')
+  } else {
+    browserArtifactsDir = join(dshBase, 'deepseekeyes', 'browser-runs')
   }
 
   return Object.freeze({
@@ -107,6 +133,70 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       DEFAULT_TARGET_MAX_TOKENS,
       256,
       16384,
+    ),
+    browserComputerUse: booleanValue(
+      input.browserComputerUse
+        ?? environmentBoolean(environment.DEEPSEEKEYES_BROWSER_ENABLED, 'DEEPSEEKEYES_BROWSER_ENABLED'),
+      'browserComputerUse',
+      true,
+    ),
+    browserHeadless: booleanValue(
+      input.browserHeadless
+        ?? environmentBoolean(environment.DEEPSEEKEYES_BROWSER_HEADLESS, 'DEEPSEEKEYES_BROWSER_HEADLESS'),
+      'browserHeadless',
+      false,
+    ),
+    browserChannel: optionalString(
+      input.browserChannel ?? environment.DEEPSEEKEYES_BROWSER_CHANNEL,
+      'browserChannel',
+    ),
+    browserExecutablePath: optionalString(
+      input.browserExecutablePath ?? environment.DEEPSEEKEYES_BROWSER_EXECUTABLE_PATH,
+      'browserExecutablePath',
+    ),
+    browserArtifactsDir,
+    browserLocale: requiredString(input.browserLocale, 'browserLocale', 'zh-CN'),
+    browserTimeoutMs: integerValue(
+      input.browserTimeoutMs,
+      'browserTimeoutMs',
+      DEFAULT_BROWSER_TIMEOUT_MS,
+      1_000,
+      120_000,
+    ),
+    browserSettleMs: integerValue(
+      input.browserSettleMs,
+      'browserSettleMs',
+      DEFAULT_BROWSER_SETTLE_MS,
+      0,
+      10_000,
+    ),
+    browserViewportWidth: integerValue(
+      input.browserViewportWidth,
+      'browserViewportWidth',
+      DEFAULT_BROWSER_VIEWPORT_WIDTH,
+      320,
+      3840,
+    ),
+    browserViewportHeight: integerValue(
+      input.browserViewportHeight,
+      'browserViewportHeight',
+      DEFAULT_BROWSER_VIEWPORT_HEIGHT,
+      240,
+      2160,
+    ),
+    browserMaxElements: integerValue(
+      input.browserMaxElements,
+      'browserMaxElements',
+      DEFAULT_BROWSER_MAX_ELEMENTS,
+      20,
+      500,
+    ),
+    browserMaxTextChars: integerValue(
+      input.browserMaxTextChars,
+      'browserMaxTextChars',
+      DEFAULT_BROWSER_MAX_TEXT_CHARS,
+      1_000,
+      100_000,
     ),
   })
 }

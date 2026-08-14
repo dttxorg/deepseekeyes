@@ -134,15 +134,54 @@ export class MockLlm {
   }
 }
 
+export class MockTools {
+  constructor() {
+    this.definitions = new Map()
+  }
+
+  register(definition) {
+    if (this.definitions.has(definition.name)) throw new Error(`duplicate tool ${definition.name}`)
+    this.definitions.set(definition.name, definition)
+    return () => this.definitions.delete(definition.name)
+  }
+
+  get(name) {
+    return this.definitions.get(name)
+  }
+}
+
+export class MockSystemPrompt {
+  constructor() {
+    this.sections = new Map()
+  }
+
+  section(section) {
+    this.sections.set(section.name, section)
+    return () => this.sections.delete(section.name)
+  }
+}
+
 export function mockContext() {
   const listeners = new Map()
+  const effects = []
   const ctx = {
     attachments: new MockAttachments(),
     llm: new MockLlm(),
+    tools: new MockTools(),
+    systemPrompt: new MockSystemPrompt(),
     logger: { warn() {}, error() {}, info() {} },
     on(event, listener) {
       listeners.set(event, listener)
       return () => listeners.delete(event)
+    },
+    effect(callback) {
+      const dispose = callback()
+      effects.push(dispose)
+      return () => {
+        const index = effects.indexOf(dispose)
+        if (index >= 0) effects.splice(index, 1)
+        return typeof dispose === 'function' ? dispose() : undefined
+      }
     },
   }
   return ctx

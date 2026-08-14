@@ -1,7 +1,7 @@
 {
   "name": "deepseekeyes",
-  "version": "0.1.1-alpha.3",
-  "description": "A transparent multimodal vision bridge for DeepSeek Harness that keeps image bytes intact and lets DeepSeek request visual clarification in one conversation.",
+  "version": "0.2.0",
+  "description": "A multimodal vision and browser-computer-use bridge for DeepSeek Harness with source-preserving evidence and closed-loop Playwright actions.",
   "type": "module",
   "main": "./dsh/index.js",
   "exports": {
@@ -24,6 +24,7 @@
   ],
   "scripts": {
     "test": "node --test",
+    "test:browser": "node acceptance/browser-live.mjs",
     "test:coverage": "node --test --experimental-test-coverage",
     "check": "npm run build:client && node scripts/verify-package.mjs && npm test",
     "pack:dry": "npm pack --dry-run",
@@ -41,7 +42,10 @@
     "vision",
     "multimodal",
     "image",
-    "ocr"
+    "ocr",
+    "computer-use",
+    "playwright",
+    "browser-testing"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -64,7 +68,8 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.1"
+    "@deepseek-ai/schemastery": "3.18.1",
+    "playwright-core": "1.61.1"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

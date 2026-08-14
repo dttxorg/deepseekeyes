@@ -1,4 +1,5 @@
 import { EvidenceCache } from '../src/cache.js'
+import { applyBrowserComputerUse } from '../src/browser/index.js'
 import {
   attachmentKey,
   messagesHaveImages,
@@ -20,7 +21,7 @@ import { addUsage, collectStream, emptyUsage, replayWithUsage } from '../src/str
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
 
 export const name = 'deepseekeyes'
-export const inject = ['llm', 'attachments']
+export const inject = ['llm', 'attachments', 'tools', 'systemPrompt']
 
 function appendSystem(system, addition) {
   return `${system ?? ''}${system === undefined || system === '' ? '' : '\n\n'}--- DeepSeekEyes private visual protocol ---\n${addition}`
@@ -147,6 +148,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
         throw new TypeError('deepseekeyes: providerId is fixed for the lifetime of the registered adapter')
       }
       runtime = next
+      state.browser?.reconfigure(runtime.config)
       lastCatalogFailure = undefined
       return runtime.config
     },
@@ -209,6 +211,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
 export function apply(ctx, rawConfig = {}) {
   const state = createDeepSeekEyesAdapter(ctx, rawConfig)
   ctx.llm.registerAdapter([state.config.providerId], state.adapter)
+  state.browser = applyBrowserComputerUse(ctx, state.config)
 
   if (typeof ctx.llm.registerConfigurableProviders === 'function') {
     ctx.llm.registerConfigurableProviders([{

@@ -1,3 +1,5 @@
+# DeepSeek Harness bundle layer. The provider and model configured on the
+# Models page stay owned by Harness; DeepSeekEyes references those live routes.
 - insert:
     - id: deepseekeyes
       name: deepseekeyes

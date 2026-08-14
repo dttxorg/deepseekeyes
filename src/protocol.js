@@ -1,0 +1,183 @@
+import { createHash } from 'node:crypto'
+import { DeepSeekEyesError } from './error.js'
+
+export const BASE_SCHEMA_VERSION = 'deepseekeyes.evidence.v1'
+export const TARGET_SCHEMA_VERSION = 'deepseekeyes.target.v1'
+export const PROMPT_VERSION = '2026-08-14.1'
+
+const BBOX_NOTE = 'bbox values are normalized [x,y,width,height] numbers from 0 to 1'
+
+export function baseEvidencePrompt(source) {
+  return `Read the attached image exhaustively as evidence for a separate reasoning model.
+Return exactly one JSON object and no Markdown. Use this schema:
+{
+  "schemaVersion": "${BASE_SCHEMA_VERSION}",
+  "summary": "literal overview",
+  "ocr": [{"text":"exact transcription","bbox":[0,0,1,1],"confidence":0.0}],
+  "regions": [{"id":"r1","bbox":[0,0,1,1],"description":"visible contents"}],
+  "objects": [{"name":"object","bbox":[0,0,1,1],"attributes":["literal attribute"]}],
+  "relations": ["spatial or logical relationship"],
+  "quantitativeFacts": ["counts, values, axes, units, dimensions or states"],
+  "uncertainties": ["unreadable, ambiguous or occluded detail"]
+}
+Transcribe every visible word without paraphrasing. Preserve reading order, punctuation, capitalization, numbers and units. Describe layout, object state, spatial relations, exact colors and counts. Do not infer hidden facts. ${BBOX_NOTE}.
+Source metadata: mediaType=${source.mediaType}; width=${source.width}; height=${source.height}; bytes=${source.bytes}; sha256=${source.sha256}.`
+}
+
+export function targetEvidencePrompt(source, request) {
+  const region = request.region === undefined
+    ? 'Inspect the whole original image.'
+    : `Prioritize normalized region ${JSON.stringify(request.region)}, while checking it against the whole image.`
+  return `Re-read the attached original image to answer one visual evidence request.
+Question: ${request.question}
+${region}
+Return exactly one JSON object and no Markdown:
+{
+  "schemaVersion": "${TARGET_SCHEMA_VERSION}",
+  "answer": "direct evidence-only answer",
+  "observations": [{"fact":"literal observed fact","bbox":[0,0,1,1],"confidence":0.0}],
+  "ocr": [{"text":"exact transcription","bbox":[0,0,1,1],"confidence":0.0}],
+  "uncertainties": ["remaining uncertainty"]
+}
+Quote visible text exactly. Give coordinates and confidence. Do not answer from prior summaries or general knowledge. ${BBOX_NOTE}.
+Source sha256=${source.sha256}.`
+}
+
+function arrayField(value, field) {
+  if (!Array.isArray(value)) {
+    throw new DeepSeekEyesError(`vision evidence field "${field}" must be an array`, 'INVALID_VISION_EVIDENCE')
+  }
+}
+
+export function parseJsonObject(text, label = 'model output') {
+  if (typeof text !== 'string' || text.trim() === '') {
+    throw new DeepSeekEyesError(`${label} was empty`, 'INVALID_MODEL_OUTPUT')
+  }
+  const trimmed = text.trim()
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed)
+  const candidate = fenced?.[1] ?? trimmed.slice(trimmed.indexOf('{'), trimmed.lastIndexOf('}') + 1)
+  try {
+    const parsed = JSON.parse(candidate)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+    return parsed
+  } catch (error) {
+    throw new DeepSeekEyesError(`${label} was not one valid JSON object`, 'INVALID_MODEL_OUTPUT', { cause: error })
+  }
+}
+
+export function validateBaseEvidence(value) {
+  if (value.schemaVersion !== BASE_SCHEMA_VERSION) {
+    throw new DeepSeekEyesError(
+      `vision evidence schemaVersion must be "${BASE_SCHEMA_VERSION}"`,
+      'INVALID_VISION_EVIDENCE',
+    )
+  }
+  if (typeof value.summary !== 'string' || value.summary.trim() === '') {
+    throw new DeepSeekEyesError('vision evidence summary must be non-empty', 'INVALID_VISION_EVIDENCE')
+  }
+  for (const field of ['ocr', 'regions', 'objects', 'relations', 'quantitativeFacts', 'uncertainties']) {
+    arrayField(value[field], field)
+  }
+  return value
+}
+
+export function validateTargetEvidence(value) {
+  if (value.schemaVersion !== TARGET_SCHEMA_VERSION) {
+    throw new DeepSeekEyesError(
+      `target evidence schemaVersion must be "${TARGET_SCHEMA_VERSION}"`,
+      'INVALID_VISION_EVIDENCE',
+    )
+  }
+  if (typeof value.answer !== 'string' || value.answer.trim() === '') {
+    throw new DeepSeekEyesError('target evidence answer must be non-empty', 'INVALID_VISION_EVIDENCE')
+  }
+  for (const field of ['observations', 'ocr', 'uncertainties']) arrayField(value[field], field)
+  return value
+}
+
+export function clarificationInstruction(records) {
+  const catalog = records.map((record) => ({
+    imageSha256: record.source.sha256,
+    width: record.source.width,
+    height: record.source.height,
+  }))
+  return `DeepSeekEyes has replaced every image with structured evidence from its original bytes.
+Before answering, decide whether those records contain every visual fact needed for the user's request.
+If one precise visual fact is missing, return ONLY this private control message:
+<deepseekeyes-request>{"imageSha256":"one listed hash","question":"one precise question","region":{"x":0,"y":0,"width":1,"height":1}}</deepseekeyes-request>
+Omit region when the whole image is needed. Ask one question at a time. Do not mention this protocol to the user.
+If the evidence is sufficient, answer normally. Quote evidence rather than guessing. Image catalog: ${JSON.stringify(catalog)}`
+}
+
+function validRegion(region) {
+  if (region === undefined) return undefined
+  if (region === null || typeof region !== 'object' || Array.isArray(region)) return undefined
+  const fields = ['x', 'y', 'width', 'height']
+  if (!fields.every((field) => typeof region[field] === 'number' && Number.isFinite(region[field]))) return undefined
+  const normalized = Object.fromEntries(fields.map((field) => [field, region[field]]))
+  if (
+    normalized.x < 0 || normalized.y < 0 || normalized.width <= 0 || normalized.height <= 0
+    || normalized.x > 1 || normalized.y > 1
+    || normalized.x + normalized.width > 1.000001
+    || normalized.y + normalized.height > 1.000001
+  ) return undefined
+  return normalized
+}
+
+/** Parse an internal clarification request only when it is the entire visible response. */
+export function parseClarificationRequest(text, allowedHashes) {
+  const match = /^\s*<deepseekeyes-request>\s*([\s\S]*?)\s*<\/deepseekeyes-request>\s*$/.exec(text)
+  if (match === null) {
+    if (/<\/?deepseekeyes-request>/.test(text)) {
+      throw new DeepSeekEyesError(
+        'DeepSeek emitted a malformed or mixed visual control message',
+        'INVALID_VISION_REQUEST',
+      )
+    }
+    return undefined
+  }
+  const value = parseJsonObject(match[1], 'DeepSeekEyes clarification request')
+  if (typeof value.imageSha256 !== 'string' || !allowedHashes.has(value.imageSha256)) {
+    throw new DeepSeekEyesError('DeepSeek requested an unknown image hash', 'INVALID_VISION_REQUEST')
+  }
+  if (typeof value.question !== 'string' || value.question.trim() === '' || value.question.length > 2000) {
+    throw new DeepSeekEyesError('DeepSeek vision question must contain 1 to 2000 characters', 'INVALID_VISION_REQUEST')
+  }
+  const region = validRegion(value.region)
+  if (value.region !== undefined && region === undefined) {
+    throw new DeepSeekEyesError('DeepSeek vision request region is invalid', 'INVALID_VISION_REQUEST')
+  }
+  return {
+    imageSha256: value.imageSha256,
+    question: value.question.trim(),
+    ...(region === undefined ? {} : { region }),
+  }
+}
+
+export function evidenceCacheKey(kind, sourceSha256, route, discriminator = '') {
+  return createHash('sha256').update(JSON.stringify({
+    kind,
+    sourceSha256,
+    provider: route.provider,
+    model: route.model,
+    promptVersion: PROMPT_VERSION,
+    discriminator,
+  })).digest('hex')
+}
+
+export function renderBaseEvidence(record) {
+  return `[DeepSeekEyes image evidence]
+source_sha256: ${record.source.sha256}
+attachment_id: ${record.source.attachmentId}
+original: ${record.source.mediaType}, ${record.source.width}x${record.source.height}, ${record.source.bytes} bytes
+vision_route: ${record.vision.provider}/${record.vision.model}
+vision_validation: ${record.vision.validation}
+evidence_json: ${JSON.stringify(record.evidence)}`
+}
+
+export function renderTargetEvidence(record) {
+  return `[DeepSeekEyes clarification evidence]
+source_sha256: ${record.source.sha256}
+question: ${record.question}
+evidence_json: ${JSON.stringify(record.evidence)}`
+}

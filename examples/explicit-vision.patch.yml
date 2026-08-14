@@ -1,0 +1,8 @@
+# Apply after the installed bundle when more than one visual model is configured.
+- id: deepseekeyes
+  config:
+    upstreamProvider: deepseek-official
+    visionProvider: openai
+    visionModel: gpt-4.1
+    activeProbe: true
+    maxClarifications: 3

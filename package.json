@@ -1,13 +1,47 @@
 {
   "name": "deepseekeyes",
-  "version": "0.0.0-baseline",
-  "private": true,
+  "version": "0.1.0",
+  "description": "A transparent multimodal vision bridge for DeepSeek Harness that keeps image bytes intact and lets DeepSeek request visual clarification in one conversation.",
   "type": "module",
-  "scripts": {
-    "test": "node --test"
-  },
+  "main": "./dsh/index.js",
   "exports": {
-    ".": "./dsh/index.js"
+    ".": "./dsh/index.js",
+    "./dsh": "./dsh/index.js",
+    "./core": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dsh",
+    "src",
+    "examples",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "check": "node scripts/verify-package.mjs && npm test",
+    "pack:dry": "npm pack --dry-run",
+    "pack:release": "npm pack"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "vision",
+    "multimodal",
+    "image",
+    "ocr"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
   },
   "dsh": {
     "bundle": {

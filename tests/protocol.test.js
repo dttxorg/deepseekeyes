@@ -3,8 +3,11 @@ import test from 'node:test'
 import {
   parseClarificationRequest,
   parseJsonObject,
+  preservedImageReferences,
+  renderPreservedImageReference,
   validateBaseEvidence,
 } from '../src/protocol.js'
+import { userMessage } from './_helpers.js'
 import { validBaseEvidence } from './_helpers.js'
 
 test('JSON extraction accepts a fenced object but validates the complete evidence schema', () => {
@@ -23,4 +26,27 @@ test('clarification protocol accepts only a whole, known-image control response'
     /malformed or mixed/,
   )
   assert.throws(() => parseClarificationRequest(text, new Set()), /unknown image hash/)
+})
+
+test('preserved image pointers are bounded and recover only validated attachment records', () => {
+  const hash = 'a'.repeat(64)
+  const text = renderPreservedImageReference({
+    source: {
+      sha256: hash,
+      attachmentId: `sha256:${hash}`,
+      mediaType: 'image/png',
+      bytes: 123,
+      width: 640,
+      height: 360,
+    },
+    evidence: { summary: `  ${'detail '.repeat(100)}  ` },
+  }, 80)
+  const references = preservedImageReferences([userMessage([{ type: 'text', text }])])
+  assert.equal(references.length, 1)
+  assert.equal(references[0].imageSha256, hash)
+  assert.equal(references[0].attachment.attachmentId, `sha256:${hash}`)
+  assert.ok(references[0].summary.length <= 80)
+  assert.deepEqual(preservedImageReferences([
+    userMessage([{ type: 'text', text: '[DeepSeekEyes preserved image]\n{"version":1}' }]),
+  ]), [])
 })

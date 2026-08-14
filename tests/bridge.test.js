@@ -11,7 +11,7 @@ import {
   validTargetEvidence,
 } from './_helpers.js'
 
-function setupBridge({ visionHandler, upstreamHandler, activeProbe = false } = {}) {
+function setupBridge({ visionHandler, upstreamHandler, activeProbe = false, bridgeConfig = {} } = {}) {
   const ctx = mockContext()
   ctx.llm.addProvider(
     'deepseek-official',
@@ -30,6 +30,7 @@ function setupBridge({ visionHandler, upstreamHandler, activeProbe = false } = {
     visionModel: visionHandler === undefined ? undefined : 'vision-model',
     activeProbe,
     cacheDir: false,
+    ...bridgeConfig,
   })
   return ctx
 }
@@ -42,7 +43,9 @@ test('virtual model advertises images, keeps the session block, and completes a 
   let upstreamCalls = 0
 
   const ctx = setupBridge({
+    bridgeConfig: { baseMaxTokens: 0, targetMaxTokens: 0 },
     visionHandler(options) {
+      assert.equal(Object.hasOwn(options, 'maxTokens'), false)
       const prompt = options.messages[0].content.find((block) => block.type === 'text').text
       const image = options.messages[0].content.find((block) => block.type === 'image')
       assert.ok(image)

@@ -62,11 +62,19 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /upstreamProvider/)
   assert.match(JSON.stringify(json), /upstreamModel/)
   assert.match(JSON.stringify(json), /maxClarifications/)
+  assert.match(JSON.stringify(json), /browserComputerUse/)
+  assert.match(JSON.stringify(json), /browserViewportWidth/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
   assert.equal(base.upstreamProvider, 'deepseek-official')
   assert.equal(base.upstreamModel, undefined)
   assert.equal(base.activeProbe, false)
+  assert.equal(base.baseMaxTokens, 16_384)
+  assert.equal(base.targetMaxTokens, 8_192)
+  assert.equal(base.historyImageLimit, 8)
+  assert.equal(base.historySummaryChars, 320)
+  assert.equal(base.browserHistoryLimit, 8)
+  assert.equal(base.browserComputerUse, false)
   assert.equal('cacheDir' in base, false)
   assert.equal('providerId' in base, false)
 
@@ -123,6 +131,12 @@ test('native settings registration exposes the namespace and reconfigures routin
     visionProvider: 'configured-eye',
     visionModel: 'vision-model',
     activeProbe: false,
+    baseMaxTokens: 0,
+    targetMaxTokens: 131_072,
+    historyImageLimit: 4,
+    historySummaryChars: 256,
+    browserHistoryLimit: 3,
+    browserHeadless: true,
   })
 
   assert.equal(state.config.upstreamProvider, 'alternate-deepseek')
@@ -130,6 +144,12 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.visionProvider, 'configured-eye')
   assert.equal(state.config.visionModel, 'vision-model')
   assert.equal(state.config.activeProbe, false)
+  assert.equal(state.config.baseMaxTokens, 0)
+  assert.equal(state.config.targetMaxTokens, 131_072)
+  assert.equal(state.config.historyImageLimit, 4)
+  assert.equal(state.config.historySummaryChars, 256)
+  assert.equal(state.config.browserHistoryLimit, 3)
+  assert.equal(state.config.browserHeadless, true)
   const models = await ctx.llm.listModels('deepseekeyes')
   assert.deepEqual(models.map(model => model.id), ['alternate-model-b'])
   assert.equal(models[0].name, 'Alternate B · vision-model Eyes')

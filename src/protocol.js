@@ -4,6 +4,7 @@ import { DeepSeekEyesError } from './error.js'
 export const BASE_SCHEMA_VERSION = 'deepseekeyes.evidence.v1'
 export const TARGET_SCHEMA_VERSION = 'deepseekeyes.target.v1'
 export const PROMPT_VERSION = '2026-08-14.1'
+export const PRESERVED_IMAGE_PREFIX = '[DeepSeekEyes preserved image]\n'
 
 const BBOX_NOTE = 'bbox values are normalized [x,y,width,height] numbers from 0 to 1'
 
@@ -100,6 +101,7 @@ export function clarificationInstruction(records) {
     imageSha256: record.source.sha256,
     width: record.source.width,
     height: record.source.height,
+    ...(record.summary === undefined ? {} : { summary: record.summary }),
   }))
   return `DeepSeekEyes has replaced every image with structured evidence from its original bytes.
 Before answering, decide whether those records contain every visual fact needed for the user's request.
@@ -180,4 +182,71 @@ export function renderTargetEvidence(record) {
 source_sha256: ${record.source.sha256}
 question: ${record.question}
 evidence_json: ${JSON.stringify(record.evidence)}`
+}
+
+function boundedSummary(value, maximum) {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized === '') return undefined
+  return normalized.length <= maximum ? normalized : `${normalized.slice(0, Math.max(0, maximum - 1))}…`
+}
+
+/** A compact durable pointer; the original attachment and full cached evidence stay outside the prompt. */
+export function renderPreservedImageReference(record, maximumSummaryChars = 320) {
+  const source = record.source
+  const summary = boundedSummary(record.evidence?.summary ?? record.summary, maximumSummaryChars)
+  return `${PRESERVED_IMAGE_PREFIX}${JSON.stringify({
+    version: 1,
+    imageSha256: source.sha256,
+    attachment: {
+      attachmentId: source.attachmentId,
+      mediaType: source.mediaType,
+      bytes: source.bytes,
+      width: source.width,
+      height: source.height,
+      ...(source.name === undefined ? {} : { name: source.name }),
+    },
+    ...(summary === undefined ? {} : { summary }),
+  })}`
+}
+
+function collectPreservedBlocks(blocks, found) {
+  if (!Array.isArray(blocks)) return
+  for (const block of blocks) {
+    if (block?.type === 'tool-result') {
+      collectPreservedBlocks(block.content, found)
+      continue
+    }
+    if (block?.type !== 'text' || !block.text.startsWith(PRESERVED_IMAGE_PREFIX)) continue
+    try {
+      const value = JSON.parse(block.text.slice(PRESERVED_IMAGE_PREFIX.length))
+      const ref = value?.attachment
+      if (value?.version !== 1
+        || typeof value.imageSha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(value.imageSha256)
+        || typeof ref?.attachmentId !== 'string'
+        || typeof ref.mediaType !== 'string') continue
+      found.set(value.imageSha256, {
+        imageSha256: value.imageSha256,
+        attachment: {
+          attachmentId: ref.attachmentId,
+          mediaType: ref.mediaType,
+          bytes: ref.bytes,
+          width: ref.width,
+          height: ref.height,
+          ...(ref.name === undefined ? {} : { name: ref.name }),
+        },
+        ...(typeof value.summary === 'string' ? { summary: value.summary } : {}),
+      })
+    } catch {
+      // A malformed marker remains ordinary model-facing text and grants no attachment access.
+    }
+  }
+}
+
+/** Recover bounded, validated image pointers from the current derived session surface. */
+export function preservedImageReferences(messages) {
+  const found = new Map()
+  for (const message of messages ?? []) collectPreservedBlocks(message.content, found)
+  return [...found.values()]
 }

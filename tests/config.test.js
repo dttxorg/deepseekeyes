@@ -9,7 +9,24 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.upstreamModel, undefined)
   assert.equal(config.visionProvider, undefined)
   assert.equal(config.activeProbe, true)
+  assert.equal(config.baseMaxTokens, 16_384)
+  assert.equal(config.targetMaxTokens, 8_192)
+  assert.equal(config.historyImageLimit, 8)
+  assert.equal(config.historySummaryChars, 320)
+  assert.equal(config.browserHistoryLimit, 8)
+  assert.equal(config.browserComputerUse, false)
   assert.equal(config.cacheDir, '/test-home/.deepseekeyes/deepseekeyes/evidence')
+})
+
+test('visual token budgets accept large custom values and provider-managed output', () => {
+  const unlimited = resolveConfig({ baseMaxTokens: 0, targetMaxTokens: 0 }, {}, '/tmp')
+  assert.equal(unlimited.baseMaxTokens, 0)
+  assert.equal(unlimited.targetMaxTokens, 0)
+  const custom = resolveConfig({ baseMaxTokens: 1_000_000, targetMaxTokens: 131_072 }, {}, '/tmp')
+  assert.equal(custom.baseMaxTokens, 1_000_000)
+  assert.equal(custom.targetMaxTokens, 131_072)
+  assert.throws(() => resolveConfig({ baseMaxTokens: 511 }, {}, '/tmp'), /0 for provider-managed output/)
+  assert.throws(() => resolveConfig({ targetMaxTokens: 255 }, {}, '/tmp'), /0 for provider-managed output/)
 })
 
 test('configuration accepts environment-selected Harness vision route', () => {
@@ -36,4 +53,17 @@ test('configuration rejects a model without a provider and recursive upstream id
 test('configuration bounds visual clarification rounds', () => {
   assert.throws(() => resolveConfig({ maxClarifications: 9 }, {}, '/tmp'), /0 through 8/)
   assert.equal(resolveConfig({ maxClarifications: 0 }, {}, '/tmp').maxClarifications, 0)
+})
+
+test('configuration bounds retained visual history independently from original attachments', () => {
+  const config = resolveConfig({
+    historyImageLimit: 0,
+    historySummaryChars: 2_000,
+    browserHistoryLimit: 32,
+  }, {}, '/tmp')
+  assert.equal(config.historyImageLimit, 0)
+  assert.equal(config.historySummaryChars, 2_000)
+  assert.equal(config.browserHistoryLimit, 32)
+  assert.throws(() => resolveConfig({ historyImageLimit: 33 }, {}, '/tmp'), /0 through 32/)
+  assert.throws(() => resolveConfig({ historySummaryChars: 63 }, {}, '/tmp'), /64 through 2000/)
 })

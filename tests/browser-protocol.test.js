@@ -3,6 +3,7 @@ import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
 import {
   BROWSER_SYSTEM_PROMPT,
+  applyBrowserComputerUse,
   BrowserSession,
   BrowserSessionManager,
   createBrowserTool,
@@ -140,9 +141,9 @@ test('browser report arguments hash typed values instead of retaining their text
   assert.equal(JSON.stringify(reportable).includes('example-secret'), false)
 })
 
-test('browser alpha configuration is opt-out and supports Windows-style explicit browser settings', () => {
+test('browser 0.2 configuration is opt-in and supports Windows-style explicit browser settings', () => {
   const defaults = resolveConfig({}, {}, '/home')
-  assert.equal(defaults.browserComputerUse, true)
+  assert.equal(defaults.browserComputerUse, false)
   assert.equal(defaults.browserHeadless, false)
   assert.equal(defaults.browserViewportWidth, 1440)
   assert.equal(defaults.browserArtifactsDir, '/home/.deepseekeyes/deepseekeyes/browser-runs')
@@ -156,9 +157,36 @@ test('browser alpha configuration is opt-out and supports Windows-style explicit
   assert.equal(configured.browserArtifactsDir, undefined)
 })
 
+test('browser manager applies live configuration, removes disabled tools, and blocks direct calls', async () => {
+  const ctx = mockContext()
+  const enabled = resolveConfig({ browserArtifactsDir: false, browserComputerUse: true }, {}, '/tmp')
+  const manager = applyBrowserComputerUse(ctx, enabled)
+  assert.ok(ctx.tools.get('browser'))
+  assert.ok(ctx.systemPrompt.sections.has('deepseekeyes:browser-computer-use'))
+  manager.reconfigure(resolveConfig({ browserArtifactsDir: false, browserComputerUse: false }, {}, '/tmp'))
+  assert.equal(ctx.tools.get('browser'), undefined)
+  assert.equal(ctx.systemPrompt.sections.has('deepseekeyes:browser-computer-use'), false)
+  await assert.rejects(
+    manager.execute({ action: 'open', url: 'https://example.com' }, { signal: new AbortController().signal }),
+    error => error.code === 'BROWSER_COMPUTER_USE_DISABLED',
+  )
+  manager.reconfigure(enabled)
+  assert.ok(ctx.tools.get('browser'))
+  assert.ok(ctx.systemPrompt.sections.has('deepseekeyes:browser-computer-use'))
+  const reenabledTool = ctx.tools.get('browser')
+  const longerTimeout = resolveConfig({
+    browserArtifactsDir: false,
+    browserComputerUse: true,
+    browserTimeoutMs: 120_000,
+  }, {}, '/tmp')
+  manager.reconfigure(longerTimeout)
+  assert.notEqual(ctx.tools.get('browser'), reenabledTool)
+  assert.equal(ctx.tools.get('browser').timeoutMs, 135_000)
+})
+
 test('browser tool returns screenshot content and rejects non-DeepSeekEyes agent routes', async () => {
   const ctx = mockContext()
-  const config = resolveConfig({ browserArtifactsDir: false }, {}, '/tmp')
+  const config = resolveConfig({ browserArtifactsDir: false, browserComputerUse: true }, {}, '/tmp')
   const manager = new BrowserSessionManager(ctx, config)
   const tool = createBrowserTool(manager, config)
   const content = renderBrowserResult({

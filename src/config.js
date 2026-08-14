@@ -4,8 +4,12 @@ import { join } from 'node:path'
 export const DEFAULT_PROVIDER_ID = 'deepseekeyes'
 export const DEFAULT_UPSTREAM_PROVIDER = 'deepseek-official'
 export const DEFAULT_MAX_CLARIFICATIONS = 3
-export const DEFAULT_BASE_MAX_TOKENS = 8192
-export const DEFAULT_TARGET_MAX_TOKENS = 4096
+export const UNLIMITED_TOKEN_BUDGET = 0
+export const DEFAULT_BASE_MAX_TOKENS = 16_384
+export const DEFAULT_TARGET_MAX_TOKENS = 8_192
+export const DEFAULT_HISTORY_IMAGE_LIMIT = 8
+export const DEFAULT_HISTORY_SUMMARY_CHARS = 320
+export const DEFAULT_BROWSER_HISTORY_LIMIT = 8
 export const DEFAULT_BROWSER_TIMEOUT_MS = 15_000
 export const DEFAULT_BROWSER_SETTLE_MS = 300
 export const DEFAULT_BROWSER_VIEWPORT_WIDTH = 1440
@@ -45,6 +49,17 @@ function integerValue(value, field, fallback, minimum, maximum) {
   if (!Number.isInteger(resolved) || resolved < minimum || resolved > maximum) {
     throw new RangeError(
       `deepseekeyes: ${field} must be an integer from ${minimum} through ${maximum}`,
+    )
+  }
+  return resolved
+}
+
+function tokenBudgetValue(value, field, fallback, minimum) {
+  const resolved = value ?? fallback
+  if (resolved === UNLIMITED_TOKEN_BUDGET) return UNLIMITED_TOKEN_BUDGET
+  if (!Number.isSafeInteger(resolved) || resolved < minimum) {
+    throw new RangeError(
+      `deepseekeyes: ${field} must be 0 for provider-managed output or a safe integer of at least ${minimum}`,
     )
   }
   return resolved
@@ -120,25 +135,44 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       0,
       8,
     ),
-    baseMaxTokens: integerValue(
+    baseMaxTokens: tokenBudgetValue(
       input.baseMaxTokens,
       'baseMaxTokens',
       DEFAULT_BASE_MAX_TOKENS,
       512,
-      32768,
     ),
-    targetMaxTokens: integerValue(
+    targetMaxTokens: tokenBudgetValue(
       input.targetMaxTokens,
       'targetMaxTokens',
       DEFAULT_TARGET_MAX_TOKENS,
       256,
-      16384,
+    ),
+    historyImageLimit: integerValue(
+      input.historyImageLimit,
+      'historyImageLimit',
+      DEFAULT_HISTORY_IMAGE_LIMIT,
+      0,
+      32,
+    ),
+    historySummaryChars: integerValue(
+      input.historySummaryChars,
+      'historySummaryChars',
+      DEFAULT_HISTORY_SUMMARY_CHARS,
+      64,
+      2_000,
+    ),
+    browserHistoryLimit: integerValue(
+      input.browserHistoryLimit,
+      'browserHistoryLimit',
+      DEFAULT_BROWSER_HISTORY_LIMIT,
+      0,
+      32,
     ),
     browserComputerUse: booleanValue(
       input.browserComputerUse
         ?? environmentBoolean(environment.DEEPSEEKEYES_BROWSER_ENABLED, 'DEEPSEEKEYES_BROWSER_ENABLED'),
       'browserComputerUse',
-      true,
+      false,
     ),
     browserHeadless: booleanValue(
       input.browserHeadless

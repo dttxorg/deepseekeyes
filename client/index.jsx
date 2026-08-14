@@ -45,6 +45,37 @@ const zh = {
   maxClarifications: '最多追问轮数',
   baseMaxTokens: '首次读图 Token 上限',
   targetMaxTokens: '细节追问 Token 上限',
+  historyImageLimit: '最近历史图片引用数',
+  historySummaryChars: '每张历史图片摘要字符',
+  browserHistoryLimit: '最近 Browser 状态摘要数',
+  historyBudgetHint: '旧图片保留原附件和哈希，只向模型发送有限数量的短摘要；需要细节时由 deepseekeyes_look 按原图读取。0 表示不把旧项带入模型上下文。',
+  tokenPreset: '建议档位',
+  tokenCustom: '自定义数值',
+  tokenEconomy: '经济 · 8,192',
+  tokenRecommended: '推荐 · 16,384',
+  tokenDeep: '深度 · 32,768',
+  tokenLarge: '超长 · 65,536',
+  tokenUltra: '超大 · 131,072',
+  tokenUnlimited: '不限制 · 由 Provider 决定',
+  tokenUnlimitedInput: '未发送 maxTokens',
+  tokenHint: '可选择建议档位，也可直接输入任意安全整数；“不限制”表示插件不发送 maxTokens，模型或 Provider 自身上限仍然生效。',
+  computerUse: 'Computer Use 0.2',
+  browserComputerUse: '启用浏览器 Computer Use',
+  browserComputerUseHint: '在当前对话中注册 browser 工具，每一步返回最新 DOM、截图、状态 ID 和测试证据。',
+  browserHeadless: '无界面运行浏览器',
+  browserChannel: '浏览器通道',
+  browserChannelAuto: '自动发现（Windows 优先 Edge）',
+  browserChannelEdge: 'Microsoft Edge',
+  browserChannelChrome: 'Google Chrome',
+  browserExecutablePath: '自定义浏览器路径',
+  browserExecutablePlaceholder: '留空则使用上方通道或自动发现',
+  browserLocale: '浏览器语言',
+  browserTimeoutMs: '动作超时（毫秒）',
+  browserSettleMs: '操作后稳定等待（毫秒）',
+  browserViewportWidth: '视口宽度',
+  browserViewportHeight: '视口高度',
+  browserMaxElements: '每步最多控件数',
+  browserMaxTextChars: '每步最多页面字符',
   advanced: '高级设置',
   statusReady: '视觉路由元数据检测已通过',
   statusReadyProbe: '；发送首张图片时还会执行随机像素探针。',
@@ -61,9 +92,19 @@ const zh = {
   recursiveUpstream: 'DeepSeekEyes 不能把自己设为最终回答 Provider。',
   visionProviderRequired: '填写视觉模型时必须同时选择视觉 Provider。',
   visionRouteRequired: '关闭自动检测时必须选择视觉 Provider。',
+  browserLocaleRequired: '浏览器语言不能为空。',
   maxClarificationsRange: '追问轮数必须是 0–8 的整数。',
-  baseMaxTokensRange: '首次读图 Token 上限必须是 512–32768 的整数。',
-  targetMaxTokensRange: '细节追问 Token 上限必须是 256–16384 的整数。',
+  baseMaxTokensRange: '首次读图 Token 必须为 0（不限制）或至少 512 的安全整数。',
+  targetMaxTokensRange: '细节追问 Token 必须为 0（不限制）或至少 256 的安全整数。',
+  historyImageLimitRange: '历史图片引用数必须是 0–32 的整数。',
+  historySummaryCharsRange: '历史图片摘要字符必须是 64–2000 的整数。',
+  browserHistoryLimitRange: 'Browser 状态摘要数必须是 0–32 的整数。',
+  browserTimeoutMsRange: '动作超时必须是 1000–120000 的整数。',
+  browserSettleMsRange: '稳定等待必须是 0–10000 的整数。',
+  browserViewportWidthRange: '视口宽度必须是 320–3840 的整数。',
+  browserViewportHeightRange: '视口高度必须是 240–2160 的整数。',
+  browserMaxElementsRange: '控件数量必须是 20–500 的整数。',
+  browserMaxTextCharsRange: '页面字符数必须是 1000–100000 的整数。',
   noProviders: 'Harness 中还没有可用 Provider，请先在「设置 → 模型」添加。',
   inactive: '（未激活）',
 }
@@ -96,6 +137,37 @@ const en = {
   maxClarifications: 'Maximum clarification rounds',
   baseMaxTokens: 'Initial vision token limit',
   targetMaxTokens: 'Clarification token limit',
+  historyImageLimit: 'Recent image references',
+  historySummaryChars: 'History summary characters',
+  browserHistoryLimit: 'Recent browser state summaries',
+  historyBudgetHint: 'Old images retain their original attachment and hash while only a bounded short summary reaches the model. deepseekeyes_look rereads original pixels on demand. Zero excludes old entries from model context.',
+  tokenPreset: 'Suggested tier',
+  tokenCustom: 'Custom value',
+  tokenEconomy: 'Economy · 8,192',
+  tokenRecommended: 'Recommended · 16,384',
+  tokenDeep: 'Deep · 32,768',
+  tokenLarge: 'Long · 65,536',
+  tokenUltra: 'Ultra · 131,072',
+  tokenUnlimited: 'Unlimited · provider managed',
+  tokenUnlimitedInput: 'maxTokens omitted',
+  tokenHint: 'Choose a suggested tier or enter any safe integer. Unlimited omits maxTokens; the model or provider may still impose its own limit.',
+  computerUse: 'Computer Use 0.2',
+  browserComputerUse: 'Enable browser computer use',
+  browserComputerUseHint: 'Registers the browser tool in this conversation and returns fresh DOM, screenshot, state ID, and test evidence after every step.',
+  browserHeadless: 'Run browser headless',
+  browserChannel: 'Browser channel',
+  browserChannelAuto: 'Auto-detect (Edge first on Windows)',
+  browserChannelEdge: 'Microsoft Edge',
+  browserChannelChrome: 'Google Chrome',
+  browserExecutablePath: 'Custom browser path',
+  browserExecutablePlaceholder: 'Blank uses the selected channel or auto-detection',
+  browserLocale: 'Browser locale',
+  browserTimeoutMs: 'Action timeout (ms)',
+  browserSettleMs: 'Post-action settle (ms)',
+  browserViewportWidth: 'Viewport width',
+  browserViewportHeight: 'Viewport height',
+  browserMaxElements: 'Maximum controls per step',
+  browserMaxTextChars: 'Maximum page characters per step',
   advanced: 'Advanced settings',
   statusReady: 'Vision route metadata check passed',
   statusReadyProbe: '; the first image will also run the randomized pixel probe.',
@@ -112,9 +184,19 @@ const en = {
   recursiveUpstream: 'DeepSeekEyes cannot use itself as the final answer provider.',
   visionProviderRequired: 'A vision model requires a vision provider.',
   visionRouteRequired: 'Choose a vision provider when auto-detection is off.',
+  browserLocaleRequired: 'Browser locale must be non-empty.',
   maxClarificationsRange: 'Clarification rounds must be an integer from 0 through 8.',
-  baseMaxTokensRange: 'Initial vision tokens must be an integer from 512 through 32768.',
-  targetMaxTokensRange: 'Clarification tokens must be an integer from 256 through 16384.',
+  baseMaxTokensRange: 'Initial vision tokens must be 0 (unlimited) or a safe integer of at least 512.',
+  targetMaxTokensRange: 'Clarification tokens must be 0 (unlimited) or a safe integer of at least 256.',
+  historyImageLimitRange: 'Historical image references must be an integer from 0 through 32.',
+  historySummaryCharsRange: 'Historical image summary characters must be an integer from 64 through 2000.',
+  browserHistoryLimitRange: 'Browser state summaries must be an integer from 0 through 32.',
+  browserTimeoutMsRange: 'Action timeout must be an integer from 1000 through 120000.',
+  browserSettleMsRange: 'Settle time must be an integer from 0 through 10000.',
+  browserViewportWidthRange: 'Viewport width must be an integer from 320 through 3840.',
+  browserViewportHeightRange: 'Viewport height must be an integer from 240 through 2160.',
+  browserMaxElementsRange: 'Maximum controls must be an integer from 20 through 500.',
+  browserMaxTextCharsRange: 'Maximum page characters must be an integer from 1000 through 100000.',
   noProviders: 'No provider is available in Harness. Add one under Settings → Models first.',
   inactive: ' (inactive)',
 }
@@ -137,6 +219,7 @@ const styles = {
   button: { minHeight: 32, borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #ccd3df))', padding: '5px 14px', background: 'transparent', color: 'var(--dsw-alias-label-secondary, var(--text-primary, #172033))', cursor: 'pointer' },
   primary: { minHeight: 32, borderRadius: 8, border: 0, padding: '5px 14px', background: 'var(--dsw-alias-button-primary-fill, var(--accent-color, #4f46e5))', color: 'var(--dsw-alias-label-primary-foreground, #fff)', cursor: 'pointer' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', alignItems: 'start', gap: 14 },
+  tokenGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', alignItems: 'start', gap: 10 },
   details: { borderTop: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', paddingTop: 12 },
   detailsSummary: { cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
 }
@@ -148,6 +231,51 @@ function messageOf(error) {
 function numberFrom(event) {
   const value = Number(event.target.value)
   return Number.isFinite(value) ? value : event.target.value
+}
+
+const TOKEN_PRESETS = Object.freeze([
+  { value: 8_192, label: 'tokenEconomy' },
+  { value: 16_384, label: 'tokenRecommended' },
+  { value: 32_768, label: 'tokenDeep' },
+  { value: 65_536, label: 'tokenLarge' },
+  { value: 131_072, label: 'tokenUltra' },
+  { value: 0, label: 'tokenUnlimited' },
+])
+
+function TokenBudgetField({ id, label, minimum, value, disabled, onChange, t }) {
+  const preset = TOKEN_PRESETS.find(item => item.value === value)
+  return (
+    <div style={styles.field}>
+      <label style={styles.label} htmlFor={id}>{label}</label>
+      <div style={styles.tokenGrid}>
+        <select
+          aria-label={t('tokenPreset')}
+          style={styles.input}
+          value={preset === undefined ? 'custom' : String(preset.value)}
+          disabled={disabled}
+          onChange={(event) => {
+            if (event.target.value !== 'custom') onChange(Number(event.target.value))
+          }}
+        >
+          <option value="custom" disabled={preset !== undefined}>{t('tokenCustom')}</option>
+          {TOKEN_PRESETS.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}
+        </select>
+        <input
+          id={id}
+          aria-label={t('tokenCustom')}
+          style={styles.input}
+          type="number"
+          min={minimum}
+          step="1"
+          value={value === 0 ? '' : value}
+          placeholder={value === 0 ? t('tokenUnlimitedInput') : undefined}
+          disabled={disabled || value === 0}
+          onChange={event => onChange(numberFrom(event))}
+        />
+      </div>
+      <p style={styles.hint}>{t('tokenHint')}</p>
+    </div>
+  )
 }
 
 function modelName(group, modelId, fallback) {
@@ -429,6 +557,70 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
             <span>{t('activeProbe')}<br /><small style={styles.hint}>{t('activeProbeHint')}</small></span>
           </label>
 
+          <details style={styles.details} open>
+            <summary style={styles.detailsSummary}>{t('computerUse')}</summary>
+            <label style={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={draft.browserComputerUse}
+                disabled={saving || !snapshot.writable}
+                onChange={event => update('browserComputerUse', event.target.checked)}
+              />
+              <span>{t('browserComputerUse')}<br /><small style={styles.hint}>{t('browserComputerUseHint')}</small></span>
+            </label>
+            <label style={{ ...styles.checkboxRow, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={draft.browserHeadless}
+                disabled={saving || !snapshot.writable || !draft.browserComputerUse}
+                onChange={event => update('browserHeadless', event.target.checked)}
+              />
+              <span>{t('browserHeadless')}</span>
+            </label>
+            <div style={{ ...styles.grid, marginTop: 14 }}>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-channel">{t('browserChannel')}</label>
+                <select id="deepseekeyes-browser-channel" style={styles.input} value={draft.browserChannel} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserChannel', event.target.value)}>
+                  <option value="">{t('browserChannelAuto')}</option>
+                  <option value="msedge">{t('browserChannelEdge')}</option>
+                  <option value="chrome">{t('browserChannelChrome')}</option>
+                </select>
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-executable">{t('browserExecutablePath')}</label>
+                <input id="deepseekeyes-browser-executable" style={styles.input} type="text" value={draft.browserExecutablePath} placeholder={t('browserExecutablePlaceholder')} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserExecutablePath', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-locale">{t('browserLocale')}</label>
+                <input id="deepseekeyes-browser-locale" style={styles.input} type="text" value={draft.browserLocale} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserLocale', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-timeout">{t('browserTimeoutMs')}</label>
+                <input id="deepseekeyes-browser-timeout" style={styles.input} type="number" min="1000" max="120000" step="1" value={draft.browserTimeoutMs} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserTimeoutMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-settle">{t('browserSettleMs')}</label>
+                <input id="deepseekeyes-browser-settle" style={styles.input} type="number" min="0" max="10000" step="1" value={draft.browserSettleMs} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserSettleMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-width">{t('browserViewportWidth')}</label>
+                <input id="deepseekeyes-browser-width" style={styles.input} type="number" min="320" max="3840" step="1" value={draft.browserViewportWidth} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserViewportWidth', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-height">{t('browserViewportHeight')}</label>
+                <input id="deepseekeyes-browser-height" style={styles.input} type="number" min="240" max="2160" step="1" value={draft.browserViewportHeight} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserViewportHeight', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-elements">{t('browserMaxElements')}</label>
+                <input id="deepseekeyes-browser-elements" style={styles.input} type="number" min="20" max="500" step="1" value={draft.browserMaxElements} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserMaxElements', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-text">{t('browserMaxTextChars')}</label>
+                <input id="deepseekeyes-browser-text" style={styles.input} type="number" min="1000" max="100000" step="1" value={draft.browserMaxTextChars} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserMaxTextChars', numberFrom(event))} />
+              </div>
+            </div>
+          </details>
+
           <details style={styles.details}>
             <summary style={styles.detailsSummary}>{t('advanced')}</summary>
             <div style={styles.grid}>
@@ -437,13 +629,22 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
                 <input id="deepseekeyes-clarifications" style={styles.input} type="number" min="0" max="8" step="1" value={draft.maxClarifications} disabled={saving || !snapshot.writable} onChange={event => update('maxClarifications', numberFrom(event))} />
               </div>
               <div style={styles.field}>
-                <label style={styles.label} htmlFor="deepseekeyes-base-tokens">{t('baseMaxTokens')}</label>
-                <input id="deepseekeyes-base-tokens" style={styles.input} type="number" min="512" max="32768" step="1" value={draft.baseMaxTokens} disabled={saving || !snapshot.writable} onChange={event => update('baseMaxTokens', numberFrom(event))} />
+                <label style={styles.label} htmlFor="deepseekeyes-history-images">{t('historyImageLimit')}</label>
+                <input id="deepseekeyes-history-images" style={styles.input} type="number" min="0" max="32" step="1" value={draft.historyImageLimit} disabled={saving || !snapshot.writable} onChange={event => update('historyImageLimit', numberFrom(event))} />
               </div>
               <div style={styles.field}>
-                <label style={styles.label} htmlFor="deepseekeyes-target-tokens">{t('targetMaxTokens')}</label>
-                <input id="deepseekeyes-target-tokens" style={styles.input} type="number" min="256" max="16384" step="1" value={draft.targetMaxTokens} disabled={saving || !snapshot.writable} onChange={event => update('targetMaxTokens', numberFrom(event))} />
+                <label style={styles.label} htmlFor="deepseekeyes-history-summary">{t('historySummaryChars')}</label>
+                <input id="deepseekeyes-history-summary" style={styles.input} type="number" min="64" max="2000" step="1" value={draft.historySummaryChars} disabled={saving || !snapshot.writable} onChange={event => update('historySummaryChars', numberFrom(event))} />
               </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-browser-history">{t('browserHistoryLimit')}</label>
+                <input id="deepseekeyes-browser-history" style={styles.input} type="number" min="0" max="32" step="1" value={draft.browserHistoryLimit} disabled={saving || !snapshot.writable} onChange={event => update('browserHistoryLimit', numberFrom(event))} />
+              </div>
+            </div>
+            <p style={{ ...styles.hint, marginTop: 10 }}>{t('historyBudgetHint')}</p>
+            <div style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+              <TokenBudgetField id="deepseekeyes-base-tokens" label={t('baseMaxTokens')} minimum={512} value={draft.baseMaxTokens} disabled={saving || !snapshot.writable} onChange={value => update('baseMaxTokens', value)} t={t} />
+              <TokenBudgetField id="deepseekeyes-target-tokens" label={t('targetMaxTokens')} minimum={256} value={draft.targetMaxTokens} disabled={saving || !snapshot.writable} onChange={value => update('targetMaxTokens', value)} t={t} />
             </div>
             <label style={{ ...styles.checkboxRow, marginTop: 14 }}>
               <input type="checkbox" checked={draft.persistentEvidence} disabled={saving || !snapshot.writable} onChange={event => update('persistentEvidence', event.target.checked)} />

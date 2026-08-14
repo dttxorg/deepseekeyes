@@ -17,10 +17,49 @@ DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表�
 
 插件不保存 API Key，也不实现另一套供应商客户端。视觉调用全部经过 `ctx.llm`，因此直接复用 Harness 模型页面已经配置的端点、模型和凭据。
 
+## 原生模型切换与按需重新看图
+
+视觉读取成功后，0.2 会把**模型可见的会话表面**中的图片块替换为一个短小的保留记录，其中只包含原图 SHA-256、附件引用、尺寸和有界摘要；原始图片事件与附件字节仍完整保存在 Harness 的追加式会话日志和附件存储中。
+
+因此，同一个会话可以直接从 `DeepSeekEyes → DeepSeek V4 Flash · Eyes` 切换到原生 `DeepSeek V4 Flash`，不会再触发：
+
+```text
+Model "deepseek-v4-flash" does not accept image input,
+but this session already contains images
+```
+
+处理过图片的会话会获得仅对该会话生效的 `deepseekeyes_look` 工具。原生文本模型只有在当前问题确实需要摘要中缺失的视觉事实时，才用图片 SHA-256 和一个精确问题重新读取原始附件；普通文本问题不会调用视觉模型。没有处理过图片的会话不会注册这个工具，也不会增加对应系统提示。
+
+历史图片不会在后续文本轮次中自动重复读图。插件默认只向最终模型保留最近 8 个短图片引用，每个摘要最多 320 字符；其余原图仍保存在会话和附件存储中，可按需重新读取。
+
+## Browser Computer Use 0.2（默认关闭）
+
+在设置中明确启用后，0.2 在同一 Harness 对话中注册 `browser` 工具，形成闭环：
+
+```text
+打开网页 → 返回 DOM 与截图 → DeepSeekEyes 读取截图
+→ DeepSeek 选择最新控件 → 点击、输入或滚动 → 自动返回新截图
+→ 断言页面状态 → 继续操作 → 生成 JSON 测试报告
+```
+
+每次操作都会返回当前 URL、标题、页面文字、可交互控件 `ref`、边界框、视口、最新截图、诊断信息和新的 `stateId`。点击、输入、选择、断言等状态相关动作必须携带最新 `stateId`；旧状态会返回 `STALE_BROWSER_STATE`，且页面保持在当前状态。
+
+支持的动作包括：`open`、`observe`、`click`、`type`、`press`、`select`、`check`、`uncheck`、`scroll`、`wait`、`assert`、`back`、`forward`、`reload`、`report` 和 `close`。优先使用最新 `ref`、role/name 或 CSS selector；Canvas 等自绘控件可使用当前截图视口内的坐标。
+
+每一步截图和最终报告默认保存到：
+
+```text
+$DSH_HOME/deepseekeyes/browser-runs/<run-id>/
+```
+
+动作记录只保存输入长度和 SHA-256，不写入填写内容原文。报告只有在全部断言通过且此前没有动作错误时才标记为通过。
+
+Browser Computer Use 默认关闭，普通图文桥接和纯文本会话不会携带 `browser` 工具或相关系统提示。启用后，只有最新 Browser 状态保留完整 DOM/OCR/截图证据；历史状态默认只保留最近 8 个紧凑摘要，避免每一步把此前的完整页面证据再次发送给模型。
+
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.3.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.2.0.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
@@ -29,9 +68,9 @@ npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1
 DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 ```
 
-此后图片仍按 Harness 原生附件方式粘贴，缩略图和会话记录都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
+此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.1.1 Alpha）
+## 全 GUI 配置（0.2）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -42,11 +81,20 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
    - **最终回答模型**（负责推理和回复用户）；
    - **后台读图 Provider**；
    - **后台读图模型**（只读取原图并回答细节追问）。
-4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 上限。
-5. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
-6. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
+4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
+5. 在 **Computer Use 0.2** 区域选择启用状态、Edge/Chrome、无界面模式、视口和动作参数。
+6. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
+7. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
 DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；不再要求把 `upstreamProvider`、`upstreamModel`、`visionProvider` 或 `visionModel` 写进 `cordis.patch.yml`。切换最终回答 Provider 时，界面会清空旧模型，避免把上一个 Provider 的模型 ID 带入新路由。
+
+### Token 建议档位与不限制模式
+
+首次读图和细节追问都同时提供手工输入与建议档位：8,192、16,384、32,768、65,536、131,072，以及“不限制”。默认值分别提高到 16,384 和 8,192。
+
+自定义值取消了原先 32,768/16,384 的插件硬上限，可以填写任意满足最低值的 JavaScript 安全整数。“不限制”在配置中记为 `0`，插件调用视觉模型时完全省略 `maxTokens`；最终有效上限仍由所选模型和 Provider 决定。
+
+这里的两个数值只控制**后台视觉模型的输出预算**，不会把 DeepSeek 最终回答模型的 `maxTokens` 调大，也不会为普通文本轮次制造额外视觉调用。最终模型的输出预算仍来自 Harness 当前模型设置；当估算输入加输出会超过该模型的 `contextWindow` 时，插件只对本次最终调用向下收缩输出预算。若 Provider 返回包含精确输入量和上下文上限的溢出诊断，插件按该诊断再试一次，而不是继续提交一个必定超过上限的请求。
 
 ## 自定义网关的图片能力
 
@@ -85,6 +133,10 @@ defaultInput: [text, image]
     visionModel: gpt-4.1
     activeProbe: true
     maxClarifications: 3
+    baseMaxTokens: 16384
+    targetMaxTokens: 8192
+    browserComputerUse: true
+    browserChannel: msedge
 ```
 
 也可以通过启动环境指定最终模型和视觉路由：
@@ -125,6 +177,8 @@ $DSH_HOME/deepseekeyes/evidence/
 
 原图始终是事实源；多轮追问每次重新引用原始附件，而不是对上一次摘要继续摘要。若视觉调用、证据 JSON、持久化或追问协议失败，本轮以错误结束，DeepSeek 不会在缺失证据时继续生成。
 
+视觉读取成功后，为了允许切换到原生纯文本模型，Harness 的模型可见 Surface 会使用上述保留记录；追加式原始事件和附件字节不会被覆盖。会话导出仍能从原始事件找到附件。`deepseekeyes_look` 每次也从原始附件读取并校验 SHA-256，不从缩略图、JPEG 副本或上一次文字摘要推断。
+
 ## 配置字段
 
 | 字段 | 默认值 | 说明 |
@@ -139,13 +193,28 @@ $DSH_HOME/deepseekeyes/evidence/
 | `maxClarifications` | `3` | 每次 DeepSeek 回答最多追加的视觉追问次数 |
 | `persistentEvidence` | `true` | 持久保存视觉证据 |
 | `cacheDir` | DSH/Home 路径 | 证据目录；设为 `false` 时只使用进程内缓存 |
-| `baseMaxTokens` | `8192` | 基础视觉证据最大输出 Token |
-| `targetMaxTokens` | `4096` | 单次细节追问最大输出 Token |
+| `baseMaxTokens` | `16384` | 基础视觉证据输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
+| `targetMaxTokens` | `8192` | 单次细节追问输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
+| `historyImageLimit` | `8` | 最终模型上下文中保留的最近历史图片短引用数；`0` 表示不自动带入历史引用 |
+| `historySummaryChars` | `320` | 每个历史图片引用最多携带的摘要字符数 |
+| `browserHistoryLimit` | `8` | 最终模型上下文中保留的最近 Browser 状态紧凑摘要数 |
+| `browserComputerUse` | `false` | 是否注册 Browser Computer Use 工具；默认关闭以隔离普通会话开销 |
+| `browserHeadless` | `false` | 是否以无界面模式运行浏览器 |
+| `browserChannel` | 自动发现 | Windows 优先 `msedge`，也可选 `chrome` |
+| `browserExecutablePath` | 未设置 | 自定义 Chromium 可执行文件路径 |
+| `browserLocale` | `zh-CN` | 浏览器上下文语言 |
+| `browserTimeoutMs` | `15000` | 单次浏览器动作超时 |
+| `browserSettleMs` | `300` | 操作后等待界面稳定的时间 |
+| `browserViewportWidth` | `1440` | 浏览器视口宽度 |
+| `browserViewportHeight` | `900` | 浏览器视口高度 |
+| `browserMaxElements` | `200` | 单次观察最多返回的交互控件数 |
+| `browserMaxTextChars` | `20000` | 单次观察最多返回的页面字符数 |
 
 ## 本地验证
 
 ```sh
 npm test
+npm run test:browser
 npm run check
 npm pack --dry-run
 ```

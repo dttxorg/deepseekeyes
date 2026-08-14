@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 - 2026-08-15
+
+- Merge Browser Computer Use into `main` with Playwright-based open, observe, semantic action, wait, assertion, reporting and close operations.
+- Return a fresh content-addressed screenshot, DOM-derived refs, diagnostics and stale-state-bound `stateId` after every browser step.
+- Add native Harness settings for browser enablement, installed Edge/Chrome selection, executable path, locale, timing, viewport and observation limits.
+- Raise the default base/clarification budgets to 16,384/8,192 tokens.
+- Add 8K, 16K, 32K, 64K and 128K suggestions, unrestricted provider-managed output, and unbounded safe-integer custom token values.
+- Omit `maxTokens` entirely in unrestricted mode so the selected model/Provider owns its effective output ceiling.
+- Make Browser Computer Use opt-in by default so ordinary text/vision sessions receive no Browser tool or prompt overhead.
+- Process only images introduced in the current request segment; historical images make zero automatic vision calls and are represented by a bounded number of compact hash-bound references.
+- Compact historical Browser DOM/OCR states to a bounded recent window instead of repeatedly forwarding every full state and screenshot.
+- Preserve original image events and attachment bytes while replacing processed image blocks on the model-facing session Surface, allowing direct selection of native text-only models such as DeepSeek V4 Flash.
+- Add the session-scoped `deepseekeyes_look` tool so a native text model can request one precise reread from the preserved original attachment without enabling visual overhead in unrelated sessions.
+- Fit final-model output to the resolved context window and retry one provider-reported context overflow with the exact safe capacity.
+- Apply browser settings live, close stale sessions after launch-setting changes, and keep the existing final-model/vision-model GUI routing.
+- Preserve screenshots and JSON reports under the configured DSH evidence directory and reject stale actions before page mutation.
+
 ## 0.1.1-alpha.3 - 2026-08-15
 
 - Match the visible native Harness plugin-card surface by using the same `--dsw-alias-bg-layer-3` background token.

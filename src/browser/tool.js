@@ -35,6 +35,17 @@ export class BrowserSessionManager {
     this.config = config
     this.options = options
     this.sessions = new Map()
+    this.onActivationChange = undefined
+  }
+
+  reconfigure(config) {
+    const changed = JSON.stringify(Object.entries(this.config)
+      .filter(([key]) => key.startsWith('browser')))
+      !== JSON.stringify(Object.entries(config).filter(([key]) => key.startsWith('browser')))
+    this.config = config
+    if (changed) void this.closeAll()
+    this.onActivationChange?.(config.browserComputerUse, changed)
+    return this.config
   }
 
   sessionKey(exec) {
@@ -55,6 +66,9 @@ export class BrowserSessionManager {
   }
 
   async execute(input, exec) {
+    if (!this.config.browserComputerUse) {
+      throw new DeepSeekEyesError('browser computer use is disabled in DeepSeekEyes settings', 'BROWSER_COMPUTER_USE_DISABLED')
+    }
     assertDeepSeekEyesRoute(this.config, exec)
     const args = parseBrowserArgs(input)
     const session = this.getOrCreate(exec)
@@ -114,25 +128,44 @@ Use the browser tool for browser automation and testing. Begin with action="open
 
 /** Register the browser tool and lifecycle cleanup into a DSH plugin context. */
 export function applyBrowserComputerUse(ctx, config, options = {}) {
-  if (!config.browserComputerUse) return undefined
   const manager = new BrowserSessionManager(ctx, config, options)
-  const registerTool = () => ctx.tools.register(createBrowserTool(manager, config))
-  if (typeof ctx.effect === 'function') ctx.effect(registerTool, 'deepseekeyes: browser tool')
-  else registerTool()
-  if (ctx.systemPrompt !== undefined) {
-    const registerPrompt = () => ctx.systemPrompt.section({
-      name: 'deepseekeyes:browser-computer-use',
-      order: 125,
-      text: BROWSER_SYSTEM_PROMPT,
-    })
-    if (typeof ctx.effect === 'function') ctx.effect(registerPrompt, 'deepseekeyes: browser prompt')
-    else registerPrompt()
+  let disposeTool
+  let disposePrompt
+  const syncActivation = (enabled, refresh = false) => {
+    if (refresh) {
+      disposeTool?.()
+      disposePrompt?.()
+      disposeTool = undefined
+      disposePrompt = undefined
+    }
+    if (enabled) {
+      disposeTool ??= ctx.tools.register(createBrowserTool(manager, manager.config))
+      if (ctx.systemPrompt !== undefined) {
+        disposePrompt ??= ctx.systemPrompt.section({
+          name: 'deepseekeyes:browser-computer-use',
+          order: 125,
+          text: BROWSER_SYSTEM_PROMPT,
+        })
+      }
+      return
+    }
+    disposeTool?.()
+    disposePrompt?.()
+    disposeTool = undefined
+    disposePrompt = undefined
   }
+  manager.onActivationChange = syncActivation
+  const install = () => {
+    syncActivation(config.browserComputerUse)
+    return async () => {
+      syncActivation(false)
+      await manager.closeAll()
+    }
+  }
+  if (typeof ctx.effect === 'function') ctx.effect(install, 'deepseekeyes: browser computer use')
+  else install()
   if (typeof ctx.on === 'function') {
     ctx.on('session/disposed', session => { void manager.close(session.id) })
-  }
-  if (typeof ctx.effect === 'function') {
-    ctx.effect(() => async () => manager.closeAll(), 'deepseekeyes: browser cleanup')
   }
   return manager
 }

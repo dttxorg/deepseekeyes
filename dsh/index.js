@@ -1,11 +1,13 @@
 import { EvidenceCache } from '../src/cache.js'
 import { applyBrowserComputerUse } from '../src/browser/index.js'
 import {
+  activeImageBlocks,
   attachmentKey,
+  historicalImageBlocks,
   messagesHaveImages,
+  messagesNeedHistoryCompaction,
   pluginUserMessage,
-  replaceImagesWithEvidence,
-  uniqueImageBlocks,
+  rewriteMessagesForBridge,
 } from '../src/content.js'
 import { resolveConfig } from '../src/config.js'
 import { DeepSeekEyesError, errorMessage } from '../src/error.js'
@@ -14,14 +16,18 @@ import {
   clarificationInstruction,
   parseClarificationRequest,
   renderBaseEvidence,
+  renderPreservedImageReference,
   renderTargetEvidence,
 } from '../src/protocol.js'
+import { applyLookTool } from '../src/look.js'
+import { compactSessionHistory, shadowSessionImages } from '../src/session.js'
 import { installHarnessSettings, SETTINGS_NAMESPACE } from '../src/settings.js'
-import { addUsage, collectStream, emptyUsage, replayWithUsage } from '../src/stream.js'
+import { addUsage, emptyUsage, replayWithUsage } from '../src/stream.js'
+import { collectFinalWithBudget, fitOutputBudget } from '../src/token-safety.js'
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
 
 export const name = 'deepseekeyes'
-export const inject = ['llm', 'attachments', 'tools', 'systemPrompt']
+export const inject = ['llm', 'attachments', 'tools', 'systemPrompt', 'agents']
 
 function appendSystem(system, addition) {
   return `${system ?? ''}${system === undefined || system === '' ? '' : '\n\n'}--- DeepSeekEyes private visual protocol ---\n${addition}`
@@ -62,7 +68,18 @@ function createRuntime(ctx, rawConfig, logger) {
   return Object.freeze({ config, router, cache, probe, evidenceManager })
 }
 
-async function* bridgeStream(ctx, runtime, options) {
+async function* forwardText(ctx, options, logger) {
+  const info = await ctx.llm.resolveModelInfo(options.provider, options.model, options.signal)
+  const fitted = fitOutputBudget(options, info, logger)
+  if (!fitted.changed) {
+    yield* ctx.llm.stream(options)
+    return
+  }
+  const guarded = await collectFinalWithBudget(ctx, options, info, logger)
+  yield* replayWithUsage(guarded.result.chunks, guarded.result.usage)
+}
+
+async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
   const { config, router, evidenceManager } = runtime
   const upstreamModel = lockedUpstreamModel(config, options.model)
   const upstreamOptions = {
@@ -71,36 +88,142 @@ async function* bridgeStream(ctx, runtime, options) {
     ...(upstreamModel === undefined ? {} : { model: upstreamModel }),
   }
   if (!messagesHaveImages(options.messages)) {
-    yield* ctx.llm.stream(upstreamOptions)
+    const needsCompaction = messagesNeedHistoryCompaction(options.messages)
+    if (needsCompaction) {
+      compactSessionHistory(ctx, options.sessionId, {
+        historyImageLimit: config.historyImageLimit,
+        browserHistoryLimit: config.browserHistoryLimit,
+      }, logger)
+    }
+    const messages = needsCompaction
+      ? rewriteMessagesForBridge(
+          options.messages,
+          new Map(),
+          new Map(),
+          {
+            historyImageLimit: config.historyImageLimit,
+            browserHistoryLimit: config.browserHistoryLimit,
+          },
+        )
+      : options.messages
+    yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
     return
   }
 
-  const route = await router.resolve(options.signal)
+  const activeBlocks = activeImageBlocks(options.messages)
+  const historicalBlocks = historicalImageBlocks(options.messages)
+  let route = activeBlocks.length === 0 ? undefined : await router.resolve(options.signal)
   const totalUsage = emptyUsage()
   const baseRecords = []
-  const evidenceByAttachment = new Map()
+  const activeEvidence = new Map()
+  const historicalEvidence = new Map()
+  const preservedByAttachment = new Map()
+  const preservedEntries = []
   const blockByHash = new Map()
   const baseByHash = new Map()
+  const baseByAttachment = new Map()
 
-  for (const block of uniqueImageBlocks(options.messages)) {
+  for (const block of activeBlocks) {
     const result = await evidenceManager.baseFor(block, route, options.signal)
     addUsage(totalUsage, result.usage)
     baseRecords.push(result.record)
-    evidenceByAttachment.set(attachmentKey(block.attachment), renderBaseEvidence(result.record))
+    const key = attachmentKey(block.attachment)
+    activeEvidence.set(key, renderBaseEvidence(result.record))
+    preservedByAttachment.set(
+      key,
+      renderPreservedImageReference(result.record, config.historySummaryChars),
+    )
+    preservedEntries.push({
+      imageSha256: result.record.source.sha256,
+      attachment: block.attachment,
+      summary: result.record.evidence.summary,
+    })
     blockByHash.set(result.record.source.sha256, block)
     baseByHash.set(result.record.source.sha256, result.record)
+    baseByAttachment.set(key, result.record)
   }
 
-  let messages = replaceImagesWithEvidence(options.messages, evidenceByAttachment)
+  const recentHistoryKeys = new Set((config.historyImageLimit === 0
+    ? []
+    : historicalBlocks.slice(-config.historyImageLimit))
+    .map(block => attachmentKey(block.attachment)))
+  for (const block of historicalBlocks) {
+    const key = attachmentKey(block.attachment)
+    let record = baseByAttachment.get(key)
+    let source
+    if (record !== undefined) {
+      source = record.source
+    } else {
+      const reference = await evidenceManager.referenceFor(block, options.signal)
+      source = reference.source
+      record = reference.record
+      if (record !== undefined) baseByAttachment.set(key, record)
+    }
+    const preserved = renderPreservedImageReference(
+      record ?? { source, summary: 'Visual evidence is preserved and available for an on-demand reread.' },
+      config.historySummaryChars,
+    )
+    preservedByAttachment.set(key, preserved)
+    historicalEvidence.set(key, recentHistoryKeys.has(key) ? preserved : '')
+    preservedEntries.push({
+      imageSha256: source.sha256,
+      attachment: block.attachment,
+      ...(record?.evidence?.summary === undefined ? {} : { summary: record.evidence.summary }),
+    })
+    if (recentHistoryKeys.has(key)) {
+      blockByHash.set(source.sha256, block)
+      if (record !== undefined) baseByHash.set(source.sha256, record)
+    }
+  }
+
+  const shadowed = shadowSessionImages(
+    ctx,
+    options.sessionId,
+    preservedByAttachment,
+    logger,
+  )
+  lookManager?.remember(shadowed.agent, preservedEntries)
+  compactSessionHistory(ctx, options.sessionId, {
+    historyImageLimit: config.historyImageLimit,
+    browserHistoryLimit: config.browserHistoryLimit,
+  }, logger)
+
+  let messages = rewriteMessagesForBridge(
+    options.messages,
+    activeEvidence,
+    historicalEvidence,
+    {
+      historyImageLimit: config.historyImageLimit,
+      browserHistoryLimit: config.browserHistoryLimit,
+    },
+  )
+
+  if (activeBlocks.length === 0) {
+    yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
+    return
+  }
+
   const allowedHashes = new Set(baseByHash.keys())
-  const system = appendSystem(options.system, clarificationInstruction(baseRecords))
+  const catalogRecords = [
+    ...baseRecords,
+    ...[...baseByHash.values()]
+      .filter(record => !baseRecords.some(base => base.source.sha256 === record.source.sha256))
+      .map(record => ({ ...record, summary: record.evidence.summary.slice(0, config.historySummaryChars) })),
+  ]
+  const system = appendSystem(options.system, clarificationInstruction(catalogRecords))
+  const upstreamInfo = await ctx.llm.resolveModelInfo(
+    config.upstreamProvider,
+    upstreamModel,
+    options.signal,
+  )
 
   for (let clarificationCount = 0; ; clarificationCount += 1) {
-    const upstream = await collectStream(ctx.llm.stream({
+    const guarded = await collectFinalWithBudget(ctx, {
       ...upstreamOptions,
       messages,
       system,
-    }))
+    }, upstreamInfo, logger)
+    const upstream = guarded.result
     addUsage(totalUsage, upstream.usage)
     const request = parseClarificationRequest(upstream.text, allowedHashes)
     if (request === undefined) {
@@ -114,9 +237,16 @@ async function* bridgeStream(ctx, runtime, options) {
       )
     }
     const block = blockByHash.get(request.imageSha256)
-    const baseRecord = baseByHash.get(request.imageSha256)
-    if (block === undefined || baseRecord === undefined) {
+    let baseRecord = baseByHash.get(request.imageSha256)
+    if (block === undefined) {
       throw new DeepSeekEyesError('clarification request lost its original image reference', 'VISION_STATE_MISMATCH')
+    }
+    if (route === undefined) route = await router.resolve(options.signal)
+    if (baseRecord === undefined) {
+      const base = await evidenceManager.baseFor(block, route, options.signal)
+      addUsage(totalUsage, base.usage)
+      baseRecord = base.record
+      baseByHash.set(request.imageSha256, baseRecord)
     }
     const targeted = await evidenceManager.targetFor(block, baseRecord, request, route, options.signal)
     addUsage(totalUsage, targeted.usage)
@@ -201,7 +331,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       return visionWrappedModel(info, current.config, route)
     },
     stream(options) {
-      return bridgeStream(ctx, runtime, options)
+      return bridgeStream(ctx, runtime, options, state.look, logger)
     },
   }
 
@@ -211,6 +341,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
 export function apply(ctx, rawConfig = {}) {
   const state = createDeepSeekEyesAdapter(ctx, rawConfig)
   ctx.llm.registerAdapter([state.config.providerId], state.adapter)
+  state.look = applyLookTool(ctx, state)
   state.browser = applyBrowserComputerUse(ctx, state.config)
 
   if (typeof ctx.llm.registerConfigurableProviders === 'function') {

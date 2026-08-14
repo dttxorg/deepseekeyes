@@ -26,6 +26,12 @@ test('GUI draft emits minimal live settings mutations and validates routing cons
   assert.equal(settingsDraftFailure({ ...draft, autoDetectVision: false }), 'visionRouteRequired')
   assert.equal(settingsDraftFailure({ ...draft, upstreamProvider: 'deepseekeyes' }), 'recursiveUpstream')
   assert.equal(settingsDraftFailure({ ...current, baseMaxTokens: 500 }), 'baseMaxTokensRange')
+  assert.equal(settingsDraftFailure({ ...current, baseMaxTokens: 0, targetMaxTokens: 0 }), undefined)
+  assert.equal(settingsDraftFailure({ ...current, baseMaxTokens: 1_000_000 }), undefined)
+  assert.equal(settingsDraftFailure({ ...current, browserViewportWidth: 319 }), 'browserViewportWidthRange')
+  assert.equal(settingsDraftFailure({ ...current, historyImageLimit: 33 }), 'historyImageLimitRange')
+  assert.equal(settingsDraftFailure({ ...current, historySummaryChars: 63 }), 'historySummaryCharsRange')
+  assert.equal(settingsDraftFailure({ ...current, browserHistoryLimit: -1 }), 'browserHistoryLimitRange')
   assert.equal(settingsDraftFailure(current), undefined)
 })
 

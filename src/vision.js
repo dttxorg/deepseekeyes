@@ -121,6 +121,7 @@ export async function readImageSource(ctx, block, signal) {
     bytes: data.byteLength,
     width: ref.width,
     height: ref.height,
+    ...(ref.name === undefined ? {} : { name: ref.name }),
     sha256: createHash('sha256').update(data).digest('hex'),
   })
 }
@@ -142,6 +143,10 @@ function targetRecordLooksUsable(record, source, route, question) {
     && record.evidence?.schemaVersion === 'deepseekeyes.target.v1'
 }
 
+function tokenBudget(maxTokens) {
+  return maxTokens === 0 ? {} : { maxTokens }
+}
+
 /** Produces append-only base and clarification records from original image references. */
 export class EvidenceManager {
   constructor(ctx, config, cache, probe) {
@@ -149,23 +154,60 @@ export class EvidenceManager {
     this.config = config
     this.cache = cache
     this.probe = probe
+    this.baseBySha = new Map()
+    this.baseByAttachment = new Map()
+  }
+
+  rememberBase(record) {
+    this.baseBySha.set(record.source.sha256, record)
+    this.baseByAttachment.set(record.source.attachmentId, record)
+    return record
+  }
+
+  knownBase(imageSha256) {
+    const record = this.baseBySha.get(imageSha256)
+    return record === undefined ? undefined : structuredClone(record)
+  }
+
+  async referenceFor(block, signal) {
+    const source = await readImageSource(this.ctx, block, signal)
+    const record = this.baseBySha.get(source.sha256)
+      ?? this.baseByAttachment.get(source.attachmentId)
+    return {
+      source,
+      ...(record === undefined ? {} : { record: structuredClone(record) }),
+    }
+  }
+
+  async cachedBaseFor(block, route, signal) {
+    const source = await readImageSource(this.ctx, block, signal)
+    const key = evidenceCacheKey('base', source.sha256, route)
+    const cached = await this.cache.read(key)
+    if (!baseRecordLooksUsable(cached, source, route)) return { source }
+    try {
+      validateBaseEvidence(cached.evidence)
+      return { source, record: structuredClone(this.rememberBase(cached)) }
+    } catch {
+      return { source }
+    }
   }
 
   async baseFor(block, route, signal) {
     const source = await readImageSource(this.ctx, block, signal)
     const key = evidenceCacheKey('base', source.sha256, route)
     const totalUsage = emptyUsage()
-    const proof = await this.probe.ensure(route, signal)
-    addUsage(totalUsage, proof.usage)
     const cached = await this.cache.read(key)
     if (baseRecordLooksUsable(cached, source, route)) {
       try {
         validateBaseEvidence(cached.evidence)
-        return { record: cached, usage: totalUsage }
+        return { record: structuredClone(this.rememberBase(cached)), usage: totalUsage }
       } catch {
         // Regenerate a structurally incomplete record under the same immutable key.
       }
     }
+
+    const proof = await this.probe.ensure(route, signal)
+    addUsage(totalUsage, proof.usage)
 
     const result = await collectStream(this.ctx.llm.stream({
       provider: route.provider,
@@ -176,12 +218,12 @@ export class EvidenceManager {
         { type: 'text', text: baseEvidencePrompt(source) },
       ], 'DeepSeekEyes 基础视觉读取')],
       temperature: 0,
-      maxTokens: this.config.baseMaxTokens,
+      ...tokenBudget(this.config.baseMaxTokens),
       signal,
     }))
     addUsage(totalUsage, result.usage)
     const evidence = validateBaseEvidence(parseJsonObject(result.text, 'base visual evidence'))
-    const record = await this.cache.write(key, {
+    const record = this.rememberBase(await this.cache.write(key, {
       recordVersion: 1,
       kind: 'base',
       createdAt: new Date().toISOString(),
@@ -192,7 +234,7 @@ export class EvidenceManager {
         validation: proof.validation,
       },
       evidence,
-    })
+    }))
     return { record, usage: totalUsage }
   }
 
@@ -208,6 +250,7 @@ export class EvidenceManager {
         // Regenerate a structurally incomplete record under the same immutable key.
       }
     }
+    const proof = await this.probe.ensure(route, signal)
     const result = await collectStream(this.ctx.llm.stream({
       provider: route.provider,
       model: route.model,
@@ -217,7 +260,7 @@ export class EvidenceManager {
         { type: 'text', text: targetEvidencePrompt(baseRecord.source, request) },
       ], 'DeepSeekEyes 视觉细节核对')],
       temperature: 0,
-      maxTokens: this.config.targetMaxTokens,
+      ...tokenBudget(this.config.targetMaxTokens),
       signal,
     }))
     const evidence = validateTargetEvidence(parseJsonObject(result.text, 'target visual evidence'))
@@ -229,12 +272,15 @@ export class EvidenceManager {
       vision: {
         provider: route.provider,
         model: route.model,
-        validation: baseRecord.vision.validation,
+        validation: proof.validation,
       },
       question: request.question,
       ...(request.region === undefined ? {} : { region: request.region }),
       evidence,
     })
-    return { record, usage: result.usage }
+    const usage = emptyUsage()
+    addUsage(usage, proof.usage)
+    addUsage(usage, result.usage)
+    return { record, usage }
   }
 }

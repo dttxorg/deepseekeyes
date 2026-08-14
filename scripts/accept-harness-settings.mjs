@@ -42,6 +42,12 @@ assert.ok(eyesNamespace)
 assert.equal(eyesNamespace.applies, 'live')
 assert.equal(eyesNamespace.revision, 0)
 assert.equal(eyesNamespace.value.maxClarifications, 3)
+assert.equal(eyesNamespace.value.baseMaxTokens, 16_384)
+assert.equal(eyesNamespace.value.targetMaxTokens, 8_192)
+assert.equal(eyesNamespace.value.historyImageLimit, 8)
+assert.equal(eyesNamespace.value.historySummaryChars, 320)
+assert.equal(eyesNamespace.value.browserHistoryLimit, 8)
+assert.equal(eyesNamespace.value.browserComputerUse, false)
 
 const providers = await rpc('llm.providers', {})
 const eyesDirectory = providers.providers.find(entry => entry.provider === 'deepseekeyes')
@@ -78,6 +84,14 @@ await rpc('settings.mutate', {
     { op: 'set', path: ['visionModel'], value: 'fixture-vision-model' },
     { op: 'set', path: ['activeProbe'], value: false },
     { op: 'set', path: ['maxClarifications'], value: 5 },
+    { op: 'set', path: ['baseMaxTokens'], value: 0 },
+    { op: 'set', path: ['targetMaxTokens'], value: 131_072 },
+    { op: 'set', path: ['historyImageLimit'], value: 6 },
+    { op: 'set', path: ['historySummaryChars'], value: 240 },
+    { op: 'set', path: ['browserHistoryLimit'], value: 4 },
+    { op: 'set', path: ['browserComputerUse'], value: true },
+    { op: 'set', path: ['browserHeadless'], value: true },
+    { op: 'set', path: ['browserChannel'], value: 'msedge' },
   ],
 })
 await new Promise(resolve => setTimeout(resolve, 200))
@@ -114,6 +128,14 @@ assert.equal(finalEyes.value.visionProvider, 'fixture-vision-gateway')
 assert.equal(finalEyes.value.visionModel, 'fixture-vision-model')
 assert.equal(finalEyes.value.activeProbe, false)
 assert.equal(finalEyes.value.maxClarifications, 5)
+assert.equal(finalEyes.value.baseMaxTokens, 0)
+assert.equal(finalEyes.value.targetMaxTokens, 131_072)
+assert.equal(finalEyes.value.historyImageLimit, 6)
+assert.equal(finalEyes.value.historySummaryChars, 240)
+assert.equal(finalEyes.value.browserHistoryLimit, 4)
+assert.equal(finalEyes.value.browserComputerUse, true)
+assert.equal(finalEyes.value.browserHeadless, true)
+assert.equal(finalEyes.value.browserChannel, 'msedge')
 assert.equal(finalGateway.baseURL, 'https://fixture.invalid/v1')
 assert.equal(finalGateway.models[0].id, 'fixture-vision-model')
 assert.deepEqual(finalGateway.defaultInput, ['text', 'image'])
@@ -125,6 +147,13 @@ for (const literal of [
   'visionProvider: fixture-vision-gateway',
   'visionModel: fixture-vision-model',
   'maxClarifications: 5',
+  'baseMaxTokens: 0',
+  'targetMaxTokens: 131072',
+  'historyImageLimit: 6',
+  'historySummaryChars: 240',
+  'browserHistoryLimit: 4',
+  'browserHeadless: true',
+  'browserChannel: msedge',
   'baseURL: https://fixture.invalid/v1',
   '- id: fixture-vision-model',
   '- image',
@@ -147,6 +176,21 @@ console.log(JSON.stringify({
     vision: `${finalEyes.value.visionProvider}/${finalEyes.value.visionModel}`,
     wrapperName: eyesModels[0].name,
     wrapperDescription: eyesModels[0].description,
+  },
+  tokenBudgets: {
+    baseMaxTokens: finalEyes.value.baseMaxTokens,
+    targetMaxTokens: finalEyes.value.targetMaxTokens,
+    unrestrictedOmitsMaxTokens: finalEyes.value.baseMaxTokens === 0,
+  },
+  boundedHistory: {
+    imageReferences: finalEyes.value.historyImageLimit,
+    summaryCharacters: finalEyes.value.historySummaryChars,
+    browserStates: finalEyes.value.browserHistoryLimit,
+  },
+  browserSettings: {
+    enabled: finalEyes.value.browserComputerUse,
+    headless: finalEyes.value.browserHeadless,
+    channel: finalEyes.value.browserChannel,
   },
   persistedSiblingFields: {
     baseURL: finalGateway.baseURL,

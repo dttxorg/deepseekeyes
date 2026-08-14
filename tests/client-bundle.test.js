@@ -80,4 +80,8 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /后台读图模型/)
   assert.match(source, /当前路由：图片 → \{vision\} 读图 → \{final\} 最终回答/)
   assert.match(source, /id="deepseekeyes-upstream-model"/)
+  assert.match(source, /推荐 · 16,384/)
+  assert.match(source, /不限制 · 由 Provider 决定/)
+  assert.match(source, /id="deepseekeyes-browser-channel"/)
+  assert.doesNotMatch(source, /id="deepseekeyes-base-tokens"[^>]*max=/)
 })

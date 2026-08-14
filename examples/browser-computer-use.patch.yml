@@ -4,6 +4,8 @@
     visionProvider: openai
     visionModel: gpt-4.1
     activeProbe: true
+    baseMaxTokens: 16384
+    targetMaxTokens: 8192
     browserComputerUse: true
     browserHeadless: false
     # Windows recommends msedge; macOS commonly uses chrome.

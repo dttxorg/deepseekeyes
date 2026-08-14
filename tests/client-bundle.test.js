@@ -65,7 +65,6 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
 test('settings card inherits Harness theme tokens and top-aligns side-by-side fields', async () => {
   const source = await readFile(new URL('../client/index.jsx', import.meta.url), 'utf8')
   for (const token of [
-    '--dsw-alias-bg-layer-2',
     '--dsw-alias-bg-layer-3',
     '--dsw-alias-border-l2',
     '--dsw-alias-label-primary',
@@ -75,6 +74,7 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /field: \{[^}]*alignContent: 'start'/)
   assert.match(source, /grid: \{[^}]*alignItems: 'start'/)
   assert.match(source, /input: \{[^}]*height: 36/)
+  assert.match(source, /card: \{[^}]*background: 'var\(--dsw-alias-bg-layer-3/)
   assert.match(source, /最终回答 Provider/)
   assert.match(source, /最终回答模型/)
   assert.match(source, /后台读图模型/)

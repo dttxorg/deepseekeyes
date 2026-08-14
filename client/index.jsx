@@ -120,7 +120,7 @@ const en = {
 }
 
 const styles = {
-  card: { listStyle: 'none', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #d9dee8))', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2, var(--card-bg, #fff))', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))', overflow: 'hidden' },
+  card: { listStyle: 'none', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #d9dee8))', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-3, var(--card-bg, #fff))', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))', overflow: 'hidden' },
   summary: { cursor: 'pointer', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 5 },
   title: { fontSize: 16, fontWeight: 650, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
   description: { fontSize: 13, lineHeight: 1.5, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },

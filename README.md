@@ -4,7 +4,7 @@
 
 DeepSeekEyes is an installable DeepSeek Harness bundle. It registers a virtual `deepseekeyes` provider which accepts native Harness image attachments, asks an already-configured multimodal Harness model for structured evidence, and delegates reasoning to the selected DeepSeek model. DeepSeek may privately request additional visual detail; the user stays in one conversation.
 
-Version `0.1.1-alpha.2` adds an explicit final-answer model selector to the native **Settings → Plugins → DeepSeekEyes** card. The GUI now locks both routes independently—final provider/model and background vision provider/model—and shows the live image → vision → final-answer route. For custom `llm-pi-ai` gateways, the same card can write `defaultInput: [text, image]` with a path mutation that preserves every sibling provider field.
+Version `0.1.1-alpha.3` adds an explicit final-answer model selector to the native **Settings → Plugins → DeepSeekEyes** card and matches the background surface used by the surrounding native plugin cards. The GUI locks both routes independently—final provider/model and background vision provider/model—and shows the live image → vision → final-answer route. For custom `llm-pi-ai` gateways, the same card can write `defaultInput: [text, image]` with a path mutation that preserves every sibling provider field.
 
 Core properties:
 

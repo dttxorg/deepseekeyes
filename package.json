@@ -1,6 +1,6 @@
 {
   "name": "deepseekeyes",
-  "version": "0.1.1-alpha.2",
+  "version": "0.1.1-alpha.3",
   "description": "A transparent multimodal vision bridge for DeepSeek Harness that keeps image bytes intact and lets DeepSeek request visual clarification in one conversation.",
   "type": "module",
   "main": "./dsh/index.js",

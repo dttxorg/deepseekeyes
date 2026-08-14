@@ -20,7 +20,7 @@ DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表�
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.2.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.1.1-alpha.3.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：

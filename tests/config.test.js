@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
 
@@ -15,7 +16,7 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.historySummaryChars, 320)
   assert.equal(config.browserHistoryLimit, 8)
   assert.equal(config.browserComputerUse, false)
-  assert.equal(config.cacheDir, '/test-home/.deepseekeyes/deepseekeyes/evidence')
+  assert.equal(config.cacheDir, join('/test-home', '.deepseekeyes', 'deepseekeyes', 'evidence'))
 })
 
 test('visual token budgets accept large custom values and provider-managed output', () => {
@@ -39,7 +40,7 @@ test('configuration accepts environment-selected Harness vision route', () => {
   assert.equal(config.visionProvider, 'configured-provider')
   assert.equal(config.visionModel, 'vision-1')
   assert.equal(config.upstreamModel, 'deepseek-v4-pro')
-  assert.equal(config.cacheDir, '/dsh-home/deepseekeyes/evidence')
+  assert.equal(config.cacheDir, join('/dsh-home', 'deepseekeyes', 'evidence'))
 })
 
 test('configuration rejects a model without a provider and recursive upstream id', () => {

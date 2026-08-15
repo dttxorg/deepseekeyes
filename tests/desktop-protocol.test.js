@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
 import {
@@ -68,7 +69,7 @@ test('desktop 0.3 configuration is opt-in with Windows and macOS native controls
   assert.equal(defaults.desktopMaxWindows, 50)
   assert.equal(defaults.desktopMacDisplay, 1)
   assert.equal(defaults.desktopWindowsPowerShell, undefined)
-  assert.equal(defaults.desktopArtifactsDir, '/home/.deepseekeyes/deepseekeyes/desktop-runs')
+  assert.equal(defaults.desktopArtifactsDir, join('/home', '.deepseekeyes', 'deepseekeyes', 'desktop-runs'))
 
   const configured = resolveConfig({ desktopArtifactsDir: false }, {
     DEEPSEEKEYES_DESKTOP_ENABLED: 'true',

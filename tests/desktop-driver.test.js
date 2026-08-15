@@ -20,7 +20,7 @@ test('native desktop driver routes macOS and Windows to packaged native helpers'
   const macResult = await mac.execute({ action: 'observe' })
   assert.equal(calls[0].command, '/usr/bin/osascript')
   assert.deepEqual(calls[0].args.slice(0, 2), ['-l', 'JavaScript'])
-  assert.match(calls[0].args[2], /helpers\/macos\.jxa$/)
+  assert.match(calls[0].args[2], /helpers[\\/]macos\.jxa$/)
   assert.equal(calls[0].input.macDisplay, 1)
   assert.equal(macResult.platform, 'darwin')
   assert.deepEqual(macResult.screenshot, png)
@@ -33,7 +33,7 @@ test('native desktop driver routes macOS and Windows to packaged native helpers'
   await windows.execute({ action: 'observe' })
   assert.equal(calls[1].command, 'C:\\Fixture\\powershell.exe')
   assert.ok(calls[1].args.includes('-NonInteractive'))
-  assert.match(calls[1].args.at(-1), /helpers\/windows\.ps1$/)
+  assert.match(calls[1].args.at(-1), /helpers[\\/]windows\.ps1$/)
   assert.equal(calls[1].input.maxWindows, 50)
 
   const unsupported = new NativeDesktopDriver(macConfig, { platform: 'linux', runJson })

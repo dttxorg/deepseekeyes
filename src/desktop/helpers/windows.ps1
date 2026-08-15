@@ -3,6 +3,15 @@ Set-StrictMode -Version Latest
 
 Add-Type -AssemblyName System.Drawing
 
+$script:DeepSeekEyesSemanticAvailable = $false
+try {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $script:DeepSeekEyesSemanticAvailable = $true
+} catch {
+    $script:DeepSeekEyesSemanticAvailable = $false
+}
+
 $nativeSource = @'
 using System;
 using System.Collections.Generic;
@@ -164,10 +173,217 @@ function Resolve-Window($InputObject) {
     if ([string]::IsNullOrWhiteSpace($title) -and $null -ne $window) { $title = [string](Get-PropertyValue $window 'title' '') }
     foreach ($candidate in $windows) {
         if ($null -ne $nativeId -and $candidate.NativeId -eq [string]$nativeId) { return $candidate }
+        if ($null -ne $nativeId) { continue }
         if (-not [string]::IsNullOrWhiteSpace($title) -and $candidate.Title.IndexOf($title, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $candidate }
         if (-not [string]::IsNullOrWhiteSpace($application) -and $candidate.Application.IndexOf($application, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $candidate }
     }
     throw 'target Windows application/window was not found'
+}
+
+function Resolve-WindowByNativeId([string]$NativeId) {
+    if ([string]::IsNullOrWhiteSpace($NativeId)) { return $null }
+    foreach ($candidate in [DeepSeekEyesNative]::Windows(500)) {
+        if ($candidate.NativeId -eq $NativeId) { return $candidate }
+    }
+    return $null
+}
+
+function Resolve-CaptureWindow($InputObject) {
+    if ([string](Get-PropertyValue $InputObject 'captureScope' 'desktop') -ne 'window') { return $null }
+    $capture = Get-PropertyValue $InputObject 'captureWindow'
+    $nativeId = if ($null -eq $capture) { '' } else { [string](Get-PropertyValue $capture 'nativeId' '') }
+    if (-not [string]::IsNullOrWhiteSpace($nativeId)) {
+        $resolved = Resolve-WindowByNativeId $nativeId
+        if ($null -ne $resolved) { return $resolved }
+        throw 'target Windows capture window was not found'
+    }
+    $application = [string](Get-PropertyValue $InputObject 'captureApplication' '')
+    $title = [string](Get-PropertyValue $InputObject 'captureTitle' '')
+    if ([string]::IsNullOrWhiteSpace($application)) { $application = [string](Get-PropertyValue $InputObject 'application' '') }
+    if ([string]::IsNullOrWhiteSpace($title)) { $title = [string](Get-PropertyValue $InputObject 'title' '') }
+    $explicit = -not [string]::IsNullOrWhiteSpace($nativeId) `
+        -or -not [string]::IsNullOrWhiteSpace($application) `
+        -or -not [string]::IsNullOrWhiteSpace($title)
+    if (-not [string]::IsNullOrWhiteSpace($application) -or -not [string]::IsNullOrWhiteSpace($title)) {
+        try {
+            return Resolve-Window ([pscustomobject]@{ application = $application; title = $title })
+        } catch {
+            if ($explicit) { throw }
+        }
+    }
+    if ($explicit) { throw 'target Windows capture window was not found' }
+    $active = [DeepSeekEyesNative]::GetForegroundWindow().ToInt64().ToString()
+    $activeWindow = Resolve-WindowByNativeId $active
+    if ($null -eq $activeWindow) { throw 'active Windows capture window was not found' }
+    return $activeWindow
+}
+
+function Get-AutomationRuntimeId($Element, [string]$Fallback) {
+    try {
+        $runtime = @($Element.GetRuntimeId())
+        if ($runtime.Count -gt 0) { return ($runtime -join '.') }
+    } catch { }
+    return $Fallback
+}
+
+function Get-AutomationPattern($Element, $Pattern) {
+    try {
+        $value = $null
+        if ($Element.TryGetCurrentPattern($Pattern, [ref]$value)) { return $value }
+    } catch { }
+    return $null
+}
+
+function Get-AutomationActions($Element) {
+    $actions = New-Object System.Collections.Generic.List[string]
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.InvokePattern]::Pattern))) { $actions.Add('invoke') }
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.ValuePattern]::Pattern))) { $actions.Add('set_value') }
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.TogglePattern]::Pattern))) { $actions.Add('toggle') }
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.SelectionItemPattern]::Pattern))) { $actions.Add('select') }
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.ExpandCollapsePattern]::Pattern))) {
+        $actions.Add('expand')
+        $actions.Add('collapse')
+    }
+    if ($null -ne (Get-AutomationPattern $Element ([System.Windows.Automation.ScrollItemPattern]::Pattern))) { $actions.Add('scroll_into_view') }
+    $actions.Add('focus')
+    return @($actions)
+}
+
+function Convert-AutomationElement($Element, $Window, [int[]]$Path) {
+    try {
+        $current = $Element.Current
+        $rectangle = $current.BoundingRectangle
+        $programmatic = [string]$current.ControlType.ProgrammaticName
+        $role = if ($programmatic.Contains('.')) { $programmatic.Substring($programmatic.LastIndexOf('.') + 1).ToLowerInvariant() } else { $programmatic.ToLowerInvariant() }
+        $runtime = Get-AutomationRuntimeId $Element (($Path -join '.'))
+        $valuePattern = Get-AutomationPattern $Element ([System.Windows.Automation.ValuePattern]::Pattern)
+        $togglePattern = Get-AutomationPattern $Element ([System.Windows.Automation.TogglePattern]::Pattern)
+        $selectionPattern = Get-AutomationPattern $Element ([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        $value = if ($null -eq $valuePattern -or $current.IsPassword) { $null } else { [string]$valuePattern.Current.Value }
+        $checked = if ($null -eq $togglePattern) { $null } else { [string]$togglePattern.Current.ToggleState -eq 'On' }
+        $selected = if ($null -eq $selectionPattern) { $null } else { [bool]$selectionPattern.Current.IsSelected }
+        return [pscustomobject]@{
+            nativeId = "$($Window.NativeId):$runtime"
+            windowNativeId = $Window.NativeId
+            pid = [int]$current.ProcessId
+            path = @($Path)
+            automationId = [string]$current.AutomationId
+            className = [string]$current.ClassName
+            role = $role
+            name = [string]$current.Name
+            description = [string]$current.HelpText
+            value = $value
+            password = [bool]$current.IsPassword
+            enabled = [bool]$current.IsEnabled
+            visible = -not [bool]$current.IsOffscreen
+            focused = [bool]$current.HasKeyboardFocus
+            editable = $null -ne $valuePattern -and -not [bool]$valuePattern.Current.IsReadOnly
+            selected = $selected
+            checked = $checked
+            x = [double]$rectangle.X
+            y = [double]$rectangle.Y
+            width = [double]$rectangle.Width
+            height = [double]$rectangle.Height
+            actions = @(Get-AutomationActions $Element)
+        }
+    } catch { return $null }
+}
+
+function Add-AutomationChildren($Element, $Window, [int[]]$Path, [int]$Depth, [int]$Maximum, $Output, $Walker) {
+    if ($Output.Count -ge $Maximum -or $Depth -gt 12) { return }
+    $record = Convert-AutomationElement $Element $Window $Path
+    if ($null -ne $record) { $Output.Add($record) }
+    if ($Output.Count -ge $Maximum) { return }
+    try { $child = $Walker.GetFirstChild($Element) } catch { $child = $null }
+    $index = 0
+    while ($null -ne $child -and $Output.Count -lt $Maximum) {
+        Add-AutomationChildren $child $Window ($Path + $index) ($Depth + 1) $Maximum $Output $Walker
+        try { $child = $Walker.GetNextSibling($child) } catch { $child = $null }
+        $index += 1
+    }
+}
+
+function Get-AutomationElements($Window, [int]$Maximum) {
+    if (-not $script:DeepSeekEyesSemanticAvailable -or $null -eq $Window -or $Maximum -le 0) { return @() }
+    try {
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([Int64]::Parse($Window.NativeId)))
+        if ($null -eq $root) { return @() }
+        $output = New-Object System.Collections.Generic.List[object]
+        Add-AutomationChildren $root $Window @() 0 $Maximum $output ([System.Windows.Automation.TreeWalker]::RawViewWalker)
+        return @($output)
+    } catch { return @() }
+}
+
+function Resolve-AutomationElement($InputObject) {
+    if (-not $script:DeepSeekEyesSemanticAvailable) { throw 'Windows UI Automation is unavailable' }
+    $element = Get-PropertyValue $InputObject 'element'
+    if ($null -eq $element) { throw 'element metadata is missing' }
+    $wanted = [string](Get-PropertyValue $element 'nativeId' '')
+    $windowNativeId = [string](Get-PropertyValue $element 'windowNativeId' '')
+    $window = Resolve-WindowByNativeId $windowNativeId
+    if ($null -eq $window) { throw 'element window is no longer available' }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([Int64]::Parse($window.NativeId)))
+    if ($null -eq $root) { throw 'element accessibility root is unavailable' }
+    $rootRuntime = Get-AutomationRuntimeId $root ''
+    if ("$($window.NativeId):$rootRuntime" -eq $wanted) { return $root }
+    $all = $root.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition
+    )
+    for ($index = 0; $index -lt $all.Count; $index += 1) {
+        $candidate = $all.Item($index)
+        $runtime = Get-AutomationRuntimeId $candidate ''
+        if ("$($window.NativeId):$runtime" -eq $wanted) { return $candidate }
+    }
+    throw 'target Windows accessibility element was not found in the current state'
+}
+
+function Get-AutomationCenter($Element) {
+    $rectangle = $Element.Current.BoundingRectangle
+    if ($rectangle.Width -le 0 -or $rectangle.Height -le 0) { throw 'accessibility element has no clickable bounds' }
+    return @(
+        [int][Math]::Round($rectangle.X + $rectangle.Width / 2),
+        [int][Math]::Round($rectangle.Y + $rectangle.Height / 2)
+    )
+}
+
+function Invoke-AutomationAction($Element, [string]$ActionName) {
+    $normalized = $ActionName.Trim().ToLowerInvariant()
+    if ($normalized -eq 'focus') {
+        $Element.SetFocus()
+        return
+    }
+    if ($normalized -eq 'invoke') {
+        $pattern = Get-AutomationPattern $Element ([System.Windows.Automation.InvokePattern]::Pattern)
+        if ($null -eq $pattern) { throw 'element does not expose invoke' }
+        $pattern.Invoke()
+        return
+    }
+    if ($normalized -eq 'toggle') {
+        $pattern = Get-AutomationPattern $Element ([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($null -eq $pattern) { throw 'element does not expose toggle' }
+        $pattern.Toggle()
+        return
+    }
+    if ($normalized -eq 'select') {
+        $pattern = Get-AutomationPattern $Element ([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        if ($null -eq $pattern) { throw 'element does not expose select' }
+        $pattern.Select()
+        return
+    }
+    if ($normalized -in @('expand', 'collapse')) {
+        $pattern = Get-AutomationPattern $Element ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if ($null -eq $pattern) { throw 'element does not expose expand/collapse' }
+        if ($normalized -eq 'expand') { $pattern.Expand() } else { $pattern.Collapse() }
+        return
+    }
+    if ($normalized -eq 'scroll_into_view') {
+        $pattern = Get-AutomationPattern $Element ([System.Windows.Automation.ScrollItemPattern]::Pattern)
+        if ($null -eq $pattern) { throw 'element does not expose scroll_into_view' }
+        $pattern.ScrollIntoView()
+        return
+    }
+    throw "unsupported Windows accessibility action $ActionName"
 }
 
 function Convert-ToAbsolutePoint($InputObject, $Screen, [string]$XName, [string]$YName) {
@@ -203,15 +419,22 @@ function Send-KeyCombination([string]$Combination) {
     for ($index = $keys.Count - 1; $index -ge 0; $index--) { [DeepSeekEyesNative]::SendVirtualKey($keys[$index], $false) }
 }
 
-function Capture-Desktop([string]$Path) {
-    $x = [DeepSeekEyesNative]::GetSystemMetrics(76)
-    $y = [DeepSeekEyesNative]::GetSystemMetrics(77)
-    $width = [DeepSeekEyesNative]::GetSystemMetrics(78)
-    $height = [DeepSeekEyesNative]::GetSystemMetrics(79)
-    if ($width -le 0 -or $height -le 0) {
-        $x = 0; $y = 0
-        $width = [DeepSeekEyesNative]::GetSystemMetrics(0)
-        $height = [DeepSeekEyesNative]::GetSystemMetrics(1)
+function Capture-Desktop([string]$Path, $TargetWindow) {
+    if ($null -ne $TargetWindow -and $TargetWindow.Width -gt 0 -and $TargetWindow.Height -gt 0) {
+        $x = [int]$TargetWindow.X
+        $y = [int]$TargetWindow.Y
+        $width = [int]$TargetWindow.Width
+        $height = [int]$TargetWindow.Height
+    } else {
+        $x = [DeepSeekEyesNative]::GetSystemMetrics(76)
+        $y = [DeepSeekEyesNative]::GetSystemMetrics(77)
+        $width = [DeepSeekEyesNative]::GetSystemMetrics(78)
+        $height = [DeepSeekEyesNative]::GetSystemMetrics(79)
+        if ($width -le 0 -or $height -le 0) {
+            $x = 0; $y = 0
+            $width = [DeepSeekEyesNative]::GetSystemMetrics(0)
+            $height = [DeepSeekEyesNative]::GetSystemMetrics(1)
+        }
     }
     $bitmap = [System.Drawing.Bitmap]::new($width, $height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     try {
@@ -232,8 +455,38 @@ function Invoke-Action($InputObject, $Screen) {
         Start-Sleep -Milliseconds $duration
         return [pscustomobject]@{ waitedMs = $duration }
     }
+    if ($action -in @('invoke', 'set_value', 'perform_action')) {
+        $targetElement = Resolve-AutomationElement $InputObject
+        if ($action -eq 'invoke') {
+            try { Invoke-AutomationAction $targetElement 'invoke' }
+            catch {
+                $center = Get-AutomationCenter $targetElement
+                [DeepSeekEyesNative]::SetCursorPos($center[0], $center[1]) | Out-Null
+                [DeepSeekEyesNative]::mouse_event([DeepSeekEyesNative]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+                [DeepSeekEyesNative]::mouse_event([DeepSeekEyesNative]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+            }
+        } elseif ($action -eq 'set_value') {
+            $pattern = Get-AutomationPattern $targetElement ([System.Windows.Automation.ValuePattern]::Pattern)
+            if ($null -ne $pattern -and -not $pattern.Current.IsReadOnly) {
+                $pattern.SetValue([string]$InputObject.value)
+            } else {
+                $targetElement.SetFocus()
+                Send-KeyCombination 'CTRL+A'
+                [DeepSeekEyesNative]::SendUnicode([string]$InputObject.value)
+            }
+        } else {
+            Invoke-AutomationAction $targetElement ([string]$InputObject.actionName)
+        }
+        return [pscustomobject]@{ performed = $action; element = [string](Get-PropertyValue (Get-PropertyValue $InputObject 'element') 'nativeId' '') }
+    }
     if ($action -in @('click', 'double_click', 'right_click', 'move_cursor')) {
-        $point = Convert-ToAbsolutePoint $InputObject $Screen 'x' 'y'
+        $elementInput = Get-PropertyValue $InputObject 'element'
+        if ($null -ne $elementInput -and $action -ne 'move_cursor') {
+            $targetElement = Resolve-AutomationElement $InputObject
+            $point = Get-AutomationCenter $targetElement
+        } else {
+            $point = Convert-ToAbsolutePoint $InputObject $Screen 'x' 'y'
+        }
         [DeepSeekEyesNative]::SetCursorPos($point[0], $point[1]) | Out-Null
         if ($action -eq 'move_cursor') { return [pscustomobject]@{ moved = $true } }
         $count = if ($action -eq 'double_click') { 2 } else { 1 }
@@ -268,6 +521,9 @@ function Invoke-Action($InputObject, $Screen) {
         return [pscustomobject]@{ performed = 'drag' }
     }
     if ($action -eq 'type') {
+        if ($null -ne (Get-PropertyValue $InputObject 'element')) {
+            (Resolve-AutomationElement $InputObject).SetFocus()
+        }
         [DeepSeekEyesNative]::SendUnicode([string]$InputObject.text)
         return [pscustomobject]@{ textLength = ([string]$InputObject.text).Length }
     }
@@ -276,6 +532,11 @@ function Invoke-Action($InputObject, $Screen) {
         return [pscustomobject]@{ key = [string]$InputObject.key }
     }
     if ($action -eq 'scroll') {
+        if ($null -ne (Get-PropertyValue $InputObject 'element')) {
+            $targetElement = Resolve-AutomationElement $InputObject
+            $center = Get-AutomationCenter $targetElement
+            [DeepSeekEyesNative]::SetCursorPos($center[0], $center[1]) | Out-Null
+        }
         $deltaY = [int](Get-PropertyValue $InputObject 'deltaY' 0)
         $deltaX = [int](Get-PropertyValue $InputObject 'deltaX' 0)
         [DeepSeekEyesNative]::Scroll(-$deltaY, $deltaX)
@@ -316,21 +577,34 @@ try {
     $actionResult = Invoke-Action $inputObject $initialScreen
     $settleMs = [int](Get-PropertyValue $inputObject 'settleMs' 0)
     if ($settleMs -gt 0 -and $inputObject.action -notin @('wait', 'observe')) { Start-Sleep -Milliseconds $settleMs }
-    $screen = Capture-Desktop ([string]$inputObject.screenshotPath)
+    $captureWindow = Resolve-CaptureWindow $inputObject
+    $screen = Capture-Desktop ([string]$inputObject.screenshotPath) $captureWindow
     $maximum = [int](Get-PropertyValue $inputObject 'maxWindows' 50)
     $windows = @([DeepSeekEyesNative]::Windows($maximum))
     $point = New-Object DeepSeekEyesNative+POINT
     [DeepSeekEyesNative]::GetCursorPos([ref]$point) | Out-Null
     $active = $windows | Where-Object Active | Select-Object -First 1
+    $semanticEnabled = [bool](Get-PropertyValue $inputObject 'semantic' $true)
+    $semanticWindow = $captureWindow
+    $maxElements = [int](Get-PropertyValue $inputObject 'maxElements' 200)
+    $elements = if ($semanticEnabled) { @(Get-AutomationElements $semanticWindow $maxElements) } else { @() }
     [pscustomobject]@{
         ok = $true
         actionResult = $actionResult
         screen = $screen
         cursor = [pscustomobject]@{ x = $point.X - $screen.x; y = $point.Y - $screen.y }
         activeWindow = $active
+        capturedWindow = $captureWindow
         windows = $windows
+        elements = $elements
+        elementTotal = $elements.Count
+        elementsTruncated = ($semanticEnabled -and $elements.Count -ge $maxElements)
         capabilities = [pscustomobject]@{
-            screenshot = $true; mouse = $true; keyboard = $true; launch = $true; windows = $true; platform = 'Windows'
+            screenshot = $true; mouse = $true; keyboard = $true; launch = $true; windows = $true
+            accessibility = ($semanticEnabled -and $script:DeepSeekEyesSemanticAvailable)
+            windowCapture = $true; elementActions = ($semanticEnabled -and $script:DeepSeekEyesSemanticAvailable)
+            semanticScope = 'window'
+            platform = 'Windows'
         }
     } | ConvertTo-Json -Depth 8 -Compress
 } catch {

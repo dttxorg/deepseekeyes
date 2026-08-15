@@ -21,9 +21,10 @@ export const DEFAULT_BROWSER_VIEWPORT_HEIGHT = 900
 export const DEFAULT_BROWSER_MAX_ELEMENTS = 200
 export const DEFAULT_BROWSER_MAX_TEXT_CHARS = 20_000
 export const DEFAULT_DESKTOP_HISTORY_LIMIT = 8
-export const DEFAULT_DESKTOP_TIMEOUT_MS = 15_000
+export const DEFAULT_DESKTOP_TIMEOUT_MS = 30_000
 export const DEFAULT_DESKTOP_SETTLE_MS = 300
 export const DEFAULT_DESKTOP_MAX_WINDOWS = 50
+export const DEFAULT_DESKTOP_MAX_ELEMENTS = 200
 export const DEFAULT_DESKTOP_MAC_DISPLAY = 1
 
 function optionalString(value, field) {
@@ -392,6 +393,19 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       DEFAULT_DESKTOP_MAX_WINDOWS,
       1,
       200,
+    ),
+    desktopSemantic: booleanValue(
+      input.desktopSemantic
+        ?? environmentBoolean(environment.DEEPSEEKEYES_DESKTOP_SEMANTIC, 'DEEPSEEKEYES_DESKTOP_SEMANTIC'),
+      'desktopSemantic',
+      true,
+    ),
+    desktopMaxElements: integerValue(
+      input.desktopMaxElements,
+      'desktopMaxElements',
+      DEFAULT_DESKTOP_MAX_ELEMENTS,
+      20,
+      500,
     ),
     desktopMacDisplay: integerValue(
       input.desktopMacDisplay,

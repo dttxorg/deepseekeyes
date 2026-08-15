@@ -13,9 +13,15 @@ import {
 } from '../src/desktop/index.js'
 import { mockContext } from './_helpers.js'
 
-test('desktop protocol binds mutations to state, coordinates, and current windows', () => {
+test('desktop protocol binds mutations to state, coordinates, current windows, and semantic elements', () => {
   assert.equal(parseDesktopArgs({ action: 'OBSERVE' }).action, 'observe')
+  assert.equal(parseDesktopArgs({ action: 'observe', scope: 'WINDOW', application: 'Fixture' }).scope, 'window')
+  assert.throws(() => parseDesktopArgs({ action: 'observe', scope: 'display' }), /scope must be one of/)
   assert.throws(() => parseDesktopArgs({ action: 'click', x: 1, y: 2 }), /latest stateId/)
+  assert.throws(
+    () => parseDesktopArgs({ action: 'click', stateId: 'desktop-state:x', elementRef: 'el_1', x: 1, y: 2 }),
+    /elementRef or x\/y, not both/,
+  )
   assert.throws(
     () => parseDesktopArgs({ action: 'drag', stateId: 'desktop-state:x', x: 1, y: 2, endX: 3 }),
     /endX and endY/,
@@ -30,10 +36,17 @@ test('desktop protocol binds mutations to state, coordinates, and current window
   )
   assert.throws(
     () => parseDesktopArgs({ action: 'assert', stateId: 'desktop-state:x', assertion: 'window visible' }),
-    /requires assertion and passed/,
+    /assertion must be one of/,
+  )
+  assert.throws(
+    () => parseDesktopArgs({ action: 'set_value', stateId: 'desktop-state:x', elementRef: 'el_1' }),
+    /requires value/,
   )
   assert.equal(parseDesktopArgs({
-    action: 'assert', stateId: 'desktop-state:x', assertion: 'window visible', passed: true,
+    action: 'set_value', stateId: 'desktop-state:x', elementRef: 'el_1', value: 42,
+  }).value, '42')
+  assert.equal(parseDesktopArgs({
+    action: 'assert', stateId: 'desktop-state:x', assertion: 'visual', passed: true,
   }).passed, true)
 })
 
@@ -49,6 +62,17 @@ test('desktop action reports hash typed text and launch arguments', () => {
   assert.match(typed.textSha256, /^[a-f0-9]{64}$/)
   assert.equal(JSON.stringify(typed).includes('example-private-input'), false)
 
+  const assigned = reportableDesktopArgs(parseDesktopArgs({
+    action: 'set_value',
+    stateId: 'desktop-state:x',
+    elementRef: 'el_fixture',
+    value: 'example-private-value',
+  }))
+  assert.equal(assigned.value, undefined)
+  assert.equal(assigned.valueLength, 21)
+  assert.match(assigned.valueSha256, /^[a-f0-9]{64}$/)
+  assert.equal(JSON.stringify(assigned).includes('example-private-value'), false)
+
   const launched = reportableDesktopArgs(parseDesktopArgs({
     action: 'launch',
     stateId: 'desktop-state:x',
@@ -60,22 +84,27 @@ test('desktop action reports hash typed text and launch arguments', () => {
   assert.match(launched.argumentsSha256, /^[a-f0-9]{64}$/)
 })
 
-test('desktop 0.3 configuration is opt-in with Windows and macOS native controls', () => {
+test('desktop 0.5 configuration is opt-in with Windows and macOS semantic controls', () => {
   const defaults = resolveConfig({}, {}, '/home')
   assert.equal(defaults.desktopComputerUse, false)
   assert.equal(defaults.desktopHistoryLimit, 8)
-  assert.equal(defaults.desktopTimeoutMs, 15_000)
+  assert.equal(defaults.desktopTimeoutMs, 30_000)
   assert.equal(defaults.desktopSettleMs, 300)
   assert.equal(defaults.desktopMaxWindows, 50)
+  assert.equal(defaults.desktopSemantic, true)
+  assert.equal(defaults.desktopMaxElements, 200)
   assert.equal(defaults.desktopMacDisplay, 1)
   assert.equal(defaults.desktopWindowsPowerShell, undefined)
   assert.equal(defaults.desktopArtifactsDir, join('/home', '.dsh', 'deepseekeyes', 'desktop-runs'))
 
-  const configured = resolveConfig({ desktopArtifactsDir: false }, {
+  const configured = resolveConfig({ desktopArtifactsDir: false, desktopMaxElements: 320 }, {
     DEEPSEEKEYES_DESKTOP_ENABLED: 'true',
+    DEEPSEEKEYES_DESKTOP_SEMANTIC: 'false',
     DEEPSEEKEYES_DESKTOP_WINDOWS_POWERSHELL: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   }, '/home')
   assert.equal(configured.desktopComputerUse, true)
+  assert.equal(configured.desktopSemantic, false)
+  assert.equal(configured.desktopMaxElements, 320)
   assert.match(configured.desktopWindowsPowerShell, /powershell\.exe$/)
   assert.equal(configured.desktopArtifactsDir, undefined)
 })

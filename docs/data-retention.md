@@ -9,7 +9,7 @@ DeepSeekEyes separates original DSH attachments, derived visual evidence, automa
 | Token statistics | `$DSH_HOME/deepseekeyes/usage-stats.json` | 50 recent sessions plus totals | Provider usage, bridge estimates and operational counters. |
 | Vision attempts | `$DSH_HOME/deepseekeyes/vision-attempts.json` | 1,000 attempts | Provider/model, status, phase, latency, error code, image hash and SHA-256 of session ID. |
 | Browser runs | `$DSH_HOME/deepseekeyes/browser-runs/` | Operator-managed files; model history defaults to 8 summaries | Screenshots, action metadata, assertions and reports. Typed text is represented by length/hash. |
-| Desktop runs | `$DSH_HOME/deepseekeyes/desktop-runs/` | Operator-managed files; model history defaults to 8 summaries | Original/lossless PNG evidence, window metadata, actions, assertions and reports. Typed text and launch arguments are hashed. |
+| Desktop runs | `$DSH_HOME/deepseekeyes/desktop-runs/` | Operator-managed files; model history defaults to 8 summaries | Original/lossless PNG evidence, window/element metadata, state deltas, actions, assertions and v2 reports. Typed text, assigned values and launch arguments are hashed. |
 | In-memory route health | Process memory | Current process | Success/failure counts, last timestamps and circuit cooldown. |
 
 On Windows, `$DSH_HOME` normally resolves to `%USERPROFILE%\.dsh`; on macOS/Linux it normally resolves to `~/.dsh`. When the environment variable is absent, DeepSeekEyes uses the same `~/.dsh` fallback as Harness. Explicit DSH configuration takes precedence.

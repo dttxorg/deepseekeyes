@@ -36,7 +36,7 @@ flowchart LR
 | `src/cache.js` | Stores immutable SHA-256-bound evidence records in memory and optionally on disk. |
 | `src/look.js` | Gives only image-bearing sessions an on-demand original-image reread tool. |
 | `src/browser/*` | Playwright browser state, semantic refs, stale-state rejection, assertions and reports. |
-| `src/desktop/*` | Native Windows/macOS observation and input with lossless screenshot evidence. |
+| `src/desktop/*` | Native Windows/macOS desktop/window observation, accessibility elements/actions, state deltas and lossless screenshot evidence. |
 | `src/usage.js` | Separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
 ## Route ordering and failover
@@ -59,6 +59,27 @@ The canonical schema has two strict variants:
 
 Every object uses `additionalProperties: false`. OCR/region/object/observation entries require all nested fields. Bounding boxes are normalized, positive and contained by the image; confidence is `0..1`. A successful model response with an extra nested field is still rejected.
 
+## Desktop 0.5 state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> DesktopDiscovery: observe scope=desktop
+    DesktopDiscovery --> WindowState: observe scope=window + target
+    WindowState --> WindowState: elementRef or pixel action
+    WindowState --> WindowState: fresh screenshot + semantic tree + stateDelta
+    WindowState --> Verified: runtime or visual assertion
+    Verified --> Reported: report v2
+    Reported --> [*]: close
+```
+
+Windows uses UI Automation runtime IDs and native window handles. macOS uses Accessibility paths scoped to a process/window. Public refs are deterministic hashes of these native identities, but every action must still carry the newest `stateId`; a stale state triggers observation only and never executes the requested mutation.
+
+The screenshot origin and scale are returned with every state. Desktop discovery uses display coordinates. Window capture moves the origin to the target window, so model coordinates stay relative to the exact returned PNG and the native helper translates them back to global coordinates. A requested target that disappears fails explicitly instead of falling back to an unrelated full desktop image.
+
+`stateDelta.screenshotChanged` compares decoded pixel identity rather than PNG encoding bytes. Window and element deltas separately report added, removed and field-level changed refs. Semantic collection is bounded by `desktopMaxElements`; pixel actions remain available for games, canvases and controls absent from the accessibility tree.
+
+On macOS, the runtime binds each controllable window to its CoreGraphics window number and re-resolves the corresponding Accessibility window for every action. A z-order change therefore keeps the same `windowRef` instead of reusing a mutable per-application window index. Accessibility elements use a semantic fingerprint plus duplicate ordinal; a cached flat index is accepted only when its identity and bounds still match. Explicit window and element targets fail closed when that native identity disappears.
+
 ## Failure semantics
 
 - Attachment identity/persistence failures are route-independent and stop immediately.
@@ -66,3 +87,4 @@ Every object uses `additionalProperties: false`. OCR/region/object/observation e
 - A single-route failure preserves its original error code; multi-route exhaustion returns `VISION_FAILOVER_EXHAUSTED` plus structured attempts.
 - The final DeepSeek model never receives unvalidated evidence.
 - Pure-text turns create no vision route, probe, screenshot or attempt record.
+- Native desktop refs are current-state capabilities: stale refs do not execute actions, and missing window captures do not silently widen to the desktop.

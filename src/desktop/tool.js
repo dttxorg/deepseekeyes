@@ -25,7 +25,7 @@ function assertDeepSeekEyesRoute(config, exec) {
 }
 
 function toolDescription() {
-  return `Control the native Windows or macOS desktop and receive fresh lossless full-screen PNG evidence plus window state after every action. Begin with action="observe". Copy the newest stateId into every later action except close and use only windowRef values from that same state. Coordinates are screenshot pixels. Use assert to record a visually verified pass/fail before report. Actions: observe, click, double_click, right_click, move_cursor, drag, type, key, scroll, launch, focus, move_window, resize_window, close_window, wait, assert, report, close.`
+  return `Control native Windows or macOS applications with window-scoped screenshots and accessibility elements. Begin with action="observe"; when the target app is known, pass scope="window" plus application or title so the result contains only that window. Every result returns a fresh lossless PNG, semantic element refs, a state delta and stateId. Prefer elementRef actions over screenshot coordinates. Actions: observe, click, double_click, right_click, move_cursor, drag, type, key, scroll, invoke, set_value, perform_action, launch, focus, move_window, resize_window, close_window, wait, assert, report, close.`
 }
 
 export class DesktopSessionManager {
@@ -117,9 +117,9 @@ export function createDesktopTool(manager, config) {
   }
 }
 
-export const DESKTOP_SYSTEM_PROMPT = `## DeepSeekEyes Desktop Computer Use
+export const DESKTOP_SYSTEM_PROMPT = `## DeepSeekEyes Desktop Computer Use 0.5
 
-Use the computer tool for native Windows or macOS applications. Begin with action="observe". Every result contains fresh lossless full-screen PNG evidence, a stateId, active-window metadata, and windowRef values. Copy the exact newest stateId into every later action except close. Treat coordinates as pixels in the newest screenshot and use windowRef only with that same state. After each action, inspect the returned screenshot and observable window state before continuing. Use type for text, key for shortcuts such as CTRL+L or CMD+SPACE, and launch/focus for applications. After visual verification, use assert with a concise assertion, passed, expected, and actual; then use report to persist the action log, assertion summary, and screenshot evidence. Historical screenshots are compacted; the newest screenshot remains available to the DeepSeekEyes visual model. If one PNG exceeds the Host attachment limit, all coordinate-labelled lossless tiles are returned in the same result.`
+Use the computer tool for native Windows or macOS applications. When the task names an app or window, begin with action="observe", scope="window", and application/title; use a full desktop observation only for discovery. Every result contains a fresh lossless screenshot, stateId, window refs, accessibility element refs, and a stateDelta. Copy the newest stateId into later actions and use refs only from that state. Prefer elementRef with click, invoke, set_value, type, scroll, or perform_action; use screenshot pixel coordinates for canvas, games, and controls absent from the accessibility tree. Window-scoped coordinates are relative to the returned screenshot and the runtime maps them back to the desktop. After every action, inspect semantic changes and the screenshot. Prefer runtime assertions such as element_visible, element_value_equals, window_exists, or screen_changed; use visual only for pixel-only facts. Finish with report. Historical screenshots are compacted, typed/assigned values are hashed in reports, and oversized PNGs are delivered as coordinate-labelled lossless tiles.`
 
 /** Register native desktop computer use only when explicitly enabled. */
 export function applyDesktopComputerUse(ctx, config, options = {}) {

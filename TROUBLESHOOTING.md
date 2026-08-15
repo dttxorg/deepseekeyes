@@ -72,6 +72,8 @@ Pasted user images remain original DSH attachments. Desktop Computer Use screens
 - Disable Browser/Desktop Computer Use when not needed; both are off by default.
 - Review **Token usage statistics** in the settings card. Normal final-answer usage is displayed separately from plugin overhead.
 
+For Desktop 0.5, start with `observe` using `scope: "window"` plus the target application/title once it is known. This avoids repeatedly sending unrelated displays and windows. Reduce **Maximum semantic controls per step** when a large accessibility tree adds unnecessary tool text; disabling semantic controls returns to screenshot-only coordinate mode. Both settings affect only explicitly enabled Desktop Computer Use sessions.
+
 ## DSH restart fails while parsing `package.json`
 
 Run doctor and check for `profile-manifest ... contains UTF-8 BOM`. On PowerShell, rewrite the profile manifest as UTF-8 without BOM:
@@ -90,8 +92,12 @@ Check the configured Edge/Chrome channel or executable path. Browser mode requir
 
 ## macOS desktop actions fail
 
-Grant **Screen Recording** and **Accessibility** to the terminal that starts `dsh web`, then restart that terminal and DSH. The doctor verifies packaged native helpers; `npm run test:desktop` exercises native observation from a source checkout.
+Grant **Screen Recording** and **Accessibility** to the terminal that starts `dsh web`, then restart that terminal and DSH. Screen Recording provides PNG capture; Accessibility provides element discovery and actions. The doctor verifies packaged native helpers; `npm run test:desktop` exercises desktop discovery, window capture and semantic metadata from a source checkout.
 
 ## Windows desktop actions fail
 
-Confirm `powershell.exe` exists or configure its absolute path in the plugin card. DeepSeekEyes uses `user32`, `SendInput` and `System.Drawing`; no separate desktop automation runtime is installed.
+Confirm `powershell.exe` exists or configure its absolute path in the plugin card. DeepSeekEyes uses Windows UI Automation, `user32`, `SendInput` and `System.Drawing`; no separate desktop automation runtime is installed. If screenshots work but `elements` is empty, confirm the target app exposes UI Automation and that the DSH process runs at a compatible integrity level.
+
+## A window-scoped observation returns an error
+
+Desktop 0.5 intentionally fails an explicit `scope: "window"` request when the named/ref window disappeared. Run one fresh `observe` with `scope: "desktop"`, choose a current `windowRef`, then retry the window observation with the new `stateId`. The runtime does not silently substitute the active window or widen the screenshot because that would make screenshot coordinates and visual evidence refer to a different target.

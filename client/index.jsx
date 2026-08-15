@@ -91,7 +91,7 @@ const zh = {
   tokenUnlimited: '不限制 · 由 Provider 决定',
   tokenUnlimitedInput: '未发送 maxTokens',
   tokenHint: '可选择建议档位，也可直接输入任意安全整数；“不限制”表示插件不发送 maxTokens，模型或 Provider 自身上限仍然生效。',
-  computerUse: 'Computer Use 0.3',
+  computerUse: 'Computer Use 0.5',
   browserComputerUse: '启用浏览器 Computer Use',
   browserComputerUseHint: '在当前对话中注册 browser 工具，每一步返回最新 DOM、截图、状态 ID 和测试证据。',
   browserHeadless: '无界面运行浏览器',
@@ -109,11 +109,14 @@ const zh = {
   browserMaxElements: '每步最多控件数',
   browserMaxTextChars: '每步最多页面字符',
   desktopComputerUse: '启用 Windows / macOS 桌面 Computer Use',
-  desktopComputerUseHint: '在当前对话中注册 computer 工具，控制本机应用；每一步都返回新的全屏截图、窗口状态和状态 ID。',
+  desktopComputerUseHint: '在当前对话中注册 computer 工具；优先返回目标窗口截图、无障碍语义控件、状态变化和状态 ID，像游戏/画布等像素界面仍可使用坐标。',
+  desktopSemantic: '读取系统无障碍语义控件',
+  desktopSemanticHint: '启用后可使用稳定的 elementRef 执行点击、赋值、调用和断言；关闭后保持纯截图坐标控制。',
   desktopPermissionHint: 'macOS 首次使用时，请在「系统设置 → 隐私与安全性」为运行 DSH 的终端授予“屏幕录制”和“辅助功能”；Windows 使用系统原生 user32 与桌面截图。',
   desktopTimeoutMs: '桌面动作超时（毫秒）',
   desktopSettleMs: '桌面操作后等待（毫秒）',
   desktopMaxWindows: '每步最多窗口数',
+  desktopMaxElements: '每步最多语义控件数',
   desktopMacDisplay: 'macOS 显示器编号',
   desktopWindowsPowerShell: 'Windows PowerShell 路径',
   desktopWindowsPowerShellPlaceholder: '留空使用 powershell.exe',
@@ -158,6 +161,7 @@ const zh = {
   desktopTimeoutMsRange: '桌面动作超时必须是 1000–120000 的整数。',
   desktopSettleMsRange: '桌面稳定等待必须是 0–10000 的整数。',
   desktopMaxWindowsRange: '窗口数量必须是 1–200 的整数。',
+  desktopMaxElementsRange: '语义控件数量必须是 20–500 的整数。',
   desktopMacDisplayRange: 'macOS 显示器编号必须是 1–32 的整数。',
   noProviders: 'Harness 中还没有可用 Provider，请先在「设置 → 模型」添加。',
   inactive: '（未激活）',
@@ -237,7 +241,7 @@ const en = {
   tokenUnlimited: 'Unlimited · provider managed',
   tokenUnlimitedInput: 'maxTokens omitted',
   tokenHint: 'Choose a suggested tier or enter any safe integer. Unlimited omits maxTokens; the model or provider may still impose its own limit.',
-  computerUse: 'Computer Use 0.3',
+  computerUse: 'Computer Use 0.5',
   browserComputerUse: 'Enable browser computer use',
   browserComputerUseHint: 'Registers the browser tool in this conversation and returns fresh DOM, screenshot, state ID, and test evidence after every step.',
   browserHeadless: 'Run browser headless',
@@ -255,11 +259,14 @@ const en = {
   browserMaxElements: 'Maximum controls per step',
   browserMaxTextChars: 'Maximum page characters per step',
   desktopComputerUse: 'Enable Windows / macOS desktop computer use',
-  desktopComputerUseHint: 'Registers the computer tool for native applications in this conversation. Every step returns a fresh full-screen screenshot, window state, and state ID.',
+  desktopComputerUseHint: 'Registers the computer tool in this conversation. It prefers a target-window screenshot, accessibility controls, a state delta, and a state ID; pixel-only games and canvases still support coordinates.',
+  desktopSemantic: 'Read accessibility controls',
+  desktopSemanticHint: 'Enables stable elementRef click, value, invoke, action, and assertion operations. Disable it for screenshot-only coordinate control.',
   desktopPermissionHint: 'On first use, grant Screen Recording and Accessibility to the terminal running DSH under macOS System Settings → Privacy & Security. Windows uses native user32 input and desktop capture.',
   desktopTimeoutMs: 'Desktop action timeout (ms)',
   desktopSettleMs: 'Desktop post-action settle (ms)',
   desktopMaxWindows: 'Maximum windows per step',
+  desktopMaxElements: 'Maximum semantic controls per step',
   desktopMacDisplay: 'macOS display number',
   desktopWindowsPowerShell: 'Windows PowerShell path',
   desktopWindowsPowerShellPlaceholder: 'Blank uses powershell.exe',
@@ -304,6 +311,7 @@ const en = {
   desktopTimeoutMsRange: 'Desktop action timeout must be an integer from 1000 through 120000.',
   desktopSettleMsRange: 'Desktop settle time must be an integer from 0 through 10000.',
   desktopMaxWindowsRange: 'Maximum windows must be an integer from 1 through 200.',
+  desktopMaxElementsRange: 'Maximum semantic controls must be an integer from 20 through 500.',
   desktopMacDisplayRange: 'The macOS display number must be an integer from 1 through 32.',
   noProviders: 'No provider is available in Harness. Add one under Settings → Models first.',
   inactive: ' (inactive)',
@@ -824,6 +832,15 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
               <span>{t('desktopComputerUse')}<br /><small style={styles.hint}>{t('desktopComputerUseHint')}</small></span>
             </label>
             <p style={{ ...styles.hint, marginTop: 10 }}>{t('desktopPermissionHint')}</p>
+            <label style={{ ...styles.checkboxRow, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={draft.desktopSemantic}
+                disabled={saving || !snapshot.writable || !draft.desktopComputerUse}
+                onChange={event => update('desktopSemantic', event.target.checked)}
+              />
+              <span>{t('desktopSemantic')}<br /><small style={styles.hint}>{t('desktopSemanticHint')}</small></span>
+            </label>
             <div style={{ ...styles.grid, marginTop: 14 }}>
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-desktop-timeout">{t('desktopTimeoutMs')}</label>
@@ -836,6 +853,10 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-desktop-windows">{t('desktopMaxWindows')}</label>
                 <input id="deepseekeyes-desktop-windows" style={styles.input} type="number" min="1" max="200" step="1" value={draft.desktopMaxWindows} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopMaxWindows', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-elements">{t('desktopMaxElements')}</label>
+                <input id="deepseekeyes-desktop-elements" style={styles.input} type="number" min="20" max="500" step="1" value={draft.desktopMaxElements} disabled={saving || !snapshot.writable || !draft.desktopComputerUse || !draft.desktopSemantic} onChange={event => update('desktopMaxElements', numberFrom(event))} />
               </div>
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-desktop-display">{t('desktopMacDisplay')}</label>

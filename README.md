@@ -116,8 +116,8 @@ Historical images are compacted into bounded SHA-256 pointers. They cause no aut
 | Route health and failover audit | ✅ | Priority, health TTL, circuit cooldown and bounded attempts. |
 | Custom multimodal gateways | ✅ | OpenAI-compatible routes can be declared from the GUI. |
 | Browser Computer Use | ✅ | Open, observe, click, type, select, wait, assert, report and close. |
-| Windows desktop Computer Use | ✅ | PowerShell + native user32/System.Drawing helper. |
-| macOS desktop Computer Use | ✅ | JXA + CoreGraphics/System Events/screencapture helper. |
+| Windows desktop Computer Use | ✅ | Window capture + UI Automation elements/actions + user32 input. |
+| macOS desktop Computer Use | ✅ | Window capture + Accessibility elements/actions + CoreGraphics input. |
 | Lossless oversized screenshots | ✅ | Recompressed without pixel changes, then tiled only when the Host's 5 MB limit requires it. |
 | Local Token accounting | ✅ | Exact Provider usage plus clearly labelled bridge estimates. |
 | Public visual eval | ✅ | Screenshot, dense text, chart, UI and prompt-injection cases with accuracy/latency/Token output. |
@@ -126,6 +126,8 @@ Historical images are compacted into bounded SHA-256 pointers. They cause no aut
 ## Computer Use
 
 Both automation modes are **off by default** and are enabled independently from **Settings → Plugins → DeepSeekEyes**.
+
+The control cycle follows the same core shape as the [official OpenAI Computer use loop](https://developers.openai.com/api/docs/guides/tools-computer-use): observe the current UI, execute a typed action, return a fresh screenshot, and continue from the new state. DeepSeekEyes implements that cycle as auditable DSH tools and additionally exposes native accessibility elements when the operating system provides them.
 
 ### Browser Computer Use
 
@@ -137,14 +139,16 @@ Supported operations include navigation, observation, click, type, select, check
 
 The native `computer` tool can:
 
-- observe the current display and window catalog;
+- discover the desktop, then observe only the target window to reduce irrelevant pixels;
+- return stable `windowRef` and `elementRef` identities, semantic roles, names, values, bounds and available actions;
 - move, click and drag the pointer;
-- type Unicode text and keyboard shortcuts;
+- click or invoke semantic elements, assign control values, type Unicode text and send keyboard shortcuts;
 - scroll, wait, launch and focus applications;
 - move, resize and close windows;
-- run visual assertions and save evidence reports.
+- return a screenshot/window/element `stateDelta` after every step;
+- run native element/window/screen assertions, fall back to visual assertions for pixel-only facts, and save v2 evidence reports.
 
-Every action is bound to the newest screenshot state and returns another full-screen PNG through the same visual bridge. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
+Every action is bound to the newest screenshot state and returns another lossless PNG through the same visual bridge. A known target remains window-scoped; full-desktop capture is used for discovery or when explicitly requested. Coordinates are relative to the returned image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
 
 ## Token accounting
 
@@ -175,7 +179,7 @@ export DEEPSEEKEYES_USAGE_STATS=false
 - A targeted reread references original pixels—not a thumbnail, JPEG copy or summary of a summary.
 - Failed vision calls, invalid evidence or exhausted clarification bounds stop the visual turn instead of inviting a guess.
 - Browser/Desktop screenshots carry content-addressed state and stale-action protection.
-- Typed text and launch arguments are hashed in persisted Computer Use reports.
+- Typed text, assigned values and launch arguments are hashed in persisted Computer Use reports.
 
 ## Configuration reference
 
@@ -189,7 +193,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | Visual budgets | `baseMaxTokens`, `targetMaxTokens` — `0` delegates the limit to the Provider |
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
-| Desktop | `desktopComputerUse`, timeout, settle delay, display, PowerShell and evidence directory |
+| Desktop | `desktopComputerUse`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |
 | Usage | `usageStats`, `usageStatsPath` |
 
 See the [complete Chinese configuration reference](README.zh-CN.md#配置字段) for every field and default.

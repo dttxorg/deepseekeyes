@@ -44,6 +44,8 @@ export class NativeDesktopDriver {
         screenshotPath,
         settleMs: this.config.desktopSettleMs,
         maxWindows: this.config.desktopMaxWindows,
+        semantic: this.config.desktopSemantic,
+        maxElements: this.config.desktopMaxElements,
         macDisplay: this.config.desktopMacDisplay,
       }, {
         signal,

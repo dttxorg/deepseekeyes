@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 - 2026-08-16
+
+- Add window-scoped native observation on Windows and macOS, with screenshot-relative coordinate mapping back to the desktop and explicit failure instead of silently returning the wrong scope.
+- Add Windows UI Automation and macOS Accessibility element discovery with stable `elementRef` identities, semantic role/name/value/bounds/state metadata and configurable observation limits.
+- Re-resolve macOS Accessibility actions by a stable semantic fingerprint and duplicate ordinal, using the prior flat index only after identity/bounds verification so a shifted tree fails closed instead of acting on another control.
+- Prefer semantic `elementRef` actions while retaining pixel-coordinate fallback: click/type/scroll now accept elements, and new `invoke`, `set_value` and `perform_action` operations call native accessibility patterns.
+- Derive stable `windowRef` values from native window identity while keeping all refs bound to the latest `stateId`.
+- Bind macOS windows to stable CoreGraphics window numbers and re-resolve the matching Accessibility window after z-order changes, preventing a focus/raise action from capturing another window of the same application.
+- Return `stateDelta` after every observation, including pixel-identity screenshot changes and added/removed/changed windows and elements.
+- Add native runtime assertions for window existence/title, element existence/visibility/enabled/focus/value/name and screen changed/unchanged, while retaining explicit model-backed visual assertions.
+- Upgrade desktop reports to `deepseekeyes.desktop-report.v2`; typed text, assigned values and launch arguments remain plaintext-free in persisted events.
+- Add GUI settings for semantic desktop observation and element limits, increase the default desktop timeout to 30 seconds, and document the 0.5 screenshot/action/feedback loop.
+- Extend unit and native acceptance coverage for window capture, semantic refs/actions, state differences, runtime assertions and macOS Accessibility; Windows helper parsing/native observation remain covered by cross-platform CI.
+
 ## 0.4.2 - 2026-08-15
 
 - Restore the tolerant single-object extraction used by 0.2 for base evidence and the active pixel probe, while keeping clarification control messages whole-response strict and rejecting multiple JSON objects.

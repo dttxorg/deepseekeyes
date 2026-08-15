@@ -10,6 +10,9 @@ export const DESKTOP_ACTIONS = Object.freeze([
   'type',
   'key',
   'scroll',
+  'invoke',
+  'set_value',
+  'perform_action',
   'launch',
   'focus',
   'move_window',
@@ -21,10 +24,33 @@ export const DESKTOP_ACTIONS = Object.freeze([
   'close',
 ])
 
+export const DESKTOP_SCOPES = Object.freeze(['desktop', 'window'])
+
+export const DESKTOP_ASSERTION_KINDS = Object.freeze([
+  'window_exists',
+  'window_title_contains',
+  'element_exists',
+  'element_visible',
+  'element_hidden',
+  'element_enabled',
+  'element_disabled',
+  'element_focused',
+  'element_value_equals',
+  'element_name_contains',
+  'screen_changed',
+  'screen_unchanged',
+  'visual',
+])
+
 const STATEFUL_ACTIONS = new Set([
   'click', 'double_click', 'right_click', 'move_cursor', 'drag', 'type', 'key',
-  'scroll', 'launch', 'focus', 'move_window', 'resize_window', 'close_window', 'wait',
-  'assert', 'report',
+  'scroll', 'invoke', 'set_value', 'perform_action', 'launch', 'focus', 'move_window',
+  'resize_window', 'close_window', 'wait', 'assert', 'report',
+])
+
+const ELEMENT_ASSERTIONS = new Set([
+  'element_exists', 'element_visible', 'element_hidden', 'element_enabled',
+  'element_disabled', 'element_focused', 'element_value_equals', 'element_name_contains',
 ])
 
 function isPlainObject(value) {
@@ -76,12 +102,22 @@ function requireWindowTarget(args, action) {
   }
 }
 
+function hasCoordinatePair(args, first = 'x', second = 'y') {
+  return args[first] !== undefined || args[second] !== undefined
+}
+
 function requireCoordinatePair(args, first, second, action) {
   if (args[first] === undefined || args[second] === undefined) {
     throw new TypeError(`deepseekeyes computer: ${action} requires ${first} and ${second}`)
   }
   if (args[first] < 0 || args[second] < 0) {
     throw new RangeError(`deepseekeyes computer: ${first} and ${second} must be non-negative`)
+  }
+}
+
+function requireElement(args, action) {
+  if (args.elementRef === undefined) {
+    throw new TypeError(`deepseekeyes computer: ${action} requires elementRef`)
   }
 }
 
@@ -99,6 +135,7 @@ export function parseDesktopArgs(input) {
   const args = {
     action,
     stateId: optionalString(input.stateId, 'stateId'),
+    scope: optionalString(input.scope, 'scope')?.toLowerCase(),
     x: optionalNumber(input.x, 'x'),
     y: optionalNumber(input.y, 'y'),
     endX: optionalNumber(input.endX, 'endX'),
@@ -108,23 +145,32 @@ export function parseDesktopArgs(input) {
     width: optionalNumber(input.width, 'width'),
     height: optionalNumber(input.height, 'height'),
     text: input.text === undefined ? undefined : String(input.text),
+    value: input.value === undefined ? undefined : String(input.value),
     key: optionalString(input.key, 'key'),
     application: optionalString(input.application, 'application'),
     title: optionalString(input.title, 'title'),
     windowRef: optionalString(input.windowRef, 'windowRef'),
+    elementRef: optionalString(input.elementRef, 'elementRef'),
+    actionName: optionalString(input.actionName, 'actionName'),
     arguments: optionalStringArray(input.arguments, 'arguments'),
     secret: optionalBoolean(input.secret, 'secret'),
     durationMs: optionalNumber(input.durationMs, 'durationMs'),
     timeoutMs: optionalNumber(input.timeoutMs, 'timeoutMs'),
     reportName: optionalString(input.reportName, 'reportName'),
-    assertion: optionalString(input.assertion, 'assertion'),
+    assertion: optionalString(input.assertion, 'assertion')?.toLowerCase(),
     passed: optionalBoolean(input.passed, 'passed'),
     expected: input.expected === undefined ? undefined : String(input.expected),
     actual: input.actual === undefined ? undefined : String(input.actual),
   }
 
+  if (args.scope !== undefined && !DESKTOP_SCOPES.includes(args.scope)) {
+    throw new TypeError(`deepseekeyes computer: scope must be one of ${DESKTOP_SCOPES.join(', ')}`)
+  }
   if (desktopActionNeedsState(action) && args.stateId === undefined) {
     throw new TypeError(`deepseekeyes computer: ${action} requires the latest stateId`)
+  }
+  if ((args.windowRef !== undefined || args.elementRef !== undefined) && args.stateId === undefined) {
+    throw new TypeError('deepseekeyes computer: windowRef and elementRef require the latest stateId')
   }
   if (args.durationMs !== undefined
     && (!Number.isInteger(args.durationMs) || args.durationMs < 0 || args.durationMs > 120_000)) {
@@ -135,9 +181,13 @@ export function parseDesktopArgs(input) {
     throw new RangeError('deepseekeyes computer: timeoutMs must be an integer from 1000 through 120000')
   }
 
-  if (['click', 'double_click', 'right_click', 'move_cursor'].includes(action)) {
-    requireCoordinatePair(args, 'x', 'y', action)
+  if (['click', 'double_click', 'right_click'].includes(action)) {
+    if (args.elementRef === undefined) requireCoordinatePair(args, 'x', 'y', action)
+    if (args.elementRef !== undefined && hasCoordinatePair(args)) {
+      throw new TypeError(`deepseekeyes computer: ${action} accepts elementRef or x/y, not both`)
+    }
   }
+  if (action === 'move_cursor') requireCoordinatePair(args, 'x', 'y', action)
   if (action === 'drag') {
     requireCoordinatePair(args, 'x', 'y', action)
     requireCoordinatePair(args, 'endX', 'endY', action)
@@ -150,6 +200,15 @@ export function parseDesktopArgs(input) {
   }
   if (action === 'scroll' && args.deltaX === undefined && args.deltaY === undefined) {
     throw new TypeError('deepseekeyes computer: scroll requires deltaX or deltaY')
+  }
+  if (action === 'invoke') requireElement(args, action)
+  if (action === 'set_value') {
+    requireElement(args, action)
+    if (args.value === undefined) throw new TypeError('deepseekeyes computer: set_value requires value')
+  }
+  if (action === 'perform_action') {
+    requireElement(args, action)
+    if (args.actionName === undefined) throw new TypeError('deepseekeyes computer: perform_action requires actionName')
   }
   if (action === 'launch' && args.application === undefined) {
     throw new TypeError('deepseekeyes computer: launch requires application')
@@ -165,23 +224,33 @@ export function parseDesktopArgs(input) {
       throw new RangeError('deepseekeyes computer: resize_window requires positive width and height')
     }
   }
-  if (action === 'wait') {
-    args.durationMs ??= 500
-  }
-  if (action === 'assert' && (args.assertion === undefined || args.passed === undefined)) {
-    throw new TypeError('deepseekeyes computer: assert requires assertion and passed')
+  if (action === 'wait') args.durationMs ??= 500
+  if (action === 'assert') {
+    if (!DESKTOP_ASSERTION_KINDS.includes(args.assertion)) {
+      throw new TypeError(`deepseekeyes computer: assertion must be one of ${DESKTOP_ASSERTION_KINDS.join(', ')}`)
+    }
+    if (ELEMENT_ASSERTIONS.has(args.assertion)) requireElement(args, action)
+    if (['window_exists', 'window_title_contains'].includes(args.assertion)) requireWindowTarget(args, action)
+    if (['window_title_contains', 'element_value_equals', 'element_name_contains'].includes(args.assertion)
+      && args.expected === undefined) {
+      throw new TypeError(`deepseekeyes computer: assertion ${args.assertion} requires expected`)
+    }
+    if (args.assertion === 'visual' && args.passed === undefined) {
+      throw new TypeError('deepseekeyes computer: visual assertion requires passed')
+    }
   }
   return Object.freeze(args)
 }
 
-/** Remove typed text and launch arguments from persisted action reports. */
+/** Remove typed or assigned text and launch arguments from persisted action reports. */
 export function reportableDesktopArgs(args) {
   const output = {}
   for (const [key, value] of Object.entries(args)) {
     if (value === undefined || key === 'secret') continue
-    if (key === 'text') {
-      output.textLength = value.length
-      output.textSha256 = createHash('sha256').update(value).digest('hex')
+    if (key === 'text' || key === 'value') {
+      const rendered = String(value)
+      output[`${key}Length`] = rendered.length
+      output[`${key}Sha256`] = createHash('sha256').update(rendered).digest('hex')
       continue
     }
     if (key === 'arguments') {
@@ -202,6 +271,7 @@ export const DESKTOP_TOOL_PARAMETERS = Object.freeze({
   properties: {
     action: { type: 'string', enum: [...DESKTOP_ACTIONS] },
     stateId: { type: 'string' },
+    scope: { type: 'string', enum: [...DESKTOP_SCOPES] },
     x: { type: 'number', minimum: 0 },
     y: { type: 'number', minimum: 0 },
     endX: { type: 'number', minimum: 0 },
@@ -211,18 +281,21 @@ export const DESKTOP_TOOL_PARAMETERS = Object.freeze({
     width: { type: 'number', exclusiveMinimum: 0 },
     height: { type: 'number', exclusiveMinimum: 0 },
     text: { type: 'string' },
+    value: { oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
     key: { type: 'string' },
     application: { type: 'string' },
     title: { type: 'string' },
     windowRef: { type: 'string' },
+    elementRef: { type: 'string' },
+    actionName: { type: 'string' },
     arguments: { type: 'array', items: { type: 'string' } },
     secret: { type: 'boolean' },
     durationMs: { type: 'integer', minimum: 0, maximum: 120_000 },
     timeoutMs: { type: 'integer', minimum: 1_000, maximum: 120_000 },
     reportName: { type: 'string' },
-    assertion: { type: 'string' },
+    assertion: { type: 'string', enum: [...DESKTOP_ASSERTION_KINDS] },
     passed: { type: 'boolean' },
-    expected: { type: 'string' },
+    expected: { oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
     actual: { type: 'string' },
   },
 })

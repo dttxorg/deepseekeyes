@@ -10,9 +10,11 @@
     visionFailoverAttempts: 2
     desktopComputerUse: true
     desktopHistoryLimit: 8
-    desktopTimeoutMs: 15000
+    desktopTimeoutMs: 30000
     desktopSettleMs: 300
     desktopMaxWindows: 50
+    desktopSemantic: true
+    desktopMaxElements: 200
     desktopMacDisplay: 1
     # Windows only; omit when powershell.exe is already on PATH.
     # desktopWindowsPowerShell: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe

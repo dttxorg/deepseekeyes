@@ -66,6 +66,8 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /browserViewportWidth/)
   assert.match(JSON.stringify(json), /desktopComputerUse/)
   assert.match(JSON.stringify(json), /desktopWindowsPowerShell/)
+  assert.match(JSON.stringify(json), /desktopSemantic/)
+  assert.match(JSON.stringify(json), /desktopMaxElements/)
   assert.match(JSON.stringify(json), /usageStats/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
@@ -81,7 +83,9 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal(base.browserComputerUse, false)
   assert.equal(base.desktopHistoryLimit, 8)
   assert.equal(base.desktopComputerUse, false)
-  assert.equal(base.desktopTimeoutMs, 15_000)
+  assert.equal(base.desktopTimeoutMs, 30_000)
+  assert.equal(base.desktopSemantic, true)
+  assert.equal(base.desktopMaxElements, 200)
   assert.equal(base.desktopMacDisplay, 1)
   assert.equal('cacheDir' in base, false)
   assert.equal('providerId' in base, false)
@@ -152,6 +156,8 @@ test('native settings registration exposes the namespace and reconfigures routin
     desktopTimeoutMs: 20_000,
     desktopSettleMs: 450,
     desktopMaxWindows: 25,
+    desktopSemantic: false,
+    desktopMaxElements: 120,
     desktopMacDisplay: 2,
     desktopWindowsPowerShell: 'C:\\Windows\\powershell.exe',
   })
@@ -174,6 +180,8 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.desktopTimeoutMs, 20_000)
   assert.equal(state.config.desktopSettleMs, 450)
   assert.equal(state.config.desktopMaxWindows, 25)
+  assert.equal(state.config.desktopSemantic, false)
+  assert.equal(state.config.desktopMaxElements, 120)
   assert.equal(state.config.desktopMacDisplay, 2)
   assert.equal(state.config.desktopWindowsPowerShell, 'C:\\Windows\\powershell.exe')
   assert.ok(ctx.tools.get('computer'))

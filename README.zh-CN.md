@@ -16,7 +16,7 @@
   <a href="README.md">English</a> ·
   <a href="#安装升级与-doctor">快速安装</a> ·
   <a href="#工作方式">工作方式</a> ·
-  <a href="#windows--macos-desktop-computer-use-03默认关闭">Computer Use</a> ·
+  <a href="#windows--macos-desktop-computer-use-05默认关闭">Computer Use</a> ·
   <a href="#本插件-token-消耗统计">Token 统计</a> ·
   <a href="#配置字段">完整配置</a> ·
   <a href="https://x.com/lucars2026">X / @lucars2026</a>
@@ -115,26 +115,31 @@ $DSH_HOME/deepseekeyes/browser-runs/<run-id>/
 
 Browser Computer Use 默认关闭，普通图文桥接和纯文本会话不会携带 `browser` 工具或相关系统提示。启用后，只有最新 Browser 状态保留完整 DOM/OCR/截图证据；历史状态默认只保留最近 8 个紧凑摘要，避免每一步把此前的完整页面证据再次发送给模型。
 
-## Windows / macOS Desktop Computer Use 0.3（默认关闭）
+## Windows / macOS Desktop Computer Use 0.5（默认关闭）
 
-0.3 在浏览器之外新增独立的 `computer` 工具，Windows 和 macOS 都使用系统原生接口，不要求切换对话窗口：
+0.5 把原有桌面控制推进为“截图 + 原生语义 + 状态差分”的闭环。它保持 [OpenAI 官方 Computer use 文档](https://developers.openai.com/api/docs/guides/tools-computer-use)描述的核心循环：观察当前 UI、执行结构化动作、返回新截图、基于新状态继续；同时复用 Windows UI Automation 与 macOS Accessibility，减少只靠全屏像素猜控件的位置：
 
 ```text
-observe 获取全屏截图和窗口目录
+observe(scope=desktop) 发现窗口
+→ observe(scope=window) 获取目标窗口截图和语义控件
 → DeepSeekEyes 把截图交给当前后台视觉模型
-→ DeepSeek 使用最新 stateId 和截图坐标执行动作
+→ DeepSeek 使用最新 stateId + elementRef（或截图坐标）执行动作
 → 原生 Helper 操作桌面
-→ 返回新的全屏截图、窗口目录和 stateId
-→ 视觉模型读取新状态，DeepSeek 验证结果并继续
+→ 返回新窗口截图、控件树、stateDelta 和 stateId
+→ 运行时断言或视觉断言验证结果并继续
 ```
 
-支持：`observe`、`click`、`double_click`、`right_click`、`move_cursor`、`drag`、`type`、`key`、`scroll`、`launch`、`focus`、`move_window`、`resize_window`、`close_window`、`wait`、`assert`、`report` 和 `close`。DeepSeek 在检查最新视觉证据后用 `assert` 记录预期、实际值和通过状态，最终 `report` 汇总断言失败与动作失败，形成可重复的桌面自动测试证据。
+支持：`observe`、`click`、`double_click`、`right_click`、`move_cursor`、`drag`、`type`、`key`、`scroll`、`invoke`、`set_value`、`perform_action`、`launch`、`focus`、`move_window`、`resize_window`、`close_window`、`wait`、`assert`、`report` 和 `close`。
+
+运行时可以直接验证 `window_exists`、`window_title_contains`、`element_exists/visible/hidden/enabled/disabled/focused`、`element_value_equals`、`element_name_contains`、`screen_changed/unchanged`；像游戏、Canvas 和自绘界面仍使用 `visual` 断言。最终 `report` 使用 `deepseekeyes.desktop-report.v2` 汇总动作、断言、每步状态差分和截图身份。
 
 - 第一步使用 `observe`；会改变桌面或依赖窗口的动作必须提交最新 `stateId`。
 - 坐标绑定最新截图像素，越界坐标在调用系统接口前被拒绝。
-- `windowRef` 每次观察都会重建，只能用于产生它的最新状态。
-- Windows 通过 PowerShell、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
-- 输入文本和启动参数只在报告中保存长度和 SHA-256，不保存原文。
+- `windowRef` / `elementRef` 从原生身份生成；同一对象跨观察保持稳定，但引用仍只允许与最新 `stateId` 一起使用，避免对过期界面执行动作。
+- 已知目标默认继续返回窗口级截图；`scope=desktop` 可显式回到全桌面发现。窗口截图坐标以返回图片左上角为原点，Helper 会映射回系统全局坐标。
+- Windows 通过 PowerShell、UI Automation、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、Accessibility、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
+- 输入文本、`set_value` 的值和启动参数只在报告中保存长度和 SHA-256，不保存原文。
+- `stateDelta` 按完整像素哈希判断截图变化，并分别记录窗口与控件的 added/removed/changed，避免 PNG 编码变化被误判为 UI 变化。
 - 每一步原始 PNG 和最终 JSON 报告默认写入 `$DSH_HOME/deepseekeyes/desktop-runs/`。
 
 Harness 单图片附件存在 5 MB 边界。桌面截图先做**像素无损** PNG 重压；若仍超限，插件按明确的 `x/y/width/height` 坐标拆成若干无损 PNG 图块，在同一次工具结果中全部交给视觉桥接。该过程不缩放、不转 JPEG；状态同时记录原始 PNG SHA-256、完整像素 SHA-256、每块像素 SHA-256 和附件 SHA-256。配置证据目录时，原始编码 PNG 也会完整保留。
@@ -161,7 +166,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.4）
+## 全 GUI 配置（0.5）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -174,9 +179,9 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
    - **后台读图模型**（只读取原图并回答细节追问）。
 4. 在“视觉路由可靠性”中按行填写后备 `provider/model`，设置健康检查、故障转移次数、冷却期和 attempts 保留数量。
 5. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
-6. 在 **Computer Use 0.3** 区域分别设置：
+6. 在 **Computer Use 0.5** 区域分别设置：
    - Browser Computer Use 的启用状态、Edge/Chrome、无界面模式、视口和动作参数；
-   - Windows/macOS Desktop Computer Use 的启用状态、动作超时、稳定等待、窗口数、macOS 显示器编号、Windows PowerShell 路径和证据目录。
+   - Windows/macOS Desktop Computer Use 的启用状态、语义控件开关/上限、动作超时、稳定等待、窗口数、macOS 显示器编号、Windows PowerShell 路径和证据目录。
 7. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
 8. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
@@ -254,9 +259,11 @@ defaultInput: [text, image]
     browserChannel: msedge
     desktopComputerUse: true
     desktopHistoryLimit: 8
-    desktopTimeoutMs: 15000
+    desktopTimeoutMs: 30000
     desktopSettleMs: 300
     desktopMaxWindows: 50
+    desktopSemantic: true
+    desktopMaxElements: 200
     desktopMacDisplay: 1
 ```
 
@@ -269,6 +276,7 @@ export DEEPSEEKEYES_VISION_MODEL=gpt-4.1
 export DEEPSEEKEYES_VISION_ROUTE_PRIORITY='openai/gpt-4.1,backup/qwen-vl-max'
 export DEEPSEEKEYES_USAGE_STATS=true
 export DEEPSEEKEYES_DESKTOP_ENABLED=true
+export DEEPSEEKEYES_DESKTOP_SEMANTIC=true
 dsh web
 ```
 
@@ -348,9 +356,11 @@ $DSH_HOME/deepseekeyes/evidence/
 | `browserMaxTextChars` | `20000` | 单次观察最多返回的页面字符数 |
 | `desktopHistoryLimit` | `8` | 最终模型上下文中保留的最近 Desktop 状态紧凑摘要数；`0` 表示不自动带入历史状态 |
 | `desktopComputerUse` | `false` | 是否注册 Windows/macOS 原生 `computer` 工具；默认关闭以隔离普通会话开销 |
-| `desktopTimeoutMs` | `15000` | 单次原生桌面动作超时 |
+| `desktopTimeoutMs` | `30000` | 单次原生桌面动作超时；为窗口解析、语义树和截图留出完整时间 |
 | `desktopSettleMs` | `300` | 操作完成后等待界面稳定的时间 |
 | `desktopMaxWindows` | `50` | 单次观察最多返回的窗口数 |
+| `desktopSemantic` | `true` | 读取 Windows UI Automation / macOS Accessibility 语义控件并启用元素动作 |
+| `desktopMaxElements` | `200` | 单次观察最多返回的语义控件数；范围 20–500 |
 | `desktopMacDisplay` | `1` | macOS 截图和坐标绑定的显示器编号 |
 | `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
 | `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |

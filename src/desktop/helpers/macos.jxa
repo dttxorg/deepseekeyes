@@ -168,12 +168,104 @@ function sendKey(value) {
   else throw new Error(`unsupported macOS key ${key}`)
 }
 
-function visibleProcesses() {
+let cachedCgWindows
+
+function cgDictionaryValue(dictionary, key) {
+  try {
+    const value = dictionary.objectForKey(key)
+    if (!value) return undefined
+    return ObjC.deepUnwrap(value)
+  } catch { return undefined }
+}
+
+function cgWindows() {
+  if (cachedCgWindows !== undefined) return cachedCgWindows
+  const found = []
+  try {
+    // kCGWindowListOptionAll keeps stable window numbers available even when a
+    // target is temporarily covered. The list is already ordered front to back.
+    const reference = $.CGWindowListCopyWindowInfo(0, 0)
+    const list = ObjC.castRefToObject(reference)
+    const count = Number(list.count)
+    for (let index = 0; index < count; index += 1) {
+      const dictionary = list.objectAtIndex(index)
+      const bounds = cgDictionaryValue(dictionary, 'kCGWindowBounds') || {}
+      const number = Number(cgDictionaryValue(dictionary, 'kCGWindowNumber'))
+      const pid = Number(cgDictionaryValue(dictionary, 'kCGWindowOwnerPID'))
+      const width = Number(bounds.Width)
+      const height = Number(bounds.Height)
+      if (!Number.isFinite(number) || !Number.isFinite(pid) || width <= 0 || height <= 0) continue
+      found.push({
+        number,
+        pid,
+        owner: String(cgDictionaryValue(dictionary, 'kCGWindowOwnerName') || ''),
+        title: String(cgDictionaryValue(dictionary, 'kCGWindowName') || ''),
+        x: Number(bounds.X),
+        y: Number(bounds.Y),
+        width,
+        height,
+        layer: Number(cgDictionaryValue(dictionary, 'kCGWindowLayer')),
+        onscreen: Boolean(cgDictionaryValue(dictionary, 'kCGWindowIsOnscreen')),
+      })
+    }
+  } catch {}
+  cachedCgWindows = found
+  return found
+}
+
+function stableTextHash(value) {
+  const text = String(value)
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    first = Math.imul(first ^ code, 0x01000193)
+    second = Math.imul(second ^ code, 0x85ebca6b)
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
+}
+
+function matchCgWindow(pid, title, position, size) {
+  const wantedTitle = String(title || '').toLowerCase()
+  const hasBounds = Array.isArray(position) && Array.isArray(size)
+  let best
+  for (const candidate of cgWindows()) {
+    if (candidate.pid !== Number(pid) || candidate.layer !== 0) continue
+    let score = candidate.onscreen ? 5 : 0
+    if (hasBounds) {
+      const distance = Math.abs(candidate.x - Number(position[0]))
+        + Math.abs(candidate.y - Number(position[1]))
+        + Math.abs(candidate.width - Number(size[0]))
+        + Math.abs(candidate.height - Number(size[1]))
+      if (distance === 0) score += 240
+      else if (distance <= 8) score += 180 - distance
+      else score -= Math.min(distance, 500)
+    }
+    const candidateTitle = candidate.title.toLowerCase()
+    if (wantedTitle && candidateTitle === wantedTitle) score += 100
+    else if (wantedTitle && candidateTitle
+      && (wantedTitle.includes(candidateTitle) || candidateTitle.includes(wantedTitle))) score += 60
+    if (best === undefined || score > best.score) best = { candidate, score }
+  }
+  return best !== undefined && best.score >= 50 ? best.candidate : undefined
+}
+
+function visibleProcesses(maximum) {
   const result = []
   const systemEvents = Application('System Events')
   let processes = []
   try { processes = systemEvents.applicationProcesses() } catch {}
-  for (const process of processes) {
+  const frontmost = frontmostApplication()
+  const ordered = []
+  if (frontmost !== undefined) {
+    const active = processes.find((process) => {
+      try { return Number(process.unixId()) === Number(frontmost.pid) } catch { return false }
+    })
+    if (active !== undefined) ordered.push(active)
+  }
+  for (const process of processes) if (!ordered.includes(process)) ordered.push(process)
+  for (const process of ordered) {
+    if (result.length >= maximum) break
     try {
       if (process.backgroundOnly()) continue
       const application = String(process.name())
@@ -181,27 +273,20 @@ function visibleProcesses() {
       const active = Boolean(process.frontmost())
       const windows = process.windows()
       if (windows.length === 0) {
-        result.push({ nativeId: `${pid}:app`, pid, application, title: application, active })
+        result.push({ nativeId: `app:${pid}`, pid, application, title: application, active })
         continue
       }
       for (let index = 0; index < windows.length; index += 1) {
-        const window = windows[index]
-        let title = application
-        let position
-        let size
-        try { title = String(window.name()) || application } catch {}
-        try { position = window.position().map(Number) } catch {}
-        try { size = window.size().map(Number) } catch {}
-        result.push({
-          nativeId: `${pid}:${index}`,
-          pid,
-          index,
-          application,
-          title,
-          active,
-          ...(position === undefined ? {} : { x: position[0], y: position[1] }),
-          ...(size === undefined ? {} : { width: size[0], height: size[1] }),
-        })
+        if (result.length >= maximum) break
+        const described = describeWindow(process, windows[index], index)
+        if (active) {
+          const frontmost = cgWindows().find(candidate =>
+            candidate.pid === pid && candidate.layer === 0 && candidate.onscreen)
+          described.active = frontmost === undefined
+            ? index === 0
+            : described.nativeId === `cg:${frontmost.number}`
+        }
+        result.push(described)
       }
     } catch {}
   }
@@ -219,6 +304,7 @@ function resolveProcess(input) {
       const name = String(process.name())
       const pid = Number(process.unixId())
       if (Number.isFinite(wantedPid) && wantedPid > 0 && pid === wantedPid) return process
+      if (Number.isFinite(wantedPid) && wantedPid > 0) continue
       if (wantedApplication && name.toLowerCase().includes(wantedApplication)) return process
       if (wantedTitle) {
         const matches = process.windows().some(window => String(window.name()).toLowerCase().includes(wantedTitle))
@@ -232,20 +318,291 @@ function resolveProcess(input) {
 function resolveWindow(input) {
   const process = resolveProcess(input)
   const windows = process.windows()
+  const hasNativeTarget = Boolean(input.window && input.window.nativeId)
+  const wantedNativeId = String((input.window && input.window.nativeId) || '')
   const wantedIndex = Number(input.window && input.window.index)
   const wantedTitle = String(input.title || (input.window && input.window.title) || '').toLowerCase()
+  if (hasNativeTarget) {
+    for (let index = 0; index < windows.length; index += 1) {
+      const info = describeWindow(process, windows[index], index)
+      if (info.nativeId === wantedNativeId) return { process, window: windows[index], index, info }
+    }
+    throw new Error('target macOS window was not found')
+  }
   if (Number.isInteger(wantedIndex) && wantedIndex >= 0 && wantedIndex < windows.length) {
-    return { process, window: windows[wantedIndex] }
+    return { process, window: windows[wantedIndex], index: wantedIndex, info: describeWindow(process, windows[wantedIndex], wantedIndex) }
   }
   if (wantedTitle) {
-    for (const window of windows) {
+    for (let index = 0; index < windows.length; index += 1) {
+      const window = windows[index]
       try {
-        if (String(window.name()).toLowerCase().includes(wantedTitle)) return { process, window }
+        if (String(window.name()).toLowerCase().includes(wantedTitle)) {
+          return { process, window, index, info: describeWindow(process, window, index) }
+        }
       } catch {}
     }
   }
-  if (windows.length > 0) return { process, window: windows[0] }
+  if (windows.length > 0) return { process, window: windows[0], index: 0, info: describeWindow(process, windows[0], 0) }
   throw new Error('target macOS window was not found')
+}
+
+function describeWindow(process, window, index) {
+  const pid = Number(process.unixId())
+  const application = String(process.name())
+  let title = application
+  let position
+  let size
+  try { title = String(window.name()) || application } catch {}
+  try { position = window.position().map(Number) } catch {}
+  try { size = window.size().map(Number) } catch {}
+  const matched = matchCgWindow(pid, title, position, size)
+  const fallbackIdentity = stableTextHash(JSON.stringify({ pid, title, position, size }))
+  return {
+    nativeId: matched === undefined ? `ax:${pid}:${fallbackIdentity}` : `cg:${matched.number}`,
+    pid,
+    index,
+    application,
+    title,
+    active: Boolean(process.frontmost()),
+    ...(position === undefined ? {} : { x: position[0], y: position[1] }),
+    ...(size === undefined ? {} : { width: size[0], height: size[1] }),
+  }
+}
+
+function resolveCaptureWindow(input) {
+  if (String(input.captureScope || 'desktop') !== 'window') return undefined
+  const capture = input.captureWindow
+  const explicit = capture !== undefined
+    || Boolean(input.captureApplication || input.captureTitle || input.application || input.title)
+  const proxy = {
+    window: capture,
+    application: input.captureApplication || (capture && capture.application) || input.application,
+    title: input.captureTitle || (capture && capture.title) || input.title,
+  }
+  try { return resolveWindow(proxy) } catch (error) {
+    if (explicit) throw error
+  }
+  try {
+    const active = frontmostApplication()
+    return resolveWindow({ application: active && active.application })
+  } catch { throw new Error('active macOS capture window was not found') }
+}
+
+function axValue(element, property) {
+  try {
+    const value = element[property]()
+    if (value === undefined || value === null) return undefined
+    if (Array.isArray(value)) return value
+    if (typeof value === 'object') return undefined
+    return value
+  } catch { return undefined }
+}
+
+function axActions(element) {
+  try {
+    return element.actions().map((action) => {
+      const name = String(action.name()).replace(/^AX/, '')
+      return name.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
+    }).filter(Boolean)
+  } catch { return [] }
+}
+
+function propertyValue(properties, name) {
+  try {
+    const value = properties[name]
+    if (value === undefined || value === null) return undefined
+    if (Array.isArray(value)) return value
+    if (typeof value === 'object') return undefined
+    return value
+  } catch { return undefined }
+}
+
+function axIdentityText(value) {
+  if (value === undefined || value === null) return ''
+  return String(value).replace(/\s+/g, ' ').trim()
+}
+
+function axIdentityBase(record) {
+  const name = axIdentityText(record.name)
+  const description = axIdentityText(record.description)
+  const labelled = name !== '' || description !== ''
+  return JSON.stringify({
+    role: axIdentityText(record.role),
+    subrole: axIdentityText(record.subrole),
+    name,
+    description,
+    // Anonymous containers need geometry to avoid collapsing the whole tree
+    // into one identity. Labelled controls remain stable when they move.
+    geometry: labelled ? undefined : [record.x, record.y, record.width, record.height]
+      .map(value => Number.isFinite(Number(value)) ? Math.round(Number(value) * 2) / 2 : null),
+  })
+}
+
+function axBoundsMatch(first, second) {
+  const fields = ['x', 'y', 'width', 'height']
+  if (!fields.every(field => Number.isFinite(Number(first[field])) && Number.isFinite(Number(second[field])))) return true
+  return fields.every(field => Math.abs(Number(first[field]) - Number(second[field])) <= 2)
+}
+
+function convertAxElement(element, target, flatIndex) {
+  try {
+    const properties = element.properties()
+    const position = propertyValue(properties, 'position')
+    const size = propertyValue(properties, 'size')
+    const rawRole = String(propertyValue(properties, 'role') || 'AXUnknown')
+    const rawSubrole = propertyValue(properties, 'subrole')
+    const role = rawRole.replace(/^AX/, '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
+    const subrole = rawSubrole === undefined
+      ? undefined
+      : String(rawSubrole).replace(/^AX/, '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
+    const password = role.includes('secure') || String(subrole || '').includes('secure')
+    const value = password ? undefined : propertyValue(properties, 'value')
+    const actions = axActions(element)
+    const record = {
+      windowNativeId: target.info.nativeId,
+      pid: target.info.pid,
+      flatIndex,
+      role,
+      subrole,
+      name: propertyValue(properties, 'name') || propertyValue(properties, 'title'),
+      description: propertyValue(properties, 'accessibilityDescription')
+        || propertyValue(properties, 'description')
+        || propertyValue(properties, 'help'),
+      value: value === undefined ? undefined : String(value),
+      password,
+      enabled: propertyValue(properties, 'enabled'),
+      visible: true,
+      focused: propertyValue(properties, 'focused'),
+      editable: actions.includes('confirm') || ['text_field', 'text_area', 'combo_box'].includes(role),
+      selected: propertyValue(properties, 'selected'),
+      ...(Array.isArray(position) ? { x: Number(position[0]), y: Number(position[1]) } : {}),
+      ...(Array.isArray(size) ? { width: Number(size[0]), height: Number(size[1]) } : {}),
+      actions,
+    }
+    record.identityBase = axIdentityBase(record)
+    return record
+  } catch { return undefined }
+}
+
+function collectAxElements(target, maximum) {
+  let flattened = []
+  try { flattened = target.window.entireContents() } catch {}
+  const candidates = [{ element: target.window, flatIndex: -1 }]
+  for (let index = 0; index < flattened.length && candidates.length < maximum; index += 1) {
+    candidates.push({ element: flattened[index], flatIndex: index })
+  }
+  const counts = new Map()
+  const elements = []
+  for (const candidate of candidates) {
+    const record = convertAxElement(candidate.element, target, candidate.flatIndex)
+    if (record === undefined) continue
+    const ordinal = counts.get(record.identityBase) || 0
+    counts.set(record.identityBase, ordinal + 1)
+    record.nativeId = `${target.info.nativeId}:ax:${stableTextHash(record.identityBase)}:${ordinal}`
+    delete record.identityBase
+    elements.push(record)
+  }
+  return { elements, total: 1 + flattened.length }
+}
+
+function resolveAxElement(input) {
+  if (!input.element) throw new Error('element metadata is missing')
+  const target = resolveWindow({
+    window: {
+      nativeId: input.element.windowNativeId,
+      pid: input.element.pid,
+      index: Number(String(input.element.windowNativeId || '').split(':').pop()),
+    },
+  })
+  const flatIndex = Number(input.element.flatIndex)
+  const flattened = target.window.entireContents()
+  const candidate = !Number.isInteger(flatIndex) || flatIndex < 0
+    ? target.window
+    : flatIndex < flattened.length ? flattened[flatIndex] : undefined
+  const expectedIdentity = axIdentityBase(input.element)
+  if (candidate !== undefined) {
+    const converted = convertAxElement(candidate, target, flatIndex)
+    if (converted !== undefined
+      && converted.identityBase === expectedIdentity
+      && axBoundsMatch(converted, input.element)) return candidate
+  }
+
+  // AX does not expose a public stable element handle through System Events.
+  // Re-resolve by the immutable semantic fingerprint and its duplicate ordinal;
+  // never execute against a shifted flat index that now describes another UI.
+  const wantedOrdinalMatch = /:(\d+)$/.exec(String(input.element.nativeId || ''))
+  const wantedOrdinal = wantedOrdinalMatch === null ? 0 : Number(wantedOrdinalMatch[1])
+  const matches = []
+  const all = [{ element: target.window, flatIndex: -1 }]
+  for (let index = 0; index < flattened.length; index += 1) {
+    all.push({ element: flattened[index], flatIndex: index })
+  }
+  for (const current of all) {
+    const converted = convertAxElement(current.element, target, current.flatIndex)
+    if (converted === undefined || converted.identityBase !== expectedIdentity) continue
+    const distance = ['x', 'y', 'width', 'height'].reduce((total, field) => {
+      if (!Number.isFinite(Number(converted[field])) || !Number.isFinite(Number(input.element[field]))) return total
+      return total + Math.abs(Number(converted[field]) - Number(input.element[field]))
+    }, 0)
+    matches.push({ element: current.element, distance })
+  }
+  matches.sort((first, second) => first.distance - second.distance)
+  if (matches.length > 0 && (matches.length === 1 || matches[0].distance < matches[1].distance)) return matches[0].element
+  if (wantedOrdinal < matches.length) return matches[wantedOrdinal].element
+  throw new Error('target macOS accessibility element ref is stale')
+}
+
+function macActionName(value) {
+  const rendered = String(value || '').trim()
+  if (rendered.startsWith('AX')) return rendered
+  return `AX${rendered.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('')}`
+}
+
+function performAxAction(element, actionName) {
+  const nativeName = macActionName(actionName)
+  try {
+    element.actions.byName(nativeName).perform()
+    return
+  } catch {}
+  if (nativeName === 'AXFocus') {
+    element.focused = true
+    return
+  }
+  throw new Error(`element does not expose ${nativeName}`)
+}
+
+function axCenter(element) {
+  const position = axValue(element, 'position')
+  const size = axValue(element, 'size')
+  if (!Array.isArray(position) || !Array.isArray(size)) throw new Error('accessibility element has no clickable bounds')
+  return {
+    x: Number(position[0]) + Number(size[0]) / 2,
+    y: Number(position[1]) + Number(size[1]) / 2,
+  }
+}
+
+function captureScreen(input, target, displayScreen) {
+  if (target && Number(target.info.width) > 0 && Number(target.info.height) > 0) {
+    const x = Math.round(Number(target.info.x))
+    const y = Math.round(Number(target.info.y))
+    const width = Math.round(Number(target.info.width))
+    const height = Math.round(Number(target.info.height))
+    const windowNumber = /^cg:(\d+)$/.exec(String(target.info.nativeId || ''))
+    runTask('/usr/sbin/screencapture', windowNumber === null
+      ? ['-x', '-t', 'png', `-R${x},${y},${width},${height}`, String(input.screenshotPath)]
+      : ['-x', '-t', 'png', '-o', '-l', windowNumber[1], String(input.screenshotPath)])
+    return {
+      x,
+      y,
+      width: Math.round(width * displayScreen.scaleFactor),
+      height: Math.round(height * displayScreen.scaleFactor),
+      scaleFactor: displayScreen.scaleFactor,
+    }
+  }
+  runTask('/usr/sbin/screencapture', [
+    '-x', '-t', 'png', '-D', String(input.macDisplay || 1), String(input.screenshotPath),
+  ])
+  return displayScreen
 }
 
 function perform(input) {
@@ -255,13 +612,56 @@ function perform(input) {
     pause((input.durationMs || 500) / 1000)
     return { waitedMs: input.durationMs || 500 }
   }
-  if (action === 'click') clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 1)
+  if (['invoke', 'set_value', 'perform_action'].includes(action)) {
+    const element = resolveAxElement(input)
+    if (action === 'invoke') {
+      try { performAxAction(element, 'press') }
+      catch {
+        const center = axCenter(element)
+        const screen = input.screen || screenInfo(input.macDisplay)
+        clickAt({ screen }, (center.x - screen.x) * screen.scaleFactor, (center.y - screen.y) * screen.scaleFactor, $.kCGMouseButtonLeft, 1)
+      }
+    } else if (action === 'set_value') {
+      try { element.value = String(input.value) }
+      catch {
+        try { element.focused = true } catch {}
+        Application('System Events').keystroke('a', { using: ['command down'] })
+        typeUnicode(String(input.value))
+      }
+    } else {
+      performAxAction(element, input.actionName)
+    }
+  } else if (['click', 'double_click', 'right_click'].includes(action) && input.element) {
+    const element = resolveAxElement(input)
+    const center = axCenter(element)
+    const screen = input.screen || screenInfo(input.macDisplay)
+    const localX = (center.x - screen.x) * screen.scaleFactor
+    const localY = (center.y - screen.y) * screen.scaleFactor
+    clickAt(
+      { screen }, localX, localY,
+      action === 'right_click' ? $.kCGMouseButtonRight : $.kCGMouseButtonLeft,
+      action === 'double_click' ? 2 : 1,
+    )
+  } else if (action === 'click') clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 1)
   else if (action === 'double_click') clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 2)
   else if (action === 'right_click') clickAt(input, input.x, input.y, $.kCGMouseButtonRight, 1)
   else if (action === 'move_cursor') moveCursor(input, input.x, input.y)
   else if (action === 'drag') drag(input)
-  else if (action === 'scroll') scroll(input)
-  else if (action === 'type') typeUnicode(input.text)
+  else if (action === 'scroll') {
+    if (input.element) {
+      const center = axCenter(resolveAxElement(input))
+      const screen = input.screen || screenInfo(input.macDisplay)
+      moveCursor({ screen }, (center.x - screen.x) * screen.scaleFactor, (center.y - screen.y) * screen.scaleFactor)
+    }
+    scroll(input)
+  }
+  else if (action === 'type') {
+    if (input.element) {
+      const element = resolveAxElement(input)
+      try { element.focused = true } catch {}
+    }
+    typeUnicode(input.text)
+  }
   else if (action === 'key') sendKey(input.key)
   else if (action === 'launch') {
     const app = Application(input.application)
@@ -312,30 +712,61 @@ function frontmostApplication() {
   } catch { return undefined }
 }
 
+function accessibilityAvailable() {
+  try { return Boolean(Application('System Events').uiElementsEnabled()) }
+  catch { return false }
+}
+
 function run() {
   try {
     const input = readInput()
-    const screen = screenInfo(input.macDisplay)
-    input.screen = input.screen || screen
+    const displayScreen = screenInfo(input.macDisplay)
+    input.screen = input.screen || displayScreen
     const actionResult = perform(input)
     if (input.settleMs > 0 && !['wait', 'observe'].includes(input.action)) pause(input.settleMs / 1000)
-    runTask('/usr/sbin/screencapture', [
-      '-x', '-t', 'png', '-D', String(input.macDisplay || 1), String(input.screenshotPath),
-    ])
-    const windows = visibleProcesses().slice(0, input.maxWindows || 50)
+    const captureTarget = resolveCaptureWindow(input)
+    const screen = captureScreen(input, captureTarget, displayScreen)
+    const frontmost = frontmostApplication()
+    const allWindows = captureTarget === undefined
+      ? visibleProcesses(input.maxWindows || 50)
+      : [{
+          ...captureTarget.info,
+          active: Number(frontmost && frontmost.pid) === Number(captureTarget.info.pid),
+        }]
+    const activeWindow = allWindows.find(window => window.active) || frontmost
+    const windows = allWindows.slice(0, input.maxWindows || 50)
+    const semanticEnabled = input.semantic !== false && accessibilityAvailable()
+    const semanticTarget = captureTarget
+    let elements = []
+    let elementTotal = 0
+    if (semanticEnabled && semanticTarget !== undefined) {
+      try {
+        const semantic = collectAxElements(semanticTarget, input.maxElements || 200)
+        elements = semantic.elements
+        elementTotal = semantic.total
+      } catch { elements = [] }
+    }
     return JSON.stringify({
       ok: true,
       actionResult,
       screen,
       cursor: cursorPosition(screen),
-      activeWindow: frontmostApplication(),
+      activeWindow: activeWindow || frontmostApplication(),
+      capturedWindow: captureTarget && captureTarget.info,
       windows,
+      elements,
+      elementTotal,
+      elementsTruncated: elementTotal > elements.length,
       capabilities: {
         screenshot: true,
         mouse: true,
         keyboard: true,
         launch: true,
         windows: true,
+        accessibility: semanticEnabled,
+        windowCapture: true,
+        elementActions: semanticEnabled,
+        semanticScope: 'window',
         platform: 'macOS',
       },
     })

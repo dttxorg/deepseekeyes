@@ -31,7 +31,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test",
+    "test": "node --test \"tests/*.test.js\"",
     "test:browser": "node acceptance/browser-live.mjs",
     "test:coverage": "node --test --experimental-test-coverage",
     "check": "npm run build:client && node scripts/verify-package.mjs && npm run eval:fixture && npm test",

@@ -98,7 +98,9 @@ test('ordered routes fail over, open a health circuit and persist bounded attemp
   assert.match(snapshot.attempts[0].sessionHash, /^[0-9a-f]{64}$/)
   assert.doesNotMatch(JSON.stringify(snapshot), /raw-session-id/)
   assert.equal(JSON.parse(await readFile(file, 'utf8')).attempts.length, 4)
-  assert.equal((await stat(file)).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+  }
 })
 
 test('failover bound zero preserves the primary error and skips fallback execution', async () => {

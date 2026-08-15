@@ -587,7 +587,11 @@ try {
     $semanticEnabled = [bool](Get-PropertyValue $inputObject 'semantic' $true)
     $semanticWindow = $captureWindow
     $maxElements = [int](Get-PropertyValue $inputObject 'maxElements' 200)
-    $elements = if ($semanticEnabled) { @(Get-AutomationElements $semanticWindow $maxElements) } else { @() }
+    $elements = @()
+    if ($semanticEnabled -and $null -ne $semanticWindow) {
+        $elements = @(Get-AutomationElements $semanticWindow $maxElements)
+    }
+    $elementCount = @($elements).Count
     [pscustomobject]@{
         ok = $true
         actionResult = $actionResult
@@ -596,9 +600,9 @@ try {
         activeWindow = $active
         capturedWindow = $captureWindow
         windows = $windows
-        elements = $elements
-        elementTotal = $elements.Count
-        elementsTruncated = ($semanticEnabled -and $elements.Count -ge $maxElements)
+        elements = @($elements)
+        elementTotal = $elementCount
+        elementsTruncated = ($semanticEnabled -and $elementCount -ge $maxElements)
         capabilities = [pscustomobject]@{
             screenshot = $true; mouse = $true; keyboard = $true; launch = $true; windows = $true
             accessibility = ($semanticEnabled -and $script:DeepSeekEyesSemanticAvailable)

@@ -13,6 +13,7 @@
 - Upgrade desktop reports to `deepseekeyes.desktop-report.v2`; typed text, assigned values and launch arguments remain plaintext-free in persisted events.
 - Add GUI settings for semantic desktop observation and element limits, increase the default desktop timeout to 30 seconds, and document the 0.5 screenshot/action/feedback loop.
 - Extend unit and native acceptance coverage for window capture, semantic refs/actions, state differences, runtime assertions and macOS Accessibility; Windows helper parsing/native observation remain covered by cross-platform CI.
+- Keep Windows desktop discovery valid when no window-scoped semantic target exists by normalizing the UI Automation result to an explicit empty array before counting controls.
 
 ## 0.4.2 - 2026-08-15
 

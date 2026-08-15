@@ -36,4 +36,40 @@ jobs:
         run: node -e "const p=require('./package.json'); if (process.env.RELEASE_TAG !== 'v' + p.version) throw new Error('release tag must equal v' + p.version)"
       - run: npm ci
       - run: npm run check
-      - run: npm publish --access public --provenance
+      - name: Check for an existing identical package
+        id: registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          SPEC="${NAME}@${VERSION}"
+
+          if ! REMOTE_TARBALL_URL="$(npm view "$SPEC" dist.tarball --registry=https://registry.npmjs.org 2>/dev/null)"; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "Registry does not contain $SPEC; continuing to trusted publishing."
+            exit 0
+          fi
+
+          LOCAL_PACK_DIR="$RUNNER_TEMP/deepseekeyes-local-pack"
+          LOCAL_TREE="$RUNNER_TEMP/deepseekeyes-local-tree"
+          REMOTE_TREE="$RUNNER_TEMP/deepseekeyes-remote-tree"
+          PACK_JSON="$RUNNER_TEMP/deepseekeyes-pack.json"
+          mkdir -p "$LOCAL_PACK_DIR" "$LOCAL_TREE" "$REMOTE_TREE"
+
+          npm pack --ignore-scripts --json --pack-destination "$LOCAL_PACK_DIR" > "$PACK_JSON"
+          LOCAL_TARBALL="$(node -e "const fs=require('fs'); const [pack]=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pack.filename)" "$PACK_JSON")"
+          curl --fail --silent --show-error --location "$REMOTE_TARBALL_URL" --output "$RUNNER_TEMP/deepseekeyes-remote.tgz"
+          tar -xzf "$LOCAL_PACK_DIR/$LOCAL_TARBALL" -C "$LOCAL_TREE"
+          tar -xzf "$RUNNER_TEMP/deepseekeyes-remote.tgz" -C "$REMOTE_TREE"
+
+          if ! diff -qr "$LOCAL_TREE/package" "$REMOTE_TREE/package"; then
+            echo "::error::$SPEC already exists, but its published contents differ from this checkout."
+            exit 1
+          fi
+
+          echo "already_published=true" >> "$GITHUB_OUTPUT"
+          echo "Registry already contains the identical $SPEC artifact; publish is idempotently complete."
+      - name: Publish package through OIDC
+        if: steps.registry.outputs.already_published != 'true'
+        run: npm publish --access public --provenance

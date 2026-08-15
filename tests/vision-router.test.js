@@ -125,3 +125,34 @@ test('failover bound zero preserves the primary error and skips fallback executi
   )
   assert.equal(calls, 1)
 })
+
+test('multi-route exhaustion reports every route code and the final failure cause', async () => {
+  const ctx = mockContext()
+  for (const [provider, model] of [['primary', 'vision-a'], ['fallback', 'vision-b'], ['last', 'vision-c']]) {
+    ctx.llm.addProvider(provider, [{ id: model, inputModalities: ['text', 'image'] }])
+  }
+  const router = new VisionRouter(ctx, resolveConfig({
+    cacheDir: false,
+    visionProvider: 'primary',
+    visionModel: 'vision-a',
+    visionRoutePriority: 'fallback/vision-b\nlast/vision-c',
+    autoDetectVision: false,
+    visionFailoverAttempts: 2,
+  }, {}, '/tmp'), { warn() {}, info() {} })
+  await assert.rejects(
+    router.run('base', {}, async (route) => {
+      throw new DeepSeekEyesError(
+        route.provider === 'last' ? 'last output truncated' : `${route.provider} rejected evidence`,
+        route.provider === 'last' ? 'VISION_OUTPUT_TRUNCATED' : 'INVALID_VISION_EVIDENCE',
+      )
+    }),
+    (error) => {
+      assert.equal(error.code, 'VISION_FAILOVER_EXHAUSTED')
+      assert.match(error.message, /primary\/vision-a \[INVALID_VISION_EVIDENCE\]/)
+      assert.match(error.message, /fallback\/vision-b \[INVALID_VISION_EVIDENCE\]/)
+      assert.match(error.message, /last\/vision-c \[VISION_OUTPUT_TRUNCATED\]/)
+      assert.match(error.message, /last error: last output truncated/)
+      return true
+    },
+  )
+})

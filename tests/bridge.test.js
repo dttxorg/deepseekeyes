@@ -35,6 +35,12 @@ function setupBridge({ visionHandler, upstreamHandler, activeProbe = false, brid
   return ctx
 }
 
+function failedStream(code, message) {
+  return (async function* () {
+    yield { type: 'finish', reason: { kind: 'error', failure: { code, message } } }
+  })()
+}
+
 test('virtual model advertises images, keeps the session block, and completes a private clarification loop', async () => {
   const bytes = Buffer.from('exact original image bytes')
   const sha = createHash('sha256').update(bytes).digest('hex')
@@ -289,6 +295,53 @@ test('invalid visual evidence stops the DeepSeek dispatch', async () => {
     (error) => error.code === 'INVALID_MODEL_OUTPUT',
   )
   assert.equal(upstreamCalls, 0)
+})
+
+test('an explicit visual max-token rejection retries once with provider-managed output', async () => {
+  let visionCalls = 0
+  const ctx = setupBridge({
+    bridgeConfig: { autoDetectVision: false, baseMaxTokens: 16_384 },
+    visionHandler(options) {
+      visionCalls += 1
+      if (Object.hasOwn(options, 'maxTokens')) {
+        return failedStream('invalid_request_error', 'max_tokens must be less than or equal to 8192')
+      }
+      return jsonStream(validBaseEvidence({ summary: 'Game window with an error dialog' }))
+    },
+    upstreamHandler: () => textStream('desktop evidence reached DeepSeek'),
+  })
+  const ref = ctx.attachments.add(Buffer.from('desktop tile'), { width: 1720, height: 1440 })
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [userMessage([{ type: 'image', attachment: ref }])],
+  }))
+  assert.equal(result.text, 'desktop evidence reached DeepSeek')
+  assert.equal(visionCalls, 2)
+})
+
+test('a visual max-token finish is classified as truncation before JSON parsing', async () => {
+  const ctx = setupBridge({
+    bridgeConfig: { autoDetectVision: false, baseMaxTokens: 4_096 },
+    visionHandler() {
+      return (async function* () {
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'text-delta', index: 0, text: '{"schemaVersion":' }
+        yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 4096 } }
+        yield { type: 'finish', reason: { kind: 'max-tokens' } }
+      })()
+    },
+    upstreamHandler: () => textStream('should not run'),
+  })
+  const ref = ctx.attachments.add(Buffer.from('dense desktop tile'))
+  await assert.rejects(
+    collectStream(ctx.llm.stream({
+      provider: 'deepseekeyes',
+      model: 'deepseek-v4-flash',
+      messages: [userMessage([{ type: 'image', attachment: ref }])],
+    })),
+    (error) => error.code === 'VISION_OUTPUT_TRUNCATED' && /provider-managed output/.test(error.message),
+  )
 })
 
 test('no visual model leaves the virtual catalog empty and rejects exact resolution', async () => {

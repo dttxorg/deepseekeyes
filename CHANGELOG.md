@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-08-15
+
+- Register the web client bundle under its scoped npm identity, `@dttxorg/deepseekeyes`, so the Harness client-module loader resolves the package after a normal scoped install.
+- Derive the registration ID from `package.json` instead of maintaining a second hard-coded identity.
+- Make package verification, the native settings acceptance check and `deepseekeyes doctor` reject a client bundle whose registered module ID differs from the installed package name.
+- Refresh the project logo and README hero with the DeepSeek text-model-to-vision bridge and cross-platform Computer Use visual identity.
+- Bound the first-pass evidence generated for dense desktop screenshots while preserving exact original attachments for targeted rereads, retry only explicit Provider max-token rejections with Provider-managed output, classify generated-output truncation explicitly, and surface the full route/error-code chain on failover exhaustion.
+
 ## 0.4.0 - 2026-08-15
 
 - Publish the runtime as the scoped `@dttxorg/deepseekeyes` package with cross-platform one-line `install`, `upgrade` and `doctor` commands plus an OIDC/provenance release workflow.

@@ -23,7 +23,11 @@ test('canonical JSON Schema drives prompts and rejects every invalid nested fiel
   const source = {
     mediaType: 'image/png', width: 100, height: 100, bytes: 42, sha256: 'a'.repeat(64),
   }
-  assert.match(baseEvidencePrompt(source), new RegExp(BASE_EVIDENCE_SCHEMA.title))
+  const prompt = baseEvidencePrompt(source)
+  assert.match(prompt, new RegExp(BASE_EVIDENCE_SCHEMA.title))
+  assert.match(prompt, /bounded overview/i)
+  assert.match(prompt, /targeted reread/i)
+  assert.doesNotMatch(prompt, /Transcribe every visible word without paraphrasing/)
 
   const nested = validBaseEvidence({
     ocr: [{ text: 'exact', bbox: [0, 0, 0.5, 0.5], confidence: 0.9 }],

@@ -27,6 +27,49 @@ function failureCode(error) {
   return 'VISION_ROUTE_ERROR'
 }
 
+function diagnosticErrorMessage(error, maximum = 500) {
+  const redacted = errorMessage(error)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|npm)_[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return redacted.length <= maximum ? redacted : `${redacted.slice(0, maximum - 1)}…`
+}
+
+function maxTokenBudgetRejected(error) {
+  const message = errorMessage(error)
+  const mentionsBudget = /(?:max(?:imum)?[_ -]?(?:completion[_ -]?)?tokens?|context length)/i.test(message)
+  const rejectsBudget = /(?:must be|less than|at most|too (?:high|large)|exceed|maximum|requested|reduce|invalid)/i.test(message)
+  return mentionsBudget && rejectsBudget
+}
+
+/** Retry once without an explicit output cap only when the provider rejected that cap before generation. */
+async function collectVisionStream(ctx, options) {
+  try {
+    return await collectStream(ctx.llm.stream(options))
+  } catch (error) {
+    if (!Object.hasOwn(options, 'maxTokens') || !maxTokenBudgetRejected(error)) throw error
+    const { maxTokens, ...providerManaged } = options
+    const result = await collectStream(ctx.llm.stream(providerManaged))
+    return {
+      ...result,
+      budgetFallback: Object.freeze({ requestedMaxTokens: maxTokens, applied: 'provider-managed' }),
+    }
+  }
+}
+
+function requireCompleteEvidence(result, label, configuredMaxTokens) {
+  if (result.finish?.reason?.kind !== 'max-tokens') return result
+  const error = new DeepSeekEyesError(
+    `${label} was truncated at the visual output limit${
+      configuredMaxTokens === 0 ? '' : ` (${configuredMaxTokens})`
+    }; raise the budget or select provider-managed output`,
+    'VISION_OUTPUT_TRUNCATED',
+  )
+  error.usage = structuredClone(result.usage)
+  throw error
+}
+
 function failoverEligible(error, signal) {
   if (signal?.aborted) return false
   return ![
@@ -251,6 +294,7 @@ export class VisionRouter {
     let failoverIndex = 0
     let lastError
     let openFallback
+    const failureDetails = []
 
     for (const seed of seeds) {
       if (failoverIndex >= maximum) break
@@ -260,6 +304,12 @@ export class VisionRouter {
         route = await this.routeFromSeed(seed, signal)
       } catch (error) {
         lastError = error
+        failureDetails.push({
+          provider: seed.provider,
+          model: seed.model ?? '*',
+          errorCode: failureCode(error),
+          message: diagnosticErrorMessage(error),
+        })
         attempts.push(await this.recordAttempt({
           operation,
           provider: seed.provider,
@@ -317,6 +367,12 @@ export class VisionRouter {
       } catch (error) {
         lastError = error
         this.markFailure(route)
+        failureDetails.push({
+          provider: route.provider,
+          model: route.model,
+          errorCode: failureCode(error),
+          message: diagnosticErrorMessage(error),
+        })
         attempts.push(await this.recordAttempt({
           operation,
           provider: route.provider,
@@ -360,6 +416,12 @@ export class VisionRouter {
       } catch (error) {
         lastError = error
         this.markFailure(route)
+        failureDetails.push({
+          provider: route.provider,
+          model: route.model,
+          errorCode: failureCode(error),
+          message: diagnosticErrorMessage(error),
+        })
         attempts.push(await this.recordAttempt({
           operation,
           provider: route.provider,
@@ -382,8 +444,14 @@ export class VisionRouter {
       lastError.attempts = publicAttempts(attempts)
       throw lastError
     }
+    const routeSummary = failureDetails
+      .map(detail => `${detail.provider}/${detail.model} [${detail.errorCode}]`)
+      .join(' -> ')
+    const finalCause = failureDetails.at(-1)?.message
     const exhausted = new DeepSeekEyesError(
-      `visual route failover exhausted after ${failoverIndex} failed attempt(s)`,
+      `visual route failover exhausted after ${failoverIndex} failed attempt(s)${
+        routeSummary === '' ? '' : `: ${routeSummary}`
+      }${finalCause === undefined || finalCause === '' ? '' : `; last error: ${finalCause}`}`,
       'VISION_FAILOVER_EXHAUSTED',
       { cause: lastError },
     )
@@ -499,7 +567,7 @@ export class EvidenceManager {
     const proof = await this.probe.ensure(route, signal)
     addUsage(totalUsage, proof.usage)
 
-    const result = await collectStream(this.ctx.llm.stream({
+    const result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
       provider: route.provider,
       model: route.model,
       system: 'You are the visual evidence component of DeepSeekEyes. Observe pixels literally and return strict JSON.',
@@ -510,7 +578,7 @@ export class EvidenceManager {
       temperature: 0,
       ...tokenBudget(this.config.baseMaxTokens),
       signal,
-    }))
+    }), 'base visual evidence', this.config.baseMaxTokens)
     addUsage(totalUsage, result.usage)
     const evidence = validateBaseEvidence(parseJsonObject(result.text, 'base visual evidence'))
     const record = this.rememberBase(await this.cache.write(key, {
@@ -551,7 +619,7 @@ export class EvidenceManager {
       }
     }
     const proof = await this.probe.ensure(route, signal)
-    const result = await collectStream(this.ctx.llm.stream({
+    const result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
       provider: route.provider,
       model: route.model,
       system: 'You are the visual clarification component of DeepSeekEyes. Re-read the original pixels and return strict JSON.',
@@ -562,7 +630,7 @@ export class EvidenceManager {
       temperature: 0,
       ...tokenBudget(this.config.targetMaxTokens),
       signal,
-    }))
+    }), 'target visual evidence', this.config.targetMaxTokens)
     const evidence = validateTargetEvidence(parseJsonObject(result.text, 'target visual evidence'))
     const record = await this.cache.write(key, {
       recordVersion: 1,

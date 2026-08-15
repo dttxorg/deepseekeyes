@@ -41,6 +41,14 @@ The Provider returned prose, truncated JSON or a wrapper outside the JSON object
 3. Inspect `$DSH_HOME/deepseekeyes/vision-attempts.json` for status, error code and latency.
 4. Raise the visual output budget or select provider-managed output (`0`) when the model truncates a dense screenshot.
 
+Current releases keep the initial evidence pass bounded and leave the original attachment available for precise targeted rereads. If an explicit `maxTokens` value is rejected before generation, DeepSeekEyes retries that route once with Provider-managed output. This retry is limited to explicit budget-rejection diagnostics and is not used for content or Schema failures. A `max-tokens` finish after generation is reported as `VISION_OUTPUT_TRUNCATED` instead of being mislabelled as malformed JSON.
+
+## `visual route failover exhausted after N failed attempt(s)`
+
+If the `computer` result already contains `"ok": true`, a `stateId`, screenshot hashes and image attachments, desktop capture succeeded. This later error belongs to the visual evidence route, not the native mouse/screenshot driver.
+
+The surfaced error now includes the ordered `provider/model [ERROR_CODE]` chain and a redacted final cause. Use that chain together with `$DSH_HOME/deepseekeyes/vision-attempts.json` to distinguish Provider budget rejection, output truncation, active-probe failure and strict Schema rejection. The attempt log remains privacy-bounded and stores error codes rather than Provider message bodies.
+
 ## Image or screenshot exceeds 5 MB
 
 Pasted user images remain original DSH attachments. Desktop Computer Use screenshots are losslessly recompressed and, when required, split into coordinate-labelled PNG tiles without scaling or JPEG conversion.

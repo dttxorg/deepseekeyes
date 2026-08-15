@@ -35,6 +35,10 @@ async function writeFixturePackage(profileDirectory) {
     await mkdir(dirname(file), { recursive: true })
     await writeFile(file, '')
   }
+  await writeFile(
+    join(root, 'lib', 'client.js'),
+    `window.__ModuleLoader__.load({ id: ${JSON.stringify(NPM_PACKAGE)}, factory: () => ({}) });\n`,
+  )
   await mkdir(join(root, 'schemas'), { recursive: true })
   await writeFile(join(root, 'schemas', 'visual-evidence.schema.json'), JSON.stringify({
     $id: 'fixture://visual-evidence',
@@ -95,6 +99,7 @@ test('doctor validates the release tree and emits machine-readable JSON', async 
     assert.equal(report.passed, true)
     assert.equal(report.packageRoot, repositoryRoot)
     assert.equal(report.checks.find(entry => entry.id === 'strict-evidence-schema')?.passed, true)
+    assert.equal(report.checks.find(entry => entry.id === 'client-module-id')?.passed, true)
   } finally {
     await rm(dshHome, { recursive: true, force: true })
   }

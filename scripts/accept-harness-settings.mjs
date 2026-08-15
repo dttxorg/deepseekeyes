@@ -29,12 +29,12 @@ async function rpc(method, payload) {
 
 const homepage = await (await fetch(`${baseURL}/`)).text()
 assert.match(homepage, /"id":"deepseekeyes"/)
-const servedClientResponse = await fetch(`${baseURL}/plugins/deepseekeyes/client.js`)
+const servedClientResponse = await fetch(`${baseURL}/plugins/@dttxorg/deepseekeyes/client.js`)
 assert.equal(servedClientResponse.status, 200)
 const servedClient = Buffer.from(await servedClientResponse.arrayBuffer())
 const localClient = await readFile(localClientPath)
 assert.deepEqual(servedClient, localClient)
-assert.match(servedClient.toString('utf8'), /^window\.__ModuleLoader__\.load\(\{ id: "deepseekeyes"/)
+assert.match(servedClient.toString('utf8'), /^window\.__ModuleLoader__\.load\(\{ id: "@dttxorg\/deepseekeyes"/)
 
 const initialSettings = await rpc('settings.describe', {})
 const eyesNamespace = initialSettings.namespaces.find(entry => entry.ns === 'deepseekeyes')

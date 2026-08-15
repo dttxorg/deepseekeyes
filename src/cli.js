@@ -199,6 +199,19 @@ async function doctor(options, io) {
     } catch (error) {
       checks.push(check('strict-evidence-schema', false, error.message))
     }
+    try {
+      const source = await readFile(join(packageRoot, 'lib', 'client.js'), 'utf8')
+      const match = /^window\.__ModuleLoader__\.load\(\{ id: ("(?:[^"\\]|\\.)*")/.exec(source)
+      const actual = match === null ? undefined : JSON.parse(match[1])
+      const expected = manifest?.name ?? NPM_PACKAGE
+      checks.push(check(
+        'client-module-id',
+        actual === expected,
+        `registered=${actual ?? 'missing'}; expected=${expected}`,
+      ))
+    } catch (error) {
+      checks.push(check('client-module-id', false, error.message))
+    }
   }
 
   const attemptsFile = join(dshHome, 'deepseekeyes', 'vision-attempts.json')

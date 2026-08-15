@@ -5,6 +5,7 @@ import vm from 'node:vm'
 
 test('prebuilt Harness web bundle registers the native DeepSeekEyes settings card', async () => {
   const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   let record
   const window = {
     __ModuleLoader__: {
@@ -12,7 +13,7 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
     },
   }
   vm.runInNewContext(source, { window })
-  assert.equal(record.id, 'deepseekeyes')
+  assert.equal(record.id, manifest.name)
 
   const react = {
     useCallback: value => value,

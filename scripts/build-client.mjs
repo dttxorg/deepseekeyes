@@ -1,6 +1,9 @@
 import { build } from 'esbuild'
+import { readFile } from 'node:fs/promises'
 
-const id = 'deepseekeyes'
+const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+const id = manifest.name
+if (typeof id !== 'string' || id.length === 0) throw new TypeError('package.json must declare a client module name')
 await build({
   entryPoints: ['client/index.jsx'],
   outfile: 'lib/client.js',

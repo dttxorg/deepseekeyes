@@ -46,6 +46,30 @@ test('configuration accepts environment-selected Harness vision route', () => {
   assert.equal(config.usageStatsPath, join('/dsh-home', 'deepseekeyes', 'usage-stats.json'))
 })
 
+test('configuration normalizes ordered visual fallback routes and health controls', () => {
+  const config = resolveConfig({
+    visionRoutePriority: 'eyes-a/model/one, eyes-b/model-two\neyes-a/model/one',
+    visionFailoverAttempts: 4,
+    visionHealthTtlMs: 120_000,
+    visionFailureCooldownMs: 45_000,
+    visionAttemptLimit: 250,
+    cacheDir: false,
+  }, {}, '/tmp')
+  assert.equal(config.visionRoutePriority, 'eyes-a/model/one\neyes-b/model-two')
+  assert.deepEqual(config.visionPriorityRoutes, [
+    { provider: 'eyes-a', model: 'model/one' },
+    { provider: 'eyes-b', model: 'model-two' },
+  ])
+  assert.equal(config.visionFailoverAttempts, 4)
+  assert.equal(config.visionHealthTtlMs, 120_000)
+  assert.equal(config.visionFailureCooldownMs, 45_000)
+  assert.equal(config.visionAttemptLimit, 250)
+  assert.throws(
+    () => resolveConfig({ visionRoutePriority: 'missing-separator', cacheDir: false }, {}, '/tmp'),
+    /provider\/model/,
+  )
+})
+
 test('usage statistics can be disabled or kept memory-only', () => {
   const memoryOnly = resolveConfig({ cacheDir: false }, {}, '/tmp')
   assert.equal(memoryOnly.usageStats, true)

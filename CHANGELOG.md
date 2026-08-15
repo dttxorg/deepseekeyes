@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 - 2026-08-15
+
+- Publish the runtime as the scoped `@dttxorg/deepseekeyes` package with cross-platform one-line `install`, `upgrade` and `doctor` commands plus an OIDC/provenance release workflow.
+- Migrate an existing unscoped `deepseekeyes` profile dependency after a successful scoped install, while keeping install commands argument-safe and shell-free.
+- Make `schemas/visual-evidence.schema.json` the single public contract for both initial and targeted visual evidence; generate model prompts from it and validate every nested field with strict Ajv rules.
+- Reject leading/trailing prose, unknown nested fields, out-of-bounds normalized boxes and malformed confidence/OCR/object/region/observation values before evidence reaches DeepSeek.
+- Add ordered visual routing across the current evidence route, configured primary route, explicit fallback priority and auto-detected image-capable models.
+- Add cached capability health checks, failed-route cooldowns, bounded failover and `VISION_FAILOVER_EXHAUSTED` diagnostics without changing the single-route error contract.
+- Persist privacy-bounded vision attempts with Provider/model, stage, status, latency, error code, image SHA-256 and hashed session ID; never persist prompts, image bytes or evidence text in this log.
+- Add native GUI controls for route priority, health TTL, failure cooldown, failover bounds and attempt retention.
+- Add a deterministic public visual eval covering screenshots, dense text, charts, route-settings UI and prompt injection, with schema validity, accuracy, latency and Token reporting.
+- Add `SECURITY.md`, `TROUBLESHOOTING.md`, architecture, data-retention and eval documentation, positioning DeepSeekEyes as the auditable vision and cross-platform Computer Use runtime for DSH.
+
 ## 0.3.1 - 2026-08-15
 
 - Add a native token-usage statistics panel with refresh, reset and live enable/disable controls.

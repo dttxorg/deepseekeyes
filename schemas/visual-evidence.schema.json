@@ -1,0 +1,158 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/dttxorg/deepseekeyes/schemas/visual-evidence.schema.json",
+  "title": "DeepSeekEyes visual evidence",
+  "description": "Canonical strict schemas for base and targeted visual evidence.",
+  "oneOf": [
+    { "$ref": "#/definitions/baseEvidence" },
+    { "$ref": "#/definitions/targetEvidence" }
+  ],
+  "definitions": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "normalizedBbox": {
+      "type": "array",
+      "description": "Normalized [x,y,width,height] rectangle contained by the image.",
+      "normalizedBox": true,
+      "minItems": 4,
+      "maxItems": 4,
+      "items": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      ],
+      "additionalItems": false
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "ocrEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "bbox", "confidence"],
+      "properties": {
+        "text": { "$ref": "#/definitions/nonEmptyString" },
+        "bbox": { "$ref": "#/definitions/normalizedBbox" },
+        "confidence": { "$ref": "#/definitions/confidence" }
+      }
+    },
+    "regionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "bbox", "description"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "bbox": { "$ref": "#/definitions/normalizedBbox" },
+        "description": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "objectEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "bbox", "attributes"],
+      "properties": {
+        "name": { "$ref": "#/definitions/nonEmptyString" },
+        "bbox": { "$ref": "#/definitions/normalizedBbox" },
+        "attributes": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      }
+    },
+    "observationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact", "bbox", "confidence"],
+      "properties": {
+        "fact": { "$ref": "#/definitions/nonEmptyString" },
+        "bbox": { "$ref": "#/definitions/normalizedBbox" },
+        "confidence": { "$ref": "#/definitions/confidence" }
+      }
+    },
+    "baseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "summary",
+        "ocr",
+        "regions",
+        "objects",
+        "relations",
+        "quantitativeFacts",
+        "uncertainties"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "deepseekeyes.evidence.v1" },
+        "summary": { "$ref": "#/definitions/nonEmptyString" },
+        "ocr": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/definitions/ocrEntry" }
+        },
+        "regions": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/definitions/regionEntry" }
+        },
+        "objects": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/objectEntry" }
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "quantitativeFacts": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        },
+        "uncertainties": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      }
+    },
+    "targetEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "answer", "observations", "ocr", "uncertainties"],
+      "properties": {
+        "schemaVersion": { "const": "deepseekeyes.target.v1" },
+        "answer": { "$ref": "#/definitions/nonEmptyString" },
+        "observations": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/observationEntry" }
+        },
+        "ocr": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/definitions/ocrEntry" }
+        },
+        "uncertainties": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      }
+    }
+  }
+}

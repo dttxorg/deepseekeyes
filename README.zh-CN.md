@@ -10,11 +10,11 @@
 
 <p align="center"><strong>让 DeepSeek 看见，而且全程不离开当前对话。</strong></p>
 
-<p align="center">面向 DeepSeek Harness 的原图保真视觉桥接与 Windows / macOS Computer Use 插件。</p>
+<p align="center">面向 DeepSeek Harness 的可审计视觉与 Windows / macOS Computer Use Runtime。</p>
 
 <p align="center">
   <a href="README.md">English</a> ·
-  <a href="#安装本地交付包">快速安装</a> ·
+  <a href="#安装升级与-doctor">快速安装</a> ·
   <a href="#工作方式">工作方式</a> ·
   <a href="#windows--macos-desktop-computer-use-03默认关闭">Computer Use</a> ·
   <a href="#本插件-token-消耗统计">Token 统计</a> ·
@@ -25,13 +25,14 @@
 <p align="center">
   <a href="https://x.com/lucars2026"><img src="https://img.shields.io/badge/follow-%40lucars2026-000000?style=flat-square&logo=x&logoColor=white" alt="在 X 关注 @lucars2026" /></a>
   <a href="https://github.com/dttxorg/deepseekeyes/releases/latest"><img src="https://img.shields.io/github/v/release/dttxorg/deepseekeyes?style=flat-square&color=0969da" alt="最新版本" /></a>
+  <a href="https://www.npmjs.com/package/@dttxorg/deepseekeyes"><img src="https://img.shields.io/npm/v/%40dttxorg%2Fdeepseekeyes?style=flat-square&color=cb3837" alt="npm 版本" /></a>
   <a href="https://github.com/dttxorg/deepseekeyes/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dttxorg/deepseekeyes/ci.yml?branch=main&style=flat-square&label=CI" alt="CI 状态" /></a>
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-00b8d9?style=flat-square" alt="DeepSeek Harness 插件" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-5b5fc7?style=flat-square" alt="Windows 和 macOS" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
 </p>
 
-DeepSeekEyes 把你在 Harness「模型」页面已经配置好的多模态模型变成 DeepSeek 的眼睛，而 DeepSeek 继续负责推理和最终回答。粘贴一次图片后，视觉模型先生成与原图 SHA-256 绑定的证据；证据不够时，DeepSeek 还能在后台继续询问一个精确细节，并让视觉模型重新读取同一份原图。
+DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉与 Computer Use Runtime**。它负责视觉路由排序、健康检查、严格证据 Schema、原图身份、故障转移记录和自动化状态；DeepSeek 继续负责推理与最终回答。
 
 **不切窗口、不手工抄图、不把缩略图当原图，也不让普通纯文字会话承担视觉插件开销。**
 
@@ -42,6 +43,8 @@ DeepSeekEyes 把你在 Harness「模型」页面已经配置好的多模态模�
 | 图片会不会在转交时失真？ | 用户原图不缩放、不转格式、不重压；每次追问重新引用原始内容寻址附件。 |
 | 第一次视觉描述不够怎么办？ | DeepSeek 可以携带图片 SHA-256、精确问题和可选区域继续向视觉模型追问。 |
 | 视觉模型选错了怎么办？ | 先检查图片能力声明，再通过随机 3×3 色块探针验证它确实读取了像素。 |
+| 主视觉模型出错怎么办？ | 按配置优先级执行有界故障转移，失败路由进入冷却期，每次 attempts 都写入本地审计记录。 |
+| 视觉模型乱加字段怎么办？ | 提示生成与 Ajv 验证共用一份公开 JSON Schema，所有嵌套对象都拒绝额外字段。 |
 | 会不会影响正常文字对话？ | 纯文字轮次走原有直通路径，不读图、不截图、不注册 Computer Use 工具，也不增加插件统计。 |
 | 能否自动测试网页和桌面？ | Browser Computer Use 与 Windows/macOS 原生 Desktop Computer Use 均已实现，且默认关闭、按需启用。 |
 | 插件到底用了多少 Token？ | 设置卡分别展示 Provider 精确额外用量、桥接输入估算和被排除的正常最终回答用量。 |
@@ -51,8 +54,8 @@ DeepSeekEyes 把你在 Harness「模型」页面已经配置好的多模态模�
 ```text
 同一对话框中的图片和问题
   → Harness 原始内容寻址附件
-  → 已配置的视觉 Provider/Model
-  → 基础 OCR、布局、对象、关系和不确定性证据
+  → 已排序的视觉路由、健康检查与像素探针
+  → 严格 Schema 验证的 OCR、布局、对象、关系和不确定性证据
   → DeepSeek
   → 可选的内部细节追问
   → 视觉模型重新读取同一原图
@@ -60,6 +63,18 @@ DeepSeekEyes 把你在 Harness「模型」页面已经配置好的多模态模�
 ```
 
 插件不保存 API Key，也不实现另一套供应商客户端。视觉调用全部经过 `ctx.llm`，因此直接复用 Harness 模型页面已经配置的端点、模型和凭据。
+
+## 可审计视觉路由与严格 Schema（0.4）
+
+视觉路由按“当前证据原路由 → GUI 主路由 → `visionRoutePriority` → 自动检测”排序。图片能力健康检查默认缓存 60 秒；调用失败后该路由默认冷却 30 秒，并在替代路由存在时被跳过。每次健康检查、失败、缓存命中、跳过和成功都会记录到：
+
+```text
+$DSH_HOME/deepseekeyes/vision-attempts.json
+```
+
+记录只包含 Provider、模型、阶段、状态、耗时、错误码、图片 SHA-256 和哈希后的会话 ID，不写入图片、提示或模型证据正文。
+
+基础读取与细节读取共同使用 [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json)。所有 OCR、区域、对象、观察、bbox 和 confidence 嵌套字段都必须完整有效，任何额外字段都会让当前路由失败并进入有界 failover。
 
 ## 原生模型切换与按需重新看图
 
@@ -128,24 +143,17 @@ Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或�
 
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
-## 安装本地交付包
+## 安装、升级与 doctor
 
-macOS / Linux：
+macOS、Linux 和 Windows PowerShell 使用同一组一行命令：
 
 ```bash
-curl -fL -o deepseekeyes-0.3.1.tgz https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz
-npx -y @deepseek-ai/dsh plugin --profile web add "$PWD/deepseekeyes-0.3.1.tgz"
+npx -y @dttxorg/deepseekeyes@latest install
+npx -y @dttxorg/deepseekeyes@latest upgrade
+npx -y @dttxorg/deepseekeyes@latest doctor
 ```
 
-Windows PowerShell：
-
-```powershell
-$pkg = Join-Path $env:TEMP "deepseekeyes-0.3.1.tgz"
-Invoke-WebRequest "https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz" -OutFile $pkg
-npx -y @deepseek-ai/dsh plugin --profile web add $pkg
-```
-
-安装后重新启动一次 `dsh web`，然后在当前对话框的模型选择器中选择：
+非 `web` Profile 可追加 `--profile NAME`。安装或升级后重新启动一次 `dsh web`，然后在当前对话框的模型选择器中选择：
 
 ```text
 DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
@@ -153,7 +161,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.3）
+## 全 GUI 配置（0.4）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -164,12 +172,13 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
    - **最终回答模型**（负责推理和回复用户）；
    - **后台读图 Provider**；
    - **后台读图模型**（只读取原图并回答细节追问）。
-4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
-5. 在 **Computer Use 0.3** 区域分别设置：
+4. 在“视觉路由可靠性”中按行填写后备 `provider/model`，设置健康检查、故障转移次数、冷却期和 attempts 保留数量。
+5. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
+6. 在 **Computer Use 0.3** 区域分别设置：
    - Browser Computer Use 的启用状态、Edge/Chrome、无界面模式、视口和动作参数；
    - Windows/macOS Desktop Computer Use 的启用状态、动作超时、稳定等待、窗口数、macOS 显示器编号、Windows PowerShell 路径和证据目录。
-6. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
-7. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
+7. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
+8. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
 设置卡底部的 **Token 消耗统计** 区域可以直接查看、刷新、关闭或清零本插件的消耗记录，操作立即生效，不需要重启。
 
@@ -257,6 +266,7 @@ defaultInput: [text, image]
 export DEEPSEEKEYES_UPSTREAM_MODEL=deepseek-v4-pro
 export DEEPSEEKEYES_VISION_PROVIDER=openai
 export DEEPSEEKEYES_VISION_MODEL=gpt-4.1
+export DEEPSEEKEYES_VISION_ROUTE_PRIORITY='openai/gpt-4.1,backup/qwen-vl-max'
 export DEEPSEEKEYES_USAGE_STATS=true
 export DEEPSEEKEYES_DESKTOP_ENABLED=true
 dsh web
@@ -277,6 +287,7 @@ DeepSeekEyes 只通过 `ctx.attachments.readImage()` 读取图片，并把原始
 - MIME、字节数、宽度和高度；
 - 视觉 Provider 和 Model；
 - 能力检测方式；
+- 当前视觉路由及本次有界 attempts；
 - 完整结构化证据或针对性追问证据。
 
 证据默认写入：
@@ -304,8 +315,16 @@ $DSH_HOME/deepseekeyes/evidence/
 | `upstreamModel` | 兼容模式 | 最终推理与回答模型 ID；设置后目录和调用都锁定该模型 |
 | `visionProvider` | 自动检测 | Harness 中已有的视觉 Provider |
 | `visionModel` | 自动检测 | 视觉模型 ID |
+| `visionRoutePriority` | 未设置 | 后备视觉路由；每行或逗号分隔一个 `provider/model` |
 | `autoDetectVision` | `true` | 未选择视觉 Provider 时自动扫描 |
 | `activeProbe` | `true` | 启用随机像素能力检测 |
+| `visionHealthCheck` | `true` | 启用图片能力健康缓存、失败熔断与恢复检查 |
+| `visionFailoverAttempts` | `2` | 主路由失败后最多尝试的后备路由数；范围 0–8 |
+| `visionHealthTtlMs` | `60000` | 健康检查缓存时间 |
+| `visionFailureCooldownMs` | `30000` | 失败路由冷却时间 |
+| `visionAttemptLog` | `true` | 是否记录视觉路由选择与 failover attempts |
+| `visionAttemptLogPath` | DSH/Home 路径 | 默认 `$DSH_HOME/deepseekeyes/vision-attempts.json` |
+| `visionAttemptLimit` | `1000` | 最多保留的 attempts；范围 10–10000 |
 | `maxClarifications` | `3` | 每次 DeepSeek 回答最多追加的视觉追问次数 |
 | `persistentEvidence` | `true` | 持久保存视觉证据 |
 | `cacheDir` | DSH/Home 路径 | 证据目录；设为 `false` 时只使用进程内缓存 |
@@ -336,6 +355,15 @@ $DSH_HOME/deepseekeyes/evidence/
 | `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
 | `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |
 
+## 安全、架构、数据保留与公开 Eval
+
+- [架构与失败语义](docs/architecture.md)
+- [数据保留与删除](docs/data-retention.md)
+- [发布与 npm provenance](docs/releasing.md)
+- [安全策略](SECURITY.md)
+- [故障排除与 doctor](TROUBLESHOOTING.md)
+- [公开视觉 Eval](evals/README.md)：截图、密集文本、图表、UI 和提示注入，统一记录准确率、Schema 通过率、延迟与 Token。
+
 ## 社区与更新
 
 - 遇到问题或希望增加新的 Computer Use 动作，可以提交 [GitHub Issue](https://github.com/dttxorg/deepseekeyes/issues)。
@@ -346,6 +374,7 @@ $DSH_HOME/deepseekeyes/evidence/
 
 ```sh
 npm test
+npm run eval:fixture
 npm run test:browser
 npm run test:desktop
 npm run check
@@ -357,7 +386,7 @@ npm pack --dry-run
 ## 卸载
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web remove deepseekeyes
+npx -y @deepseek-ai/dsh plugin --profile web remove @dttxorg/deepseekeyes
 ```
 
 卸载只移除 Bundle；Harness 会话中的原始附件保持原状。证据缓存可在确认不再需要后单独删除。

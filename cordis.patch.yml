@@ -2,4 +2,4 @@
 # Models page stay owned by Harness; DeepSeekEyes references those live routes.
 - insert:
     - id: deepseekeyes
-      name: deepseekeyes
+      name: "@dttxorg/deepseekeyes"

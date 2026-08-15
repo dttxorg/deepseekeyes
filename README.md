@@ -11,7 +11,7 @@
 <p align="center"><strong>Give DeepSeek sight without leaving the conversation.</strong></p>
 
 <p align="center">
-  A source-preserving vision and cross-platform Computer Use bridge for
+  An auditable vision and cross-platform Computer Use runtime for
   <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a>.
 </p>
 
@@ -27,15 +27,18 @@
 <p align="center">
   <a href="https://x.com/lucars2026"><img src="https://img.shields.io/badge/follow-%40lucars2026-000000?style=flat-square&logo=x&logoColor=white" alt="Follow @lucars2026 on X" /></a>
   <a href="https://github.com/dttxorg/deepseekeyes/releases/latest"><img src="https://img.shields.io/github/v/release/dttxorg/deepseekeyes?style=flat-square&color=0969da" alt="Latest release" /></a>
+  <a href="https://www.npmjs.com/package/@dttxorg/deepseekeyes"><img src="https://img.shields.io/npm/v/%40dttxorg%2Fdeepseekeyes?style=flat-square&color=cb3837" alt="npm version" /></a>
   <a href="https://github.com/dttxorg/deepseekeyes/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dttxorg/deepseekeyes/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-00b8d9?style=flat-square" alt="DeepSeek Harness plugin" />
   <img src="https://img.shields.io/badge/Node.js-%3E%3D22.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js >= 22.19" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
 </p>
 
-DeepSeek's strongest text models can reason about code, documents and interfaces, but they do not consume image pixels. **DeepSeekEyes turns a multimodal model into their eyes while DeepSeek remains the reasoning model.** Paste an image once; the vision model produces hash-bound evidence, DeepSeek answers, and DeepSeek can privately ask the vision model for another exact detail from the original attachment.
+DeepSeek's strongest text models can reason about code, documents and interfaces, but they do not consume image pixels. **DeepSeekEyes is the DSH runtime that makes those pixels auditable:** it selects and health-checks visual routes, validates every nested evidence field, binds evidence to original bytes, records failover, and keeps DeepSeek as the reasoning model.
 
 No window switching. No manual transcription. No lossy screenshot relay.
+
+This is not another captioning window. It is the **DSH auditable vision and Computer Use runtime** for image evidence, Browser automation and native Windows/macOS control.
 
 ## Why DeepSeekEyes
 
@@ -46,29 +49,22 @@ No window switching. No manual transcription. No lossy screenshot relay.
 | **The models can communicate** | DeepSeek can request a precise region or detail instead of depending on one oversized first description. |
 | **No surprise text overhead** | Pure-text turns keep the direct model path: no visual call, no Computer Use tool and no DeepSeekEyes usage entry. |
 | **The eye is verified** | Static image-capability metadata is followed by an optional randomized 3×3 pixel probe. A text-only model cannot silently pose as the eye. |
+| **Routes fail over visibly** | Ordered visual routes, health TTL, circuit cooldown and bounded attempts are persisted without prompt/image contents. |
+| **Evidence is a contract** | One public JSON Schema drives prompts and Ajv validation; unknown or malformed nested fields stop the route. |
 | **Automation is built in** | Browser Computer Use plus native Windows/macOS desktop control can observe, act, verify and preserve evidence. |
 | **Usage is visible** | The native settings card separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
 ## Quick start
 
-### 1. Download and install
-
-macOS / Linux:
+### 1. Install, upgrade or diagnose
 
 ```bash
-curl -fL -o deepseekeyes-0.3.1.tgz https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz
-npx -y @deepseek-ai/dsh plugin --profile web add "$PWD/deepseekeyes-0.3.1.tgz"
+npx -y @dttxorg/deepseekeyes@latest install
+npx -y @dttxorg/deepseekeyes@latest upgrade
+npx -y @dttxorg/deepseekeyes@latest doctor
 ```
 
-Windows PowerShell:
-
-```powershell
-$pkg = Join-Path $env:TEMP "deepseekeyes-0.3.1.tgz"
-Invoke-WebRequest "https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz" -OutFile $pkg
-npx -y @deepseek-ai/dsh plugin --profile web add $pkg
-```
-
-Restart `dsh web` once after installation.
+These commands work in macOS/Linux shells and Windows PowerShell. Use `--profile NAME` when the DSH profile is not `web`. Restart `dsh web` once after installation or upgrade.
 
 ### 2. Configure entirely in Harness
 
@@ -95,8 +91,9 @@ DeepSeekEyes automatically reads the new image, gives DeepSeek structured eviden
 ```mermaid
 flowchart LR
     A["Original image attachment"] --> B["DeepSeekEyes bridge"]
-    B --> C["Verified multimodal model"]
-    C --> D["Structured, hash-bound evidence"]
+    B --> C["Ordered routes + health check"]
+    C --> C2["Verified multimodal model"]
+    C2 --> D["Strict schema-valid, hash-bound evidence"]
     D --> E["DeepSeek final-answer model"]
     E -->|needs one more detail| F["Precise visual question"]
     F --> C
@@ -115,12 +112,15 @@ Historical images are compacted into bounded SHA-256 pointers. They cause no aut
 | Native pasted-image bridge | ✅ | Original Harness attachment stays in the append-only session log. |
 | DeepSeek ↔ vision clarification | ✅ | Bounded, precise questions against the same original image. |
 | Vision-model capability probe | ✅ | Metadata gate plus randomized pixel test. |
+| Canonical evidence JSON Schema | ✅ | One source drives prompts and rejects invalid nested fields. |
+| Route health and failover audit | ✅ | Priority, health TTL, circuit cooldown and bounded attempts. |
 | Custom multimodal gateways | ✅ | OpenAI-compatible routes can be declared from the GUI. |
 | Browser Computer Use | ✅ | Open, observe, click, type, select, wait, assert, report and close. |
 | Windows desktop Computer Use | ✅ | PowerShell + native user32/System.Drawing helper. |
 | macOS desktop Computer Use | ✅ | JXA + CoreGraphics/System Events/screencapture helper. |
 | Lossless oversized screenshots | ✅ | Recompressed without pixel changes, then tiled only when the Host's 5 MB limit requires it. |
 | Local Token accounting | ✅ | Exact Provider usage plus clearly labelled bridge estimates. |
+| Public visual eval | ✅ | Screenshot, dense text, chart, UI and prompt-injection cases with accuracy/latency/Token output. |
 | Pure-text isolation | ✅ | No visual call, screenshot or Computer Use prompt when none is needed. |
 
 ## Computer Use
@@ -170,7 +170,7 @@ export DEEPSEEKEYES_USAGE_STATS=false
 
 - User images pass through `ctx.attachments.readImage()` as the original Harness `ImageBlock`.
 - Original MIME type, byte length, dimensions and SHA-256 are recorded with the evidence.
-- Visual evidence is schema-validated before DeepSeek sees it.
+- Visual evidence is validated against the public [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json) before DeepSeek sees it; every nested object rejects extra fields.
 - A targeted reread references original pixels—not a thumbnail, JPEG copy or summary of a summary.
 - Failed vision calls, invalid evidence or exhausted clarification bounds stop the visual turn instead of inviting a guess.
 - Browser/Desktop screenshots carry content-addressed state and stale-action protection.
@@ -184,6 +184,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | :-- | :-- |
 | Model routing | `upstreamProvider`, `upstreamModel`, `visionProvider`, `visionModel` |
 | Vision validation | `autoDetectVision`, `activeProbe`, `maxClarifications` |
+| Route reliability | `visionRoutePriority`, `visionHealthCheck`, `visionFailoverAttempts`, health TTL/cooldown and attempt retention |
 | Visual budgets | `baseMaxTokens`, `targetMaxTokens` — `0` delegates the limit to the Provider |
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
@@ -197,6 +198,7 @@ See the [complete Chinese configuration reference](README.zh-CN.md#配置字段)
 ```bash
 npm ci
 npm run check
+npm run eval:fixture
 npm run test:coverage
 npm run test:browser
 npm run test:desktop
@@ -204,6 +206,17 @@ npm audit --omit=dev
 ```
 
 The release is continuously checked on Ubuntu, macOS and Windows. Native helper parsing/compilation and desktop observation run on their respective CI hosts.
+
+Run a real multimodal Provider against the public suite with `npm run eval:live`; see [`evals/README.md`](evals/README.md). The committed fixture-oracle result validates 5 cases and 30 assertions while remaining explicitly separate from a model benchmark.
+
+## Runtime documentation
+
+- [Architecture and failure semantics](docs/architecture.md)
+- [Data retention and deletion](docs/data-retention.md)
+- [Release and npm provenance](docs/releasing.md)
+- [Security policy](SECURITY.md)
+- [Troubleshooting and doctor](TROUBLESHOOTING.md)
+- [Public visual eval](evals/README.md)
 
 ## Community
 

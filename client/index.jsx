@@ -41,6 +41,18 @@ const zh = {
   autoDetect: '未指定视觉 Provider 时自动检测',
   activeProbe: '首次使用时执行随机像素探针',
   activeProbeHint: '不仅相信模型声明，还会发送随机 3×3 色块确认模型确实读取了像素。',
+  visionReliability: '视觉路由可靠性',
+  visionRoutePriority: '后备视觉路由优先级',
+  visionRoutePriorityPlaceholder: '每行一个 provider/model；模型 ID 可继续包含 /',
+  visionRoutePriorityHint: '主视觉路由失败后按顺序尝试；未列出的视觉模型仍可由自动检测补充。',
+  visionHealthCheck: '启用视觉路由健康检查与熔断',
+  visionHealthCheckHint: '缓存图片能力检测；调用失败后在冷却期跳过该路由，并记录每次选择与故障转移。',
+  visionFailoverAttempts: '最多后备尝试次数',
+  visionHealthTtlMs: '健康检查缓存（毫秒）',
+  visionFailureCooldownMs: '失败路由冷却（毫秒）',
+  visionAttemptLog: '记录视觉路由 attempts',
+  visionAttemptLogHint: '仅保存 Provider、模型、状态、耗时、错误码及哈希后的会话 ID，不保存提示或图片内容。',
+  visionAttemptLimit: '最多保留 attempts',
   persistentEvidence: '持久化视觉证据缓存',
   usageStats: '记录 DeepSeekEyes Token 统计',
   usageStatsTitle: 'Token 消耗统计',
@@ -124,6 +136,11 @@ const zh = {
   recursiveUpstream: 'DeepSeekEyes 不能把自己设为最终回答 Provider。',
   visionProviderRequired: '填写视觉模型时必须同时选择视觉 Provider。',
   visionRouteRequired: '关闭自动检测时必须选择视觉 Provider。',
+  visionRoutePriorityFormat: '后备视觉路由必须每行使用 provider/model。',
+  visionFailoverAttemptsRange: '后备尝试次数必须是 0–8 的整数。',
+  visionHealthTtlMsRange: '健康检查缓存必须是 1000–3600000 的整数。',
+  visionFailureCooldownMsRange: '失败冷却必须是 0–3600000 的整数。',
+  visionAttemptLimitRange: 'attempts 保留数必须是 10–10000 的整数。',
   browserLocaleRequired: '浏览器语言不能为空。',
   maxClarificationsRange: '追问轮数必须是 0–8 的整数。',
   baseMaxTokensRange: '首次读图 Token 必须为 0（不限制）或至少 512 的安全整数。',
@@ -170,6 +187,18 @@ const en = {
   autoDetect: 'Auto-detect when no vision provider is selected',
   activeProbe: 'Run a randomized pixel probe on first use',
   activeProbeHint: 'Sends a randomized 3×3 grid to prove the model actually reads pixels.',
+  visionReliability: 'Vision route reliability',
+  visionRoutePriority: 'Fallback vision route priority',
+  visionRoutePriorityPlaceholder: 'One provider/model per line; model IDs may contain additional / characters',
+  visionRoutePriorityHint: 'Tried in order after the primary route; auto-detection may append other visual models.',
+  visionHealthCheck: 'Enable route health checks and circuit breaking',
+  visionHealthCheckHint: 'Caches capability checks, cools down failed routes, and records every selection and failover.',
+  visionFailoverAttempts: 'Maximum fallback attempts',
+  visionHealthTtlMs: 'Health-check cache (ms)',
+  visionFailureCooldownMs: 'Failed-route cooldown (ms)',
+  visionAttemptLog: 'Record vision route attempts',
+  visionAttemptLogHint: 'Stores provider, model, status, duration, error code, and a hashed session ID—never prompts or image bytes.',
+  visionAttemptLimit: 'Maximum retained attempts',
   persistentEvidence: 'Persist visual evidence cache',
   usageStats: 'Record DeepSeekEyes token usage',
   usageStatsTitle: 'Token usage statistics',
@@ -253,6 +282,11 @@ const en = {
   recursiveUpstream: 'DeepSeekEyes cannot use itself as the final answer provider.',
   visionProviderRequired: 'A vision model requires a vision provider.',
   visionRouteRequired: 'Choose a vision provider when auto-detection is off.',
+  visionRoutePriorityFormat: 'Each fallback route must use provider/model.',
+  visionFailoverAttemptsRange: 'Fallback attempts must be an integer from 0 through 8.',
+  visionHealthTtlMsRange: 'Health-check cache must be an integer from 1000 through 3600000.',
+  visionFailureCooldownMsRange: 'Failure cooldown must be an integer from 0 through 3600000.',
+  visionAttemptLimitRange: 'Retained attempts must be an integer from 10 through 10000.',
   browserLocaleRequired: 'Browser locale must be non-empty.',
   maxClarificationsRange: 'Clarification rounds must be an integer from 0 through 8.',
   baseMaxTokensRange: 'Initial vision tokens must be 0 (unlimited) or a safe integer of at least 512.',
@@ -674,6 +708,48 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
             />
             <span>{t('activeProbe')}<br /><small style={styles.hint}>{t('activeProbeHint')}</small></span>
           </label>
+
+          <details style={styles.details} open>
+            <summary style={styles.detailsSummary}>{t('visionReliability')}</summary>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-vision-priority">{t('visionRoutePriority')}</label>
+              <textarea
+                id="deepseekeyes-vision-priority"
+                style={{ ...styles.input, minHeight: 78, height: 'auto', padding: '8px 12px', resize: 'vertical' }}
+                value={draft.visionRoutePriority}
+                placeholder={t('visionRoutePriorityPlaceholder')}
+                disabled={saving || !snapshot.writable}
+                onChange={event => update('visionRoutePriority', event.target.value)}
+              />
+              <p style={styles.hint}>{t('visionRoutePriorityHint')}</p>
+            </div>
+            <label style={{ ...styles.checkboxRow, marginTop: 12 }}>
+              <input type="checkbox" checked={draft.visionHealthCheck} disabled={saving || !snapshot.writable} onChange={event => update('visionHealthCheck', event.target.checked)} />
+              <span>{t('visionHealthCheck')}<br /><small style={styles.hint}>{t('visionHealthCheckHint')}</small></span>
+            </label>
+            <div style={{ ...styles.grid, marginTop: 14 }}>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-failover-attempts">{t('visionFailoverAttempts')}</label>
+                <input id="deepseekeyes-failover-attempts" style={styles.input} type="number" min="0" max="8" step="1" value={draft.visionFailoverAttempts} disabled={saving || !snapshot.writable} onChange={event => update('visionFailoverAttempts', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-health-ttl">{t('visionHealthTtlMs')}</label>
+                <input id="deepseekeyes-health-ttl" style={styles.input} type="number" min="1000" max="3600000" step="1" value={draft.visionHealthTtlMs} disabled={saving || !snapshot.writable || !draft.visionHealthCheck} onChange={event => update('visionHealthTtlMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-failure-cooldown">{t('visionFailureCooldownMs')}</label>
+                <input id="deepseekeyes-failure-cooldown" style={styles.input} type="number" min="0" max="3600000" step="1" value={draft.visionFailureCooldownMs} disabled={saving || !snapshot.writable || !draft.visionHealthCheck} onChange={event => update('visionFailureCooldownMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-attempt-limit">{t('visionAttemptLimit')}</label>
+                <input id="deepseekeyes-attempt-limit" style={styles.input} type="number" min="10" max="10000" step="1" value={draft.visionAttemptLimit} disabled={saving || !snapshot.writable || !draft.visionAttemptLog} onChange={event => update('visionAttemptLimit', numberFrom(event))} />
+              </div>
+            </div>
+            <label style={{ ...styles.checkboxRow, marginTop: 12 }}>
+              <input type="checkbox" checked={draft.visionAttemptLog} disabled={saving || !snapshot.writable} onChange={event => update('visionAttemptLog', event.target.checked)} />
+              <span>{t('visionAttemptLog')}<br /><small style={styles.hint}>{t('visionAttemptLogHint')}</small></span>
+            </label>
+          </details>
 
           <details style={styles.details} open>
             <summary style={styles.detailsSummary}>{t('computerUse')}</summary>

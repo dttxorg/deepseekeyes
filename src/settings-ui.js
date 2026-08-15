@@ -3,8 +3,15 @@ const SETTINGS_FIELDS = Object.freeze([
   'upstreamModel',
   'visionProvider',
   'visionModel',
+  'visionRoutePriority',
   'autoDetectVision',
   'activeProbe',
+  'visionHealthCheck',
+  'visionFailoverAttempts',
+  'visionHealthTtlMs',
+  'visionFailureCooldownMs',
+  'visionAttemptLog',
+  'visionAttemptLimit',
   'persistentEvidence',
   'usageStats',
   'maxClarifications',
@@ -38,6 +45,7 @@ const OPTIONAL_ROUTE_FIELDS = new Set([
   'upstreamModel',
   'visionProvider',
   'visionModel',
+  'visionRoutePriority',
   'browserChannel',
   'browserExecutablePath',
   'desktopWindowsPowerShell',
@@ -59,8 +67,15 @@ export function normalizeSettingsDraft(value = {}) {
     upstreamModel: typeof value.upstreamModel === 'string' ? value.upstreamModel : '',
     visionProvider: typeof value.visionProvider === 'string' ? value.visionProvider : '',
     visionModel: typeof value.visionModel === 'string' ? value.visionModel : '',
+    visionRoutePriority: typeof value.visionRoutePriority === 'string' ? value.visionRoutePriority : '',
     autoDetectVision: value.autoDetectVision !== false,
     activeProbe: value.activeProbe !== false,
+    visionHealthCheck: value.visionHealthCheck !== false,
+    visionFailoverAttempts: Number.isInteger(value.visionFailoverAttempts) ? value.visionFailoverAttempts : 2,
+    visionHealthTtlMs: Number.isInteger(value.visionHealthTtlMs) ? value.visionHealthTtlMs : 60_000,
+    visionFailureCooldownMs: Number.isInteger(value.visionFailureCooldownMs) ? value.visionFailureCooldownMs : 30_000,
+    visionAttemptLog: value.visionAttemptLog !== false,
+    visionAttemptLimit: Number.isInteger(value.visionAttemptLimit) ? value.visionAttemptLimit : 1_000,
     persistentEvidence: value.persistentEvidence !== false,
     usageStats: value.usageStats !== false,
     maxClarifications: Number.isInteger(value.maxClarifications) ? value.maxClarifications : 3,
@@ -115,7 +130,13 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
   }
   if (draft.upstreamProvider === providerId) return 'recursiveUpstream'
   if (draft.visionModel !== '' && draft.visionProvider === '') return 'visionProviderRequired'
-  if (!draft.autoDetectVision && draft.visionProvider === '') return 'visionRouteRequired'
+  if (!draft.autoDetectVision && draft.visionProvider === '' && draft.visionRoutePriority.trim() === '') {
+    return 'visionRouteRequired'
+  }
+  if (draft.visionRoutePriority !== '') {
+    const entries = draft.visionRoutePriority.split(/[\n,]+/).map(entry => entry.trim()).filter(Boolean)
+    if (entries.some(entry => entry.indexOf('/') <= 0 || entry.endsWith('/'))) return 'visionRoutePriorityFormat'
+  }
   if (typeof draft.browserLocale !== 'string' || draft.browserLocale.trim() === '') return 'browserLocaleRequired'
   const tokenRanges = [
     ['baseMaxTokens', 512],
@@ -128,6 +149,10 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
   }
   const ranges = [
     ['maxClarifications', 0, 8],
+    ['visionFailoverAttempts', 0, 8],
+    ['visionHealthTtlMs', 1_000, 3_600_000],
+    ['visionFailureCooldownMs', 0, 3_600_000],
+    ['visionAttemptLimit', 10, 10_000],
     ['historyImageLimit', 0, 32],
     ['historySummaryChars', 64, 2_000],
     ['browserHistoryLimit', 0, 32],

@@ -1,0 +1,39 @@
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref containing the already-versioned release
+        required: true
+        default: main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Install npm with trusted-publishing support
+        run: npm install --global npm@11.5.1
+      - name: Verify release tag matches package version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: node -e "const p=require('./package.json'); if (process.env.RELEASE_TAG !== 'v' + p.version) throw new Error('release tag must equal v' + p.version)"
+      - run: npm ci
+      - run: npm run check
+      - run: npm publish --access public --provenance

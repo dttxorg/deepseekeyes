@@ -1,0 +1,68 @@
+# Architecture
+
+DeepSeekEyes is a **DSH auditable vision and Computer Use runtime**, not a standalone captioning window. DeepSeek remains the reasoning/final-answer model while the runtime controls pixel acquisition, schema validation, route health, evidence identity, bounded rereads, automation state and accounting.
+
+```mermaid
+flowchart LR
+    A["Original DSH attachment or fresh Computer Use screenshot"] --> B["Content-addressed source reader"]
+    B --> C["Ordered VisionRouter"]
+    C --> D["Capability health check + circuit state"]
+    D --> E["Randomized pixel probe"]
+    E --> F["Multimodal Provider/model"]
+    F --> G["Canonical JSON Schema validator"]
+    G --> H["Immutable evidence cache"]
+    H --> I["DeepSeek final-answer model"]
+    I -->|"one missing fact"| J["Targeted original-image reread"]
+    J --> C
+    C --> K["Bounded failover attempt audit"]
+    B --> L["Append-only DSH event + original attachment"]
+    M["Browser/Desktop state machine"] --> B
+    N["Usage tracker"] --- E
+    N --- F
+    N --- I
+```
+
+## Major components
+
+| Component | Responsibility |
+| :-- | :-- |
+| `dsh/index.js` | Registers the virtual Provider, keeps pure-text turns on the direct path, orchestrates evidence and final reasoning. |
+| `src/content.js` / `src/session.js` | Finds nested images, preserves raw events and replaces model-facing history with bounded content-addressed pointers. |
+| `src/vision.js` | Orders configured/priority/auto-detected routes, applies health TTL and circuit cooldown, executes bounded failover. |
+| `src/vision-attempts.js` | Persists a bounded, privacy-reduced audit of route selection, failures, cache hits and latency. |
+| `schemas/visual-evidence.schema.json` | Single source of truth for base and targeted evidence. |
+| `src/evidence-schema.js` | Compiles the canonical schema with Ajv and derives the exact schema injected into prompts. |
+| `src/probe.js` | Sends a randomized 3×3 pixel challenge to prove that a declared model consumes image pixels. |
+| `src/cache.js` | Stores immutable SHA-256-bound evidence records in memory and optionally on disk. |
+| `src/look.js` | Gives only image-bearing sessions an on-demand original-image reread tool. |
+| `src/browser/*` | Playwright browser state, semantic refs, stale-state rejection, assertions and reports. |
+| `src/desktop/*` | Native Windows/macOS observation and input with lossless screenshot evidence. |
+| `src/usage.js` | Separates exact Provider usage, estimated bridge input and normal final-answer usage. |
+
+## Route ordering and failover
+
+The runtime considers routes in this order:
+
+1. the route that produced the current base evidence, for a targeted reread;
+2. the explicitly selected visual Provider/model;
+3. `visionRoutePriority`, one `provider/model` per line;
+4. other DSH models that explicitly declare both text and image input when auto-detection is enabled.
+
+Each route receives a metadata health check. Successful checks are cached for `visionHealthTtlMs`. Operational failures open a circuit for `visionFailureCooldownMs`; later operations skip that route while alternatives exist. `visionFailoverAttempts` bounds additional attempts, and every health/operation/circuit decision is recorded.
+
+## Evidence contract
+
+The canonical schema has two strict variants:
+
+- `deepseekeyes.evidence.v1`: summary, OCR, regions, objects, relations, quantitative facts and uncertainties;
+- `deepseekeyes.target.v1`: one direct answer, literal observations, OCR and uncertainties.
+
+Every object uses `additionalProperties: false`. OCR/region/object/observation entries require all nested fields. Bounding boxes are normalized, positive and contained by the image; confidence is `0..1`. A successful model response with an extra nested field is still rejected.
+
+## Failure semantics
+
+- Attachment identity/persistence failures are route-independent and stop immediately.
+- Provider, probe, malformed-output and schema failures are eligible for bounded failover.
+- A single-route failure preserves its original error code; multi-route exhaustion returns `VISION_FAILOVER_EXHAUSTED` plus structured attempts.
+- The final DeepSeek model never receives unvalidated evidence.
+- Pure-text turns create no vision route, probe, screenshot or attempt record.

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createProbePng, shuffledProbeOrder } from '../src/probe.js'
 
 const [baseURL, dshHome] = process.argv.slice(2)
 if (!baseURL || !dshHome) {
@@ -85,10 +86,9 @@ await usage('usage.reset', { confirm: true })
 const initial = await usage()
 assert.equal(initial.totals.derived.estimatedAdditionalTokens, 0)
 
-const imageBytes = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC',
-  'base64',
-)
+// Use fresh, standards-valid pixels so repeated acceptance runs cannot inherit
+// a prior evidence-cache hit and accidentally skip the visual usage being tested.
+const imageBytes = createProbePng(shuffledProbeOrder(), 7 + Math.floor(Math.random() * 57))
 const imageSha256 = createHash('sha256').update(imageBytes).digest('hex')
 const imageSessionId = `token-image-${Date.now()}`
 await prompt(imageSessionId, [

@@ -3,7 +3,10 @@
     upstreamProvider: deepseek-official
     visionProvider: openai
     visionModel: gpt-4.1
+    visionRoutePriority: backup/qwen-vl-max
     activeProbe: true
+    visionHealthCheck: true
+    visionFailoverAttempts: 2
     baseMaxTokens: 16384
     targetMaxTokens: 8192
     browserComputerUse: true

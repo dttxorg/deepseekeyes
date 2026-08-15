@@ -5,5 +5,15 @@
     upstreamModel: deepseek-v4-pro
     visionProvider: openai
     visionModel: gpt-4.1
+    # Optional ordered fallbacks. Model IDs may contain additional slashes.
+    visionRoutePriority: |-
+      backup/qwen-vl-max
+      local/llava-next
     activeProbe: true
+    visionHealthCheck: true
+    visionFailoverAttempts: 2
+    visionHealthTtlMs: 60000
+    visionFailureCooldownMs: 30000
+    visionAttemptLog: true
+    visionAttemptLimit: 1000
     maxClarifications: 3

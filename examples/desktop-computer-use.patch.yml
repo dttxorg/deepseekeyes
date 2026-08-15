@@ -4,7 +4,10 @@
     upstreamModel: deepseek-v4-pro
     visionProvider: openai
     visionModel: gpt-4.1
+    visionRoutePriority: backup/qwen-vl-max
     activeProbe: true
+    visionHealthCheck: true
+    visionFailoverAttempts: 2
     desktopComputerUse: true
     desktopHistoryLimit: 8
     desktopTimeoutMs: 15000

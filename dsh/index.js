@@ -28,6 +28,7 @@ import { collectFinalWithBudget, fitOutputBudget } from '../src/token-safety.js'
 import { estimateInjectedTextTokens, UsageTracker } from '../src/usage.js'
 import { installUsageRpc } from '../src/usage-rpc.js'
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
+import { VisionAttemptTracker } from '../src/vision-attempts.js'
 
 export const name = 'deepseekeyes'
 export const inject = ['llm', 'attachments', 'tools', 'systemPrompt', 'agents']
@@ -60,7 +61,13 @@ function lockedUpstreamModel(config, requestedModel) {
 
 function createRuntime(ctx, rawConfig, logger) {
   const config = resolveConfig(rawConfig)
-  const router = new VisionRouter(ctx, config, logger)
+  const visionAttempts = new VisionAttemptTracker({
+    enabled: config.visionAttemptLog,
+    file: config.visionAttemptLogPath,
+    limit: config.visionAttemptLimit,
+    logger,
+  })
+  const router = new VisionRouter(ctx, config, logger, visionAttempts)
   const cache = new EvidenceCache({
     directory: config.cacheDir,
     persistent: config.persistentEvidence,
@@ -68,7 +75,12 @@ function createRuntime(ctx, rawConfig, logger) {
   })
   const probe = new VisionProbe(ctx, { enabled: config.activeProbe, logger })
   const evidenceManager = new EvidenceManager(ctx, config, cache, probe)
-  return Object.freeze({ config, router, cache, probe, evidenceManager })
+  return Object.freeze({ config, router, cache, probe, evidenceManager, visionAttempts })
+}
+
+function attachmentSha256(block) {
+  const match = /^sha256:([0-9a-f]{64})$/.exec(String(block?.attachment?.attachmentId ?? ''))
+  return match?.[1]
 }
 
 async function* forwardText(ctx, options, logger) {
@@ -132,7 +144,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
 
   const activeBlocks = activeImageBlocks(options.messages)
   const historicalBlocks = historicalImageBlocks(options.messages)
-  let route = activeBlocks.length === 0 ? undefined : await router.resolve(options.signal)
+  let route
   const totalUsage = emptyUsage()
   await usageTracker.recordVisualTurn(options.sessionId)
   const baseRecords = []
@@ -145,7 +157,12 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
   const baseByAttachment = new Map()
 
   for (const block of activeBlocks) {
-    const result = await evidenceManager.baseFor(block, route, options.signal)
+    const result = await router.run('base', {
+      sessionId: options.sessionId,
+      imageSha256: attachmentSha256(block),
+      preferred: route,
+    }, candidate => evidenceManager.baseFor(block, candidate, options.signal), options.signal)
+    route = result.route
     addUsage(totalUsage, result.usage)
     await recordEvidenceUsage(usageTracker, options.sessionId, result, 'visionBase')
     baseRecords.push(result.record)
@@ -280,15 +297,30 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
     if (block === undefined) {
       throw new DeepSeekEyesError('clarification request lost its original image reference', 'VISION_STATE_MISMATCH')
     }
-    if (route === undefined) route = await router.resolve(options.signal)
     if (baseRecord === undefined) {
-      const base = await evidenceManager.baseFor(block, route, options.signal)
+      const base = await router.run('base', {
+        sessionId: options.sessionId,
+        imageSha256: request.imageSha256,
+        preferred: route,
+      }, candidate => evidenceManager.baseFor(block, candidate, options.signal), options.signal)
+      route = base.route
       addUsage(totalUsage, base.usage)
       await recordEvidenceUsage(usageTracker, options.sessionId, base, 'visionBase')
       baseRecord = base.record
       baseByHash.set(request.imageSha256, baseRecord)
     }
-    const targeted = await evidenceManager.targetFor(block, baseRecord, request, route, options.signal)
+    const targeted = await router.run('target', {
+      sessionId: options.sessionId,
+      imageSha256: request.imageSha256,
+      preferred: baseRecord.vision,
+    }, candidate => evidenceManager.targetFor(
+      block,
+      baseRecord,
+      request,
+      candidate,
+      options.signal,
+    ), options.signal)
+    route = targeted.route
     addUsage(totalUsage, targeted.usage)
     await recordEvidenceUsage(usageTracker, options.sessionId, targeted, 'visionTarget')
     const targetedText = renderTargetEvidence(targeted.record)
@@ -320,6 +352,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
     get cache() { return runtime.cache },
     get probe() { return runtime.probe },
     get evidenceManager() { return runtime.evidenceManager },
+    get visionAttempts() { return runtime.visionAttempts },
     usage,
     reconfigure(nextConfig) {
       const next = createRuntime(ctx, nextConfig, logger)

@@ -7,6 +7,10 @@ export const DEFAULT_MAX_CLARIFICATIONS = 3
 export const UNLIMITED_TOKEN_BUDGET = 0
 export const DEFAULT_BASE_MAX_TOKENS = 16_384
 export const DEFAULT_TARGET_MAX_TOKENS = 8_192
+export const DEFAULT_VISION_FAILOVER_ATTEMPTS = 2
+export const DEFAULT_VISION_HEALTH_TTL_MS = 60_000
+export const DEFAULT_VISION_FAILURE_COOLDOWN_MS = 30_000
+export const DEFAULT_VISION_ATTEMPT_LIMIT = 1_000
 export const DEFAULT_HISTORY_IMAGE_LIMIT = 8
 export const DEFAULT_HISTORY_SUMMARY_CHARS = 320
 export const DEFAULT_BROWSER_HISTORY_LIMIT = 8
@@ -70,6 +74,45 @@ function tokenBudgetValue(value, field, fallback, minimum) {
   return resolved
 }
 
+function routePriorityValue(value, providerId) {
+  if (value === undefined || value === null || value === '') {
+    return { text: undefined, routes: Object.freeze([]) }
+  }
+  const entries = Array.isArray(value)
+    ? value
+    : String(value).split(/[\n,]+/).map(entry => entry.trim()).filter(Boolean)
+  const routes = []
+  const seen = new Set()
+  for (const entry of entries) {
+    let provider
+    let model
+    if (typeof entry === 'string') {
+      const separator = entry.indexOf('/')
+      if (separator <= 0 || separator === entry.length - 1) {
+        throw new TypeError('deepseekeyes: visionRoutePriority entries must use provider/model')
+      }
+      provider = entry.slice(0, separator).trim()
+      model = entry.slice(separator + 1).trim()
+    } else if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
+      provider = requiredString(entry.provider, 'visionRoutePriority.provider')
+      model = requiredString(entry.model, 'visionRoutePriority.model')
+    } else {
+      throw new TypeError('deepseekeyes: visionRoutePriority must be a string or route array')
+    }
+    if (provider === providerId) {
+      throw new TypeError('deepseekeyes: visionRoutePriority cannot reference the virtual provider')
+    }
+    const key = `${provider}\0${model}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    routes.push(Object.freeze({ provider, model }))
+  }
+  return {
+    text: routes.map(route => `${route.provider}/${route.model}`).join('\n'),
+    routes: Object.freeze(routes),
+  }
+}
+
 /** Resolve and validate the plugin configuration. */
 export function resolveConfig(input = {}, environment = process.env, home = homedir()) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
@@ -99,6 +142,10 @@ export function resolveConfig(input = {}, environment = process.env, home = home
   if (providerId === upstreamProvider) {
     throw new TypeError('deepseekeyes: providerId and upstreamProvider must differ')
   }
+  const priority = routePriorityValue(
+    input.visionRoutePriority ?? environment.DEEPSEEKEYES_VISION_ROUTE_PRIORITY,
+    providerId,
+  )
 
   const dshBase = optionalString(environment.DSH_HOME, 'DSH_HOME') ?? join(home, '.deepseekeyes')
   const configuredCacheDir = input.cacheDir ?? environment.DEEPSEEKEYES_CACHE_DIR
@@ -119,6 +166,18 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     usageStatsPath = requiredString(configuredUsageStatsPath, 'usageStatsPath')
   } else {
     usageStatsPath = join(dshBase, 'deepseekeyes', 'usage-stats.json')
+  }
+
+  const configuredVisionAttemptLogPath = input.visionAttemptLogPath
+    ?? environment.DEEPSEEKEYES_VISION_ATTEMPT_LOG_PATH
+  let visionAttemptLogPath
+  if (configuredVisionAttemptLogPath === false
+    || (configuredVisionAttemptLogPath === undefined && configuredCacheDir === false)) {
+    visionAttemptLogPath = undefined
+  } else if (configuredVisionAttemptLogPath !== undefined) {
+    visionAttemptLogPath = requiredString(configuredVisionAttemptLogPath, 'visionAttemptLogPath')
+  } else {
+    visionAttemptLogPath = join(dshBase, 'deepseekeyes', 'vision-attempts.json')
   }
 
   const configuredBrowserArtifactsDir = input.browserArtifactsDir
@@ -150,8 +209,41 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     upstreamModel,
     visionProvider,
     visionModel,
+    visionRoutePriority: priority.text,
+    visionPriorityRoutes: priority.routes,
     autoDetectVision: booleanValue(input.autoDetectVision, 'autoDetectVision', true),
     activeProbe: booleanValue(input.activeProbe, 'activeProbe', true),
+    visionHealthCheck: booleanValue(input.visionHealthCheck, 'visionHealthCheck', true),
+    visionFailoverAttempts: integerValue(
+      input.visionFailoverAttempts,
+      'visionFailoverAttempts',
+      DEFAULT_VISION_FAILOVER_ATTEMPTS,
+      0,
+      8,
+    ),
+    visionHealthTtlMs: integerValue(
+      input.visionHealthTtlMs,
+      'visionHealthTtlMs',
+      DEFAULT_VISION_HEALTH_TTL_MS,
+      1_000,
+      3_600_000,
+    ),
+    visionFailureCooldownMs: integerValue(
+      input.visionFailureCooldownMs,
+      'visionFailureCooldownMs',
+      DEFAULT_VISION_FAILURE_COOLDOWN_MS,
+      0,
+      3_600_000,
+    ),
+    visionAttemptLog: booleanValue(input.visionAttemptLog, 'visionAttemptLog', true),
+    visionAttemptLogPath,
+    visionAttemptLimit: integerValue(
+      input.visionAttemptLimit,
+      'visionAttemptLimit',
+      DEFAULT_VISION_ATTEMPT_LIMIT,
+      10,
+      10_000,
+    ),
     persistentEvidence: booleanValue(input.persistentEvidence, 'persistentEvidence', true),
     usageStats: booleanValue(
       input.usageStats

@@ -117,14 +117,16 @@ export class LookToolManager {
     if (reference === undefined) {
       throw new DeepSeekEyesError('requested image hash is not preserved in this session', 'UNKNOWN_PRESERVED_IMAGE')
     }
-    const route = await this.state.router.resolve(exec.signal)
     const sessionId = this.sessionKey(exec.agent)
     await this.state.usage.recordLookCall(sessionId)
     const block = { type: 'image', attachment: reference.attachment }
     const totalUsage = emptyUsage()
     let baseRecord = this.state.evidenceManager.knownBase(request.imageSha256)
     if (baseRecord === undefined) {
-      const base = await this.state.evidenceManager.baseFor(block, route, exec.signal)
+      const base = await this.state.router.run('look-base', {
+        sessionId,
+        imageSha256: request.imageSha256,
+      }, route => this.state.evidenceManager.baseFor(block, route, exec.signal), exec.signal)
       addUsage(totalUsage, base.usage)
       await recordEvidenceUsage(this.state.usage, sessionId, base, 'visionBase')
       baseRecord = base.record
@@ -132,14 +134,25 @@ export class LookToolManager {
     if (baseRecord.source.sha256 !== request.imageSha256) {
       throw new DeepSeekEyesError('preserved attachment bytes no longer match the requested hash', 'VISION_STATE_MISMATCH')
     }
-    const target = await this.state.evidenceManager.targetFor(block, baseRecord, request, route, exec.signal)
+    const target = await this.state.router.run('look-target', {
+      sessionId,
+      imageSha256: request.imageSha256,
+      preferred: baseRecord.vision,
+    }, route => this.state.evidenceManager.targetFor(
+      block,
+      baseRecord,
+      request,
+      route,
+      exec.signal,
+    ), exec.signal)
     addUsage(totalUsage, target.usage)
     await recordEvidenceUsage(this.state.usage, sessionId, target, 'visionTarget')
     const value = {
       imageSha256: request.imageSha256,
       question: request.question,
       ...(request.region === undefined ? {} : { region: request.region }),
-      vision: { provider: route.provider, model: route.model },
+      vision: { provider: target.route.provider, model: target.route.model },
+      routeAttempts: target.routeAttempts,
       evidence: target.record.evidence,
       usage: totalUsage,
     }

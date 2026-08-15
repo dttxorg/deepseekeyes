@@ -147,7 +147,9 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     providerId,
   )
 
-  const dshBase = optionalString(environment.DSH_HOME, 'DSH_HOME') ?? join(home, '.deepseekeyes')
+  // Harness itself resolves an unset DSH_HOME to ~/.dsh. Match that behavior so
+  // plugin evidence never splits into an unrelated ~/.deepseekeyes tree.
+  const dshBase = optionalString(environment.DSH_HOME, 'DSH_HOME') ?? join(home, '.dsh')
   const configuredCacheDir = input.cacheDir ?? environment.DEEPSEEKEYES_CACHE_DIR
   let cacheDir
   if (configuredCacheDir === false) {

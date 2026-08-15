@@ -69,7 +69,7 @@ test('desktop 0.3 configuration is opt-in with Windows and macOS native controls
   assert.equal(defaults.desktopMaxWindows, 50)
   assert.equal(defaults.desktopMacDisplay, 1)
   assert.equal(defaults.desktopWindowsPowerShell, undefined)
-  assert.equal(defaults.desktopArtifactsDir, join('/home', '.deepseekeyes', 'deepseekeyes', 'desktop-runs'))
+  assert.equal(defaults.desktopArtifactsDir, join('/home', '.dsh', 'deepseekeyes', 'desktop-runs'))
 
   const configured = resolveConfig({ desktopArtifactsDir: false }, {
     DEEPSEEKEYES_DESKTOP_ENABLED: 'true',

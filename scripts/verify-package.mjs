@@ -30,7 +30,7 @@ const required = [
 ]
 
 if (manifest.name !== '@dttxorg/deepseekeyes') throw new Error('package name must be @dttxorg/deepseekeyes')
-if (manifest.version !== '0.4.1') throw new Error('release version must be 0.4.1')
+if (manifest.version !== '0.4.2') throw new Error('release version must be 0.4.2')
 if (manifest.bin?.deepseekeyes !== './bin/deepseekeyes.js') throw new Error('missing deepseekeyes CLI binary')
 if (manifest.dependencies?.ajv !== '8.20.0') throw new Error('strict JSON Schema validator must pin ajv 8.20.0')
 if (manifest.dependencies?.['playwright-core'] !== '1.61.1') {

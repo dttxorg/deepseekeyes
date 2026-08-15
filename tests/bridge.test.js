@@ -11,7 +11,13 @@ import {
   validTargetEvidence,
 } from './_helpers.js'
 
-function setupBridge({ visionHandler, upstreamHandler, activeProbe = false, bridgeConfig = {} } = {}) {
+function setupBridge({
+  visionHandler,
+  upstreamHandler,
+  activeProbe = false,
+  bridgeConfig = {},
+  visionModelId = 'vision-model',
+} = {}) {
   const ctx = mockContext()
   ctx.llm.addProvider(
     'deepseek-official',
@@ -21,13 +27,13 @@ function setupBridge({ visionHandler, upstreamHandler, activeProbe = false, brid
   if (visionHandler !== undefined) {
     ctx.llm.addProvider(
       'configured-vision',
-      [{ id: 'vision-model', name: 'Vision Model', inputModalities: ['text', 'image'] }],
+      [{ id: visionModelId, name: 'Vision Model', inputModalities: ['text', 'image'] }],
       visionHandler,
     )
   }
   ctx.deepseekEyesState = apply(ctx, {
     visionProvider: visionHandler === undefined ? undefined : 'configured-vision',
-    visionModel: visionHandler === undefined ? undefined : 'vision-model',
+    visionModel: visionHandler === undefined ? undefined : visionModelId,
     activeProbe,
     cacheDir: false,
     ...bridgeConfig,
@@ -295,6 +301,40 @@ test('invalid visual evidence stops the DeepSeek dispatch', async () => {
     (error) => error.code === 'INVALID_MODEL_OUTPUT',
   )
   assert.equal(upstreamCalls, 0)
+})
+
+test('wrapped Qwen evidence is normalized once before DeepSeek and retains an audit trail', async () => {
+  let upstreamEvidence
+  let visionCalls = 0
+  const ctx = setupBridge({
+    visionModelId: 'qwen3.7-plus',
+    bridgeConfig: { autoDetectVision: false },
+    visionHandler() {
+      visionCalls += 1
+      return textStream(`Result:\n${JSON.stringify(validBaseEvidence({
+        ocr: [{ text: 'Error 132', bbox: [100, 200, 600, 260], confidence: 0.98 }],
+      }))}`)
+    },
+    upstreamHandler(options) {
+      upstreamEvidence = options.messages[0].content[0].text
+      return textStream('normalized evidence reached DeepSeek')
+    },
+  })
+  const bytes = Buffer.from('qwen desktop tile')
+  const hash = createHash('sha256').update(bytes).digest('hex')
+  const ref = ctx.attachments.add(bytes, { width: 1720, height: 1440 })
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [userMessage([{ type: 'image', attachment: ref }])],
+  }))
+  assert.equal(result.text, 'normalized evidence reached DeepSeek')
+  assert.equal(visionCalls, 1)
+  assert.match(upstreamEvidence, /"bbox":\[0\.1,0\.2,0\.5,0\.06\]/)
+  const record = ctx.deepseekEyesState.evidenceManager.knownBase(hash)
+  assert.equal(record.vision.coordinateNormalization.transformedCount, 1)
+  assert.equal(record.vision.coordinateNormalization.convention, 'qwen-1000-xyxy')
+  assert.deepEqual(record.vision.coordinateNormalization.transforms[0].original, [100, 200, 600, 260])
 })
 
 test('an explicit visual max-token rejection retries once with provider-managed output', async () => {

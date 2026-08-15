@@ -10,6 +10,7 @@ import {
   validateTargetEvidence,
 } from './protocol.js'
 import { addUsage, collectStream, emptyUsage } from './stream.js'
+import { normalizeEvidenceCoordinates } from './evidence-schema.js'
 
 function acceptsVisionPrompt(info) {
   return Array.isArray(info?.inputModalities)
@@ -580,7 +581,9 @@ export class EvidenceManager {
       signal,
     }), 'base visual evidence', this.config.baseMaxTokens)
     addUsage(totalUsage, result.usage)
-    const evidence = validateBaseEvidence(parseJsonObject(result.text, 'base visual evidence'))
+    const parsed = parseJsonObject(result.text, 'base visual evidence', { allowWrapper: true })
+    const coordinates = normalizeEvidenceCoordinates('base', parsed, source, route)
+    const evidence = validateBaseEvidence(coordinates.value)
     const record = this.rememberBase(await this.cache.write(key, {
       recordVersion: 1,
       kind: 'base',
@@ -590,6 +593,7 @@ export class EvidenceManager {
         provider: route.provider,
         model: route.model,
         validation: proof.validation,
+        coordinateNormalization: coordinates.audit,
       },
       evidence,
     }))
@@ -631,7 +635,9 @@ export class EvidenceManager {
       ...tokenBudget(this.config.targetMaxTokens),
       signal,
     }), 'target visual evidence', this.config.targetMaxTokens)
-    const evidence = validateTargetEvidence(parseJsonObject(result.text, 'target visual evidence'))
+    const parsed = parseJsonObject(result.text, 'target visual evidence', { allowWrapper: true })
+    const coordinates = normalizeEvidenceCoordinates('target', parsed, baseRecord.source, route)
+    const evidence = validateTargetEvidence(coordinates.value)
     const record = await this.cache.write(key, {
       recordVersion: 1,
       kind: 'target',
@@ -641,6 +647,7 @@ export class EvidenceManager {
         provider: route.provider,
         model: route.model,
         validation: proof.validation,
+        coordinateNormalization: coordinates.audit,
       },
       question: request.question,
       ...(request.region === undefined ? {} : { region: request.region }),

@@ -50,7 +50,7 @@ This is not another captioning window. It is the **DSH auditable vision and Comp
 | **No surprise text overhead** | Pure-text turns keep the direct model path: no visual call, no Computer Use tool and no DeepSeekEyes usage entry. |
 | **The eye is verified** | Static image-capability metadata is followed by an optional randomized 3×3 pixel probe. A text-only model cannot silently pose as the eye. |
 | **Routes fail over visibly** | Ordered visual routes, health TTL, circuit cooldown and bounded attempts are persisted without prompt/image contents. |
-| **Evidence is a contract** | One public JSON Schema drives prompts and Ajv validation; unknown or malformed nested fields stop the route. |
+| **Evidence is a contract** | One public JSON Schema generates a compact model-friendly shape and drives strict Ajv validation; unknown or malformed nested fields stop the route. |
 | **Automation is built in** | Browser Computer Use plus native Windows/macOS desktop control can observe, act, verify and preserve evidence. |
 | **Usage is visible** | The native settings card separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
@@ -170,7 +170,8 @@ export DEEPSEEKEYES_USAGE_STATS=false
 
 - User images pass through `ctx.attachments.readImage()` as the original Harness `ImageBlock`.
 - Original MIME type, byte length, dimensions and SHA-256 are recorded with the evidence.
-- Visual evidence is validated against the public [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json) before DeepSeek sees it; every nested object rejects extra fields.
+- Visual evidence is validated against the public [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json) before DeepSeek sees it; a compact example is generated from that same source for 0.2-compatible model prompting, and every nested object still rejects extra fields.
+- Common model coordinate conventions (normalized/pixel `xywh`, normalized/pixel `xyxy`, and Qwen 0–1000 `xyxy`) are deterministically normalized and audited without another model call.
 - A targeted reread references original pixels—not a thumbnail, JPEG copy or summary of a summary.
 - Failed vision calls, invalid evidence or exhausted clarification bounds stop the visual turn instead of inviting a guess.
 - Browser/Desktop screenshots carry content-addressed state and stale-action protection.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2 - 2026-08-15
+
+- Restore the tolerant single-object extraction used by 0.2 for base evidence and the active pixel probe, while keeping clarification control messages whole-response strict and rejecting multiple JSON objects.
+- Replace the full in-prompt JSON Schema dump with a compact example generated from that same canonical Schema, reducing the dense-screen base prompt from 3,756 to 2,091 characters without weakening Ajv validation.
+- Normalize common Qwen 0–1000 `xyxy`, normalized `xyxy`, pixel `xyxy` and pixel `xywh` boxes into strict normalized `xywh` before validation, with original and converted coordinates retained in the evidence audit.
+- Keep coordinate repair deterministic and local: it makes no additional model call, changes no source image bytes and sends only canonical normalized evidence to DeepSeek.
+- Match Harness home resolution when `DSH_HOME` is absent by storing evidence, attempts, usage and Computer Use artifacts under `~/.dsh/deepseekeyes/` instead of a split `~/.deepseekeyes/deepseekeyes/` tree.
+
 ## 0.4.1 - 2026-08-15
 
 - Register the web client bundle under its scoped npm identity, `@dttxorg/deepseekeyes`, so the Harness client-module loader resolves the package after a normal scoped install.

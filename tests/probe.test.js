@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createProbePng, PROBE_COLORS, VisionProbe } from '../src/probe.js'
+import { textStream } from '../src/stream.js'
 import { decodeProbeOrder, jsonStream, mockContext } from './_helpers.js'
 
 test('probe PNG preserves the requested randomized color order', () => {
@@ -16,7 +17,9 @@ test('active probe proves the selected model consumed the generated pixels', asy
     (async function* () {
       const ref = options.messages[0].content.find((block) => block.type === 'image').attachment
       const stored = await ctx.attachments.readImage(ref)
-      yield* jsonStream({ cells: decodeProbeOrder(Buffer.from(stored.data)) })
+      yield* textStream(`Observed grid:\n${JSON.stringify({
+        cells: decodeProbeOrder(Buffer.from(stored.data)),
+      })}`)
     })())
   const probe = new VisionProbe(ctx, { enabled: true, nextInt: () => 0 })
   const result = await probe.ensure({ provider: 'eyes', model: 'vision' })

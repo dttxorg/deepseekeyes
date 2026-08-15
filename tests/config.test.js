@@ -16,9 +16,12 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.historySummaryChars, 320)
   assert.equal(config.browserHistoryLimit, 8)
   assert.equal(config.browserComputerUse, false)
-  assert.equal(config.cacheDir, join('/test-home', '.deepseekeyes', 'deepseekeyes', 'evidence'))
+  assert.equal(config.cacheDir, join('/test-home', '.dsh', 'deepseekeyes', 'evidence'))
   assert.equal(config.usageStats, true)
-  assert.equal(config.usageStatsPath, join('/test-home', '.deepseekeyes', 'deepseekeyes', 'usage-stats.json'))
+  assert.equal(config.usageStatsPath, join('/test-home', '.dsh', 'deepseekeyes', 'usage-stats.json'))
+  assert.equal(config.visionAttemptLogPath, join('/test-home', '.dsh', 'deepseekeyes', 'vision-attempts.json'))
+  assert.equal(config.browserArtifactsDir, join('/test-home', '.dsh', 'deepseekeyes', 'browser-runs'))
+  assert.equal(config.desktopArtifactsDir, join('/test-home', '.dsh', 'deepseekeyes', 'desktop-runs'))
 })
 
 test('visual token budgets accept large custom values and provider-managed output', () => {

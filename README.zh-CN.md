@@ -44,7 +44,7 @@ DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉与 Compu
 | 第一次视觉描述不够怎么办？ | DeepSeek 可以携带图片 SHA-256、精确问题和可选区域继续向视觉模型追问。 |
 | 视觉模型选错了怎么办？ | 先检查图片能力声明，再通过随机 3×3 色块探针验证它确实读取了像素。 |
 | 主视觉模型出错怎么办？ | 按配置优先级执行有界故障转移，失败路由进入冷却期，每次 attempts 都写入本地审计记录。 |
-| 视觉模型乱加字段怎么办？ | 提示生成与 Ajv 验证共用一份公开 JSON Schema，所有嵌套对象都拒绝额外字段。 |
+| 视觉模型乱加字段怎么办？ | 同一份公开 JSON Schema 生成模型易遵循的紧凑格式并执行 Ajv 严格验证，所有嵌套对象都拒绝额外字段。 |
 | 会不会影响正常文字对话？ | 纯文字轮次走原有直通路径，不读图、不截图、不注册 Computer Use 工具，也不增加插件统计。 |
 | 能否自动测试网页和桌面？ | Browser Computer Use 与 Windows/macOS 原生 Desktop Computer Use 均已实现，且默认关闭、按需启用。 |
 | 插件到底用了多少 Token？ | 设置卡分别展示 Provider 精确额外用量、桥接输入估算和被排除的正常最终回答用量。 |
@@ -74,7 +74,7 @@ $DSH_HOME/deepseekeyes/vision-attempts.json
 
 记录只包含 Provider、模型、阶段、状态、耗时、错误码、图片 SHA-256 和哈希后的会话 ID，不写入图片、提示或模型证据正文。
 
-基础读取与细节读取共同使用 [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json)。所有 OCR、区域、对象、观察、bbox 和 confidence 嵌套字段都必须完整有效，任何额外字段都会让当前路由失败并进入有界 failover。
+基础读取与细节读取共同使用 [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json)。提示中的紧凑 JSON 示例由这份 Schema 自动生成，最终结果仍由 Ajv 按同一来源严格验证。常见的归一化/像素 `xywh`、归一化/像素 `xyxy` 与 Qwen 0–1000 `xyxy` 会在本地确定性转换并保留原坐标审计，不增加模型调用。所有 OCR、区域、对象、观察、bbox 和 confidence 嵌套字段都必须完整有效，任何额外字段都会让当前路由失败并进入有界 failover。
 
 ## 原生模型切换与按需重新看图
 
@@ -299,7 +299,7 @@ $DSH_HOME/deepseekeyes/evidence/
 未设置 `DSH_HOME` 时写入：
 
 ```text
-~/.deepseekeyes/deepseekeyes/evidence/
+~/.dsh/deepseekeyes/evidence/
 ```
 
 原图始终是事实源；多轮追问每次重新引用原始附件，而不是对上一次摘要继续摘要。若视觉调用、证据 JSON、持久化或追问协议失败，本轮以错误结束，DeepSeek 不会在缺失证据时继续生成。

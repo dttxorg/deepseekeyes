@@ -150,7 +150,7 @@ export class VisionProbe {
       maxTokens: 256,
       signal,
     }))
-    const parsed = parseJsonObject(result.text, 'vision capability probe')
+    const parsed = parseJsonObject(result.text, 'vision capability probe', { allowWrapper: true })
     const cells = Array.isArray(parsed.cells) ? parsed.cells.map((value) => String(value).toLowerCase()) : []
     if (cells.length !== order.length || cells.some((value, index) => value !== order[index])) {
       throw new DeepSeekEyesError(

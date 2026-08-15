@@ -1,6 +1,6 @@
 {
   "name": "@dttxorg/deepseekeyes",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Auditable vision and cross-platform Computer Use runtime for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",
@@ -33,7 +33,7 @@
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
     "test:browser": "node acceptance/browser-live.mjs",
-    "test:coverage": "node --test --experimental-test-coverage",
+    "test:coverage": "node --test --experimental-test-coverage \"tests/*.test.js\"",
     "check": "npm run build:client && node scripts/verify-package.mjs && npm run eval:fixture && npm test",
     "pack:dry": "npm pack --dry-run",
     "pack:release": "npm pack",

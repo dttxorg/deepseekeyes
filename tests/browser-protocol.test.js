@@ -147,7 +147,7 @@ test('browser 0.2 configuration is opt-in and supports Windows-style explicit br
   assert.equal(defaults.browserComputerUse, false)
   assert.equal(defaults.browserHeadless, false)
   assert.equal(defaults.browserViewportWidth, 1440)
-  assert.equal(defaults.browserArtifactsDir, join('/home', '.deepseekeyes', 'deepseekeyes', 'browser-runs'))
+  assert.equal(defaults.browserArtifactsDir, join('/home', '.dsh', 'deepseekeyes', 'browser-runs'))
   const configured = resolveConfig({
     browserChannel: 'msedge',
     browserHeadless: true,

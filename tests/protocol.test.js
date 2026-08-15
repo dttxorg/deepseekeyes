@@ -9,7 +9,7 @@ import {
   validateBaseEvidence,
   validateTargetEvidence,
 } from '../src/protocol.js'
-import { BASE_EVIDENCE_SCHEMA } from '../src/evidence-schema.js'
+import { BASE_EVIDENCE_SCHEMA, normalizeEvidenceCoordinates } from '../src/evidence-schema.js'
 import { userMessage } from './_helpers.js'
 import { validBaseEvidence, validTargetEvidence } from './_helpers.js'
 
@@ -27,6 +27,8 @@ test('canonical JSON Schema drives prompts and rejects every invalid nested fiel
   assert.match(prompt, new RegExp(BASE_EVIDENCE_SCHEMA.title))
   assert.match(prompt, /bounded overview/i)
   assert.match(prompt, /targeted reread/i)
+  assert.ok(prompt.length < 2_500, `visual prompt compatibility budget exceeded: ${prompt.length}`)
+  assert.match(prompt, /use \[\] for an empty list/i)
   assert.doesNotMatch(prompt, /Transcribe every visible word without paraphrasing/)
 
   const nested = validBaseEvidence({
@@ -65,6 +67,66 @@ test('canonical JSON Schema drives prompts and rejects every invalid nested fiel
     () => parseJsonObject(`prefix ${JSON.stringify(validBaseEvidence())}`, 'strict evidence'),
     /not one valid JSON object/,
   )
+})
+
+test('visual evidence alone may unwrap one JSON object while control messages remain strict', () => {
+  const evidence = validBaseEvidence()
+  assert.deepEqual(
+    parseJsonObject(`Here is the requested object:\n${JSON.stringify(evidence)}`, 'vision', {
+      allowWrapper: true,
+    }),
+    evidence,
+  )
+  assert.throws(
+    () => parseJsonObject(
+      `${JSON.stringify(evidence)}\n${JSON.stringify(evidence)}`,
+      'vision',
+      { allowWrapper: true },
+    ),
+    /not one valid JSON object/,
+  )
+  assert.throws(
+    () => parseJsonObject(`Here is the requested object:\n${JSON.stringify(evidence)}`, 'control'),
+    /not one valid JSON object/,
+  )
+})
+
+test('coordinate normalization preserves strict Schema and records original bbox values', () => {
+  const source = { width: 1720, height: 1440 }
+  const qwen = normalizeEvidenceCoordinates('base', validBaseEvidence({
+    ocr: [{ text: 'Error 132', bbox: [100, 200, 600, 260], confidence: 0.98 }],
+  }), source, { provider: 'opencode-go', model: 'qwen3.7-plus' })
+  assert.deepEqual(qwen.value.ocr[0].bbox, [0.1, 0.2, 0.5, 0.06])
+  assert.equal(qwen.audit.transformedCount, 1)
+  assert.equal(qwen.audit.convention, 'qwen-1000-xyxy')
+  assert.deepEqual(qwen.audit.transforms[0], {
+    path: '/ocr/0/bbox',
+    convention: 'qwen-1000-xyxy',
+    original: [100, 200, 600, 260],
+    normalized: [0.1, 0.2, 0.5, 0.06],
+  })
+  assert.equal(validateBaseEvidence(qwen.value), qwen.value)
+
+  const pixelXywh = normalizeEvidenceCoordinates('target', validTargetEvidence({
+    observations: [{ fact: 'visible', bbox: [172, 144, 344, 72], confidence: 0.95 }],
+  }), source, { provider: 'opencode-go', model: 'minimax-m3' })
+  assert.deepEqual(pixelXywh.value.observations[0].bbox, [0.1, 0.1, 0.2, 0.05])
+  assert.equal(pixelXywh.audit.convention, 'pixel-xywh')
+  assert.equal(validateTargetEvidence(pixelXywh.value), pixelXywh.value)
+
+  const normalizedXyxy = normalizeEvidenceCoordinates('base', validBaseEvidence({
+    objects: [{ name: 'dialog', bbox: [0.8, 0.2, 0.95, 0.4], attributes: [] }],
+  }), source, { provider: 'generic', model: 'vision' })
+  assert.deepEqual(normalizedXyxy.value.objects[0].bbox, [0.8, 0.2, 0.15, 0.2])
+  assert.equal(normalizedXyxy.audit.convention, 'normalized-xyxy')
+  assert.equal(validateBaseEvidence(normalizedXyxy.value), normalizedXyxy.value)
+
+  const pixelXyxy = normalizeEvidenceCoordinates('target', validTargetEvidence({
+    observations: [{ fact: 'bottom-right', bbox: [800, 700, 900, 900], confidence: 0.9 }],
+  }), { width: 1_000, height: 1_000 }, { provider: 'generic', model: 'vision' })
+  assert.deepEqual(pixelXyxy.value.observations[0].bbox, [0.8, 0.7, 0.1, 0.2])
+  assert.equal(pixelXyxy.audit.convention, 'pixel-xyxy')
+  assert.equal(validateTargetEvidence(pixelXyxy.value), pixelXyxy.value)
 })
 
 test('clarification protocol accepts only a whole, known-image control response', () => {

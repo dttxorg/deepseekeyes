@@ -12,7 +12,7 @@ DeepSeekEyes separates original DSH attachments, derived visual evidence, automa
 | Desktop runs | `$DSH_HOME/deepseekeyes/desktop-runs/` | Operator-managed files; model history defaults to 8 summaries | Original/lossless PNG evidence, window metadata, actions, assertions and reports. Typed text and launch arguments are hashed. |
 | In-memory route health | Process memory | Current process | Success/failure counts, last timestamps and circuit cooldown. |
 
-On Windows, `$DSH_HOME` normally resolves to `%USERPROFILE%\.dsh`; on macOS/Linux it normally resolves to `~/.dsh`. Explicit DSH configuration takes precedence.
+On Windows, `$DSH_HOME` normally resolves to `%USERPROFILE%\.dsh`; on macOS/Linux it normally resolves to `~/.dsh`. When the environment variable is absent, DeepSeekEyes uses the same `~/.dsh` fallback as Harness. Explicit DSH configuration takes precedence.
 
 ## What is excluded from the route-attempt log
 

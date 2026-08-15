@@ -87,7 +87,7 @@ macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.3.0.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.3.1.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
@@ -116,6 +116,8 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 6. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
 7. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
+设置卡底部的 **Token 消耗统计** 区域可以直接查看、刷新、关闭或清零本插件的消耗记录，操作立即生效，不需要重启。
+
 DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；不再要求把 `upstreamProvider`、`upstreamModel`、`visionProvider` 或 `visionModel` 写进 `cordis.patch.yml`。切换最终回答 Provider 时，界面会清空旧模型，避免把上一个 Provider 的模型 ID 带入新路由。
 
 ### Token 建议档位与不限制模式
@@ -125,6 +127,24 @@ DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；
 自定义值取消了原先 32,768/16,384 的插件硬上限，可以填写任意满足最低值的 JavaScript 安全整数。“不限制”在配置中记为 `0`，插件调用视觉模型时完全省略 `maxTokens`；最终有效上限仍由所选模型和 Provider 决定。
 
 这里的两个数值只控制**后台视觉模型的输出预算**，不会把 DeepSeek 最终回答模型的 `maxTokens` 调大，也不会为普通文本轮次制造额外视觉调用。最终模型的输出预算仍来自 Harness 当前模型设置；当估算输入加输出会超过该模型的 `contextWindow` 时，插件只对本次最终调用向下收缩输出预算。若 Provider 返回包含精确输入量和上下文上限的溢出诊断，插件按该诊断再试一次，而不是继续提交一个必定超过上限的请求。
+
+### 本插件 Token 消耗统计
+
+统计默认开启，并明确分成三组，避免把正常使用的 Token 错算给插件：
+
+1. **精确额外 Token**：Provider 实际返回的随机像素探针、首次读图、细节读图，以及 DeepSeek 生成视觉追问的中间轮次用量；
+2. **估算桥接输入**：插件注入给最终模型的结构化视觉证据、协议和工具结果。Provider 通常只返回整次请求输入量，无法拆出插件片段，因此这里按 Harness 的固定密度规则估算；
+3. **最终回答模型用量**：单独记录视觉轮次的最终调用，但不计入“插件额外消耗”，因为其中包含 DeepSeek 本来就要生成的正常回答。
+
+面板同时显示视觉轮次、原图按需读取和视觉缓存命中。刷新、清零和读取统计只调用本机回环 RPC `/deepseekeyes`，不会创建会话消息、工具 Schema 或模型请求。纯文字轮次走原有直通路径，不写统计、不增加模型调用，也不增加 Token。
+
+累计数据默认原子写入：
+
+```text
+$DSH_HOME/deepseekeyes/usage-stats.json
+```
+
+文件权限为 `0600`，最多保留 50 个最近会话；总计数不受该会话明细上限影响。磁盘写入临时失败时，视觉/文本主流程继续运行，当前进程在内存中继续计数，并在后续写入恢复后一次性落盘。设置 `usageStats: false` 可停止新增记录；`usageStatsPath: false` 或 `cacheDir: false` 可使用仅内存模式。
 
 ## 自定义网关的图片能力
 
@@ -165,6 +185,7 @@ defaultInput: [text, image]
     maxClarifications: 3
     baseMaxTokens: 16384
     targetMaxTokens: 8192
+    usageStats: true
     browserComputerUse: true
     browserChannel: msedge
     desktopComputerUse: true
@@ -181,6 +202,7 @@ defaultInput: [text, image]
 export DEEPSEEKEYES_UPSTREAM_MODEL=deepseek-v4-pro
 export DEEPSEEKEYES_VISION_PROVIDER=openai
 export DEEPSEEKEYES_VISION_MODEL=gpt-4.1
+export DEEPSEEKEYES_USAGE_STATS=true
 export DEEPSEEKEYES_DESKTOP_ENABLED=true
 dsh web
 ```
@@ -234,6 +256,8 @@ $DSH_HOME/deepseekeyes/evidence/
 | `cacheDir` | DSH/Home 路径 | 证据目录；设为 `false` 时只使用进程内缓存 |
 | `baseMaxTokens` | `16384` | 基础视觉证据输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
 | `targetMaxTokens` | `8192` | 单次细节追问输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
+| `usageStats` | `true` | 是否累计本插件的精确 Provider 用量和桥接输入估算；关闭后不再新增记录 |
+| `usageStatsPath` | DSH/Home 路径 | 统计 JSON 路径；设为 `false` 时仅在内存保存，默认 `$DSH_HOME/deepseekeyes/usage-stats.json` |
 | `historyImageLimit` | `8` | 最终模型上下文中保留的最近历史图片短引用数；`0` 表示不自动带入历史引用 |
 | `historySummaryChars` | `320` | 每个历史图片引用最多携带的摘要字符数 |
 | `browserHistoryLimit` | `8` | 最终模型上下文中保留的最近 Browser 状态紧凑摘要数 |

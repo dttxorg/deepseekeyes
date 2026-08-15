@@ -18,7 +18,7 @@ const required = [
 ]
 
 if (manifest.name !== 'deepseekeyes') throw new Error('package name must be deepseekeyes')
-if (manifest.version !== '0.3.0') throw new Error('release version must be 0.3.0')
+if (manifest.version !== '0.3.1') throw new Error('release version must be 0.3.1')
 if (manifest.dependencies?.['playwright-core'] !== '1.61.1') {
   throw new Error('browser computer use must pin playwright-core 1.61.1')
 }

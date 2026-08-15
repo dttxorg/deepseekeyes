@@ -16,6 +16,7 @@ test('GUI draft emits minimal live settings mutations and validates routing cons
     visionProvider: 'eyes',
     visionModel: 'vision-a',
   })
+  assert.equal(current.usageStats, true)
   const draft = { ...current, upstreamModel: '', visionProvider: '', visionModel: '', maxClarifications: 5 }
   assert.deepEqual(settingsPathOps(current, draft), [
     { op: 'unset', path: ['upstreamModel'] },

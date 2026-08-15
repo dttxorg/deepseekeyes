@@ -33,10 +33,11 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
   let localeNamespace
   const scope = { getSnapshot: () => ({ status: 'loading' }), subscribe: () => () => {} }
   const api = {}
+  const rpc = {}
   const ctx = {
     get(name) {
       assert.equal(name, 'connection')
-      return { api }
+      return { api, rpc }
     },
     settingsScope: { bind: spec => { assert.equal(spec.namespace, 'deepseekeyes'); return scope } },
     effect(install) { install() },
@@ -59,6 +60,7 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
   assert.equal(registered.options.locale, 'deepseekeyes.settings')
   assert.equal(registered.options.inject().scope, scope)
   assert.equal(registered.options.inject().api, api)
+  assert.equal(registered.options.inject().usageRpc, rpc)
   assert.equal(typeof registered.component, 'function')
 })
 
@@ -86,5 +88,8 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /Computer Use 0\.3/)
   assert.match(source, /id="deepseekeyes-desktop-timeout"/)
   assert.match(source, /Windows \/ macOS 桌面 Computer Use/)
+  assert.match(source, /Token 消耗统计/)
+  assert.match(source, /usage\.snapshot/)
+  assert.match(source, /精确额外 Token/)
   assert.doesNotMatch(source, /id="deepseekeyes-base-tokens"[^>]*max=/)
 })

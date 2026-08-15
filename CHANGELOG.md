@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 - 2026-08-15
+
+- Add a native token-usage statistics panel with refresh, reset and live enable/disable controls.
+- Separate exact Provider-reported vision/probe/clarification usage from estimated plugin-injected bridge input.
+- Track final-model visual-turn usage separately and exclude it from plugin overhead so normal DeepSeek answer tokens are not attributed to DeepSeekEyes.
+- Keep ordinary pure-text turns on the unchanged direct path with no statistics entry, model call or tool-schema overhead.
+- Persist totals and the 50 most recent sessions atomically under `$DSH_HOME/deepseekeyes/usage-stats.json` with mode `0600`, while supporting a memory-only mode.
+- Serve statistics through a loopback-only `/deepseekeyes` RPC, so reading and resetting the panel never creates a model request.
+- Treat statistics persistence failures as non-fatal: continue accounting in memory and recover on a later successful write without interrupting the user turn.
+
 ## 0.3.0 - 2026-08-15
 
 - Add opt-in native Desktop Computer Use for Windows and macOS without replacing the existing Browser Computer Use flow.

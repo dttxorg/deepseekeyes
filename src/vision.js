@@ -200,7 +200,12 @@ export class EvidenceManager {
     if (baseRecordLooksUsable(cached, source, route)) {
       try {
         validateBaseEvidence(cached.evidence)
-        return { record: structuredClone(this.rememberBase(cached)), usage: totalUsage }
+        return {
+          record: structuredClone(this.rememberBase(cached)),
+          usage: totalUsage,
+          cacheHit: true,
+          usageBreakdown: { probe: emptyUsage(), model: emptyUsage() },
+        }
       } catch {
         // Regenerate a structurally incomplete record under the same immutable key.
       }
@@ -235,7 +240,12 @@ export class EvidenceManager {
       },
       evidence,
     }))
-    return { record, usage: totalUsage }
+    return {
+      record,
+      usage: totalUsage,
+      cacheHit: false,
+      usageBreakdown: { probe: proof.usage, model: result.usage },
+    }
   }
 
   async targetFor(block, baseRecord, request, route, signal) {
@@ -245,7 +255,12 @@ export class EvidenceManager {
     if (targetRecordLooksUsable(cached, baseRecord.source, route, request.question)) {
       try {
         validateTargetEvidence(cached.evidence)
-        return { record: cached, usage: emptyUsage() }
+        return {
+          record: cached,
+          usage: emptyUsage(),
+          cacheHit: true,
+          usageBreakdown: { probe: emptyUsage(), model: emptyUsage() },
+        }
       } catch {
         // Regenerate a structurally incomplete record under the same immutable key.
       }
@@ -281,6 +296,11 @@ export class EvidenceManager {
     const usage = emptyUsage()
     addUsage(usage, proof.usage)
     addUsage(usage, result.usage)
-    return { record, usage }
+    return {
+      record,
+      usage,
+      cacheHit: false,
+      usageBreakdown: { probe: proof.usage, model: result.usage },
+    }
   }
 }

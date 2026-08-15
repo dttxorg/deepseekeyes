@@ -42,6 +42,26 @@ const zh = {
   activeProbe: '首次使用时执行随机像素探针',
   activeProbeHint: '不仅相信模型声明，还会发送随机 3×3 色块确认模型确实读取了像素。',
   persistentEvidence: '持久化视觉证据缓存',
+  usageStats: '记录 DeepSeekEyes Token 统计',
+  usageStatsTitle: 'Token 消耗统计',
+  usageStatsHint: '精确值来自 Provider 返回的 usage；最终回答中由视觉证据与协议增加的输入量使用 Harness 的固定密度规则估算。统计查询直接走本机 RPC，不调用模型。',
+  usageStatsDisabled: '统计已关闭；关闭期间不记录新的数据。',
+  usageStatsLoading: '正在读取 Token 统计…',
+  usageStatsUnavailable: 'Token 统计读取失败：',
+  usagePersistenceError: '统计文件暂时写入失败，当前进程仍继续在内存中计数：',
+  usageExactAdditional: '精确额外 Token',
+  usageEstimatedBridge: '估算桥接输入',
+  usageEstimatedTotal: '估算插件合计',
+  usageVision: '视觉模型 Token',
+  usageClarification: 'DeepSeek 追问轮次 Token',
+  usageVisualTurns: '视觉轮次',
+  usageLookCalls: '原图按需读取',
+  usageCacheHits: '视觉缓存命中',
+  usageFinalExcluded: '最终回答模型的正常回答用量不计入“插件额外消耗”，避免把 DeepSeek 本身的 Token 算到插件头上。',
+  usageUpdatedAt: '更新时间：',
+  usageRefresh: '刷新统计',
+  usageReset: '清零统计',
+  usageResetConfirm: '确认清零 DeepSeekEyes 的累计 Token 统计？',
   maxClarifications: '最多追问轮数',
   baseMaxTokens: '首次读图 Token 上限',
   targetMaxTokens: '细节追问 Token 上限',
@@ -151,6 +171,26 @@ const en = {
   activeProbe: 'Run a randomized pixel probe on first use',
   activeProbeHint: 'Sends a randomized 3×3 grid to prove the model actually reads pixels.',
   persistentEvidence: 'Persist visual evidence cache',
+  usageStats: 'Record DeepSeekEyes token usage',
+  usageStatsTitle: 'Token usage statistics',
+  usageStatsHint: 'Exact values come from provider usage. Added final-answer input from visual evidence and protocol text uses the Harness fixed-density estimate. Reading these statistics uses local RPC and makes no model call.',
+  usageStatsDisabled: 'Statistics are disabled; no new usage is recorded while disabled.',
+  usageStatsLoading: 'Loading token statistics…',
+  usageStatsUnavailable: 'Token statistics failed: ',
+  usagePersistenceError: 'The statistics file is temporarily unavailable; this process is still counting in memory: ',
+  usageExactAdditional: 'Exact additional tokens',
+  usageEstimatedBridge: 'Estimated bridge input',
+  usageEstimatedTotal: 'Estimated plugin total',
+  usageVision: 'Vision model tokens',
+  usageClarification: 'DeepSeek clarification tokens',
+  usageVisualTurns: 'Visual turns',
+  usageLookCalls: 'On-demand original reads',
+  usageCacheHits: 'Visual cache hits',
+  usageFinalExcluded: 'Normal final-answer model usage is excluded from plugin overhead so DeepSeek’s own response tokens are not charged to the plugin.',
+  usageUpdatedAt: 'Updated: ',
+  usageRefresh: 'Refresh statistics',
+  usageReset: 'Reset statistics',
+  usageResetConfirm: 'Reset all accumulated DeepSeekEyes token statistics?',
   maxClarifications: 'Maximum clarification rounds',
   baseMaxTokens: 'Initial vision token limit',
   targetMaxTokens: 'Clarification token limit',
@@ -257,6 +297,10 @@ const styles = {
   details: { borderTop: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', paddingTop: 12 },
   detailsSummary: { cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
   divider: { height: 1, margin: '18px 0', background: 'var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))' },
+  metricGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10 },
+  metric: { minWidth: 0, padding: '11px 12px', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', borderRadius: 9, background: 'var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, .04))' },
+  metricValue: { display: 'block', fontSize: 18, fontWeight: 650, lineHeight: 1.25, fontVariantNumeric: 'tabular-nums', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  metricLabel: { display: 'block', marginTop: 4, fontSize: 11, lineHeight: 1.4, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
 }
 
 function messageOf(error) {
@@ -322,7 +366,20 @@ function routeSummary(template, vision, final) {
   return template.replace('{vision}', vision).replace('{final}', final)
 }
 
-function DeepSeekEyesSettingsCard({ scope, api, t }) {
+function formatCount(value) {
+  return new Intl.NumberFormat().format(Number.isFinite(value) ? value : 0)
+}
+
+function UsageMetric({ label, value }) {
+  return (
+    <div style={styles.metric}>
+      <strong style={styles.metricValue}>{formatCount(value)}</strong>
+      <span style={styles.metricLabel}>{label}</span>
+    </div>
+  )
+}
+
+function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
   const snapshot = useSyncExternalStore(
     listener => scope.subscribe(listener),
     () => scope.getSnapshot(),
@@ -334,6 +391,7 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
   const [catalog, setCatalog] = useState({ loading: true, providers: [], groups: [], namespaces: [], failures: [], error: undefined })
   const [declareVision, setDeclareVision] = useState(false)
   const [declarationDirty, setDeclarationDirty] = useState(false)
+  const [usage, setUsage] = useState({ loading: true, value: undefined, error: undefined })
 
   useEffect(() => {
     if (snapshot.status === 'ready' && !dirty) setDraft(normalizeSettingsDraft(snapshot.value))
@@ -364,6 +422,31 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
   }, [api])
 
   useEffect(() => { void loadCatalog() }, [loadCatalog, snapshot.revision])
+
+  const loadUsage = useCallback(async () => {
+    setUsage(current => ({ ...current, loading: true, error: undefined }))
+    try {
+      const response = await usageRpc.call('/deepseekeyes', 'usage.snapshot', {})
+      if (!response.ok) throw new Error(response.error.message)
+      setUsage({ loading: false, value: response.value, error: undefined })
+    } catch (error) {
+      setUsage({ loading: false, value: undefined, error: messageOf(error) })
+    }
+  }, [usageRpc])
+
+  const resetUsage = useCallback(async () => {
+    if (globalThis.confirm?.(t('usageResetConfirm')) === false) return
+    setUsage(current => ({ ...current, loading: true, error: undefined }))
+    try {
+      const response = await usageRpc.call('/deepseekeyes', 'usage.reset', { confirm: true })
+      if (!response.ok) throw new Error(response.error.message)
+      setUsage({ loading: false, value: response.value, error: undefined })
+    } catch (error) {
+      setUsage({ loading: false, value: undefined, error: messageOf(error) })
+    }
+  }, [t, usageRpc])
+
+  useEffect(() => { void loadUsage() }, [loadUsage])
 
   const providers = useMemo(() => {
     const selected = new Set([draft.upstreamProvider, draft.visionProvider])
@@ -442,7 +525,7 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
       setDeclarationDirty(false)
       setNotice({ kind: 'ok', text: t('saved') })
       await new Promise(resolve => setTimeout(resolve, 180))
-      await loadCatalog()
+      await Promise.all([loadCatalog(), loadUsage()])
     } catch (error) {
       setNotice({ kind: 'error', text: `${t('saveFailed')}${messageOf(error)}` })
     } finally {
@@ -728,6 +811,45 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
             </label>
           </details>
 
+          <details style={styles.details} open>
+            <summary style={styles.detailsSummary}>{t('usageStatsTitle')}</summary>
+            <label style={styles.checkboxRow}>
+              <input type="checkbox" checked={draft.usageStats} disabled={saving || !snapshot.writable} onChange={event => update('usageStats', event.target.checked)} />
+              <span>{t('usageStats')}</span>
+            </label>
+            <p style={{ ...styles.hint, marginTop: 10 }}>{t('usageStatsHint')}</p>
+            {usage.loading
+              ? <p style={{ ...styles.statusWarn, marginTop: 12 }}>{t('usageStatsLoading')}</p>
+              : usage.error !== undefined
+                ? <p style={{ ...styles.statusError, marginTop: 12 }}>{t('usageStatsUnavailable')}{usage.error}</p>
+                : usage.value !== undefined
+                  ? (
+                    <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+                      {!usage.value.enabled ? <p style={styles.statusWarn}>{t('usageStatsDisabled')}</p> : null}
+                      {usage.value.persistence?.healthy === false
+                        ? <p style={styles.statusWarn}>{t('usagePersistenceError')}{usage.value.persistence.error}</p>
+                        : null}
+                      <div style={styles.metricGrid}>
+                        <UsageMetric label={t('usageExactAdditional')} value={usage.value.totals.derived.exactAdditionalTokens} />
+                        <UsageMetric label={t('usageEstimatedBridge')} value={usage.value.totals.derived.estimatedBridgeInputTokens} />
+                        <UsageMetric label={t('usageEstimatedTotal')} value={usage.value.totals.derived.estimatedAdditionalTokens} />
+                        <UsageMetric label={t('usageVision')} value={usage.value.totals.derived.visionTokens} />
+                        <UsageMetric label={t('usageClarification')} value={usage.value.totals.derived.upstreamClarificationTokens} />
+                        <UsageMetric label={t('usageVisualTurns')} value={usage.value.totals.visualTurns} />
+                        <UsageMetric label={t('usageLookCalls')} value={usage.value.totals.lookCalls} />
+                        <UsageMetric label={t('usageCacheHits')} value={usage.value.totals.cacheHits} />
+                      </div>
+                      <p style={styles.hint}>{t('usageFinalExcluded')}</p>
+                      <p style={styles.hint}>{t('usageUpdatedAt')}{usage.value.updatedAt}</p>
+                    </div>
+                  )
+                  : null}
+            <div style={{ ...styles.actions, marginTop: 12 }}>
+              <button type="button" style={styles.button} disabled={usage.loading} onClick={() => { void loadUsage() }}>{t('usageRefresh')}</button>
+              <button type="button" style={styles.button} disabled={usage.loading} onClick={() => { void resetUsage() }}>{t('usageReset')}</button>
+            </div>
+          </details>
+
           {catalog.loading
             ? <p style={styles.statusWarn}>{t('statusChecking')}</p>
             : catalog.error !== undefined
@@ -752,7 +874,7 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
 export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope']
 
 export function apply(ctx) {
-  const { api } = ctx.get('connection')
+  const { api, rpc } = ctx.get('connection')
   const scope = ctx.settingsScope.bind({ namespace: 'deepseekeyes' })
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'deepseekeyes: settings locale')
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
@@ -760,6 +882,6 @@ export function apply(ctx) {
     id: 'deepseekeyes',
     order: 30,
     locale: NS,
-    inject: () => ({ scope, api }),
+    inject: () => ({ scope, api, usageRpc: rpc }),
   }, DeepSeekEyesSettingsCard))
 }

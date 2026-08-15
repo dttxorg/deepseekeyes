@@ -4,7 +4,7 @@
 
 DeepSeekEyes is an installable DeepSeek Harness bundle. It registers a virtual `deepseekeyes` provider which accepts native Harness image attachments, asks an already-configured multimodal Harness model for structured evidence, and delegates reasoning to the selected DeepSeek model. DeepSeek may privately request additional visual detail; the user stays in one conversation.
 
-Version `0.3.0` adds opt-in native Desktop Computer Use for both Windows and macOS alongside the existing Playwright Browser Computer Use tool. The same native **Settings → Plugins → DeepSeekEyes** card controls both modes. Every desktop action is bound to the latest screenshot state, returns a new full-screen PNG and window catalog, and sends those pixels back through the DeepSeekEyes vision bridge before DeepSeek continues.
+Version `0.3.1` adds local DeepSeekEyes token-usage accounting to the native **Settings → Plugins → DeepSeekEyes** card. Provider-reported visual/probe/clarification usage is separated from estimated bridge input, while the final answer model's normal response usage is shown separately and excluded from plugin overhead. Reading, refreshing and resetting statistics uses a loopback-only RPC and never calls a model. Version `0.3.0` added opt-in native Desktop Computer Use for both Windows and macOS alongside the existing Playwright Browser Computer Use tool.
 
 Core properties:
 
@@ -27,5 +27,6 @@ Core properties:
 - exact desktop PNG pixel preservation: oversized screenshots are losslessly recompressed and, only when required by the Host's 5 MB attachment limit, split into coordinate-labelled lossless tiles without scaling or JPEG conversion;
 - independently bounded desktop history so earlier full screenshots/window lists do not create repeated visual calls or runaway context growth;
 - Desktop Computer Use is also disabled by default, so ordinary text/image sessions keep their existing tool set, prompt and token behavior.
+- local token statistics with exact Provider usage, estimated plugin-injected input, per-session counters, persistent atomic storage and one-click reset; pure-text turns create no DeepSeekEyes usage entry.
 
 See [README.zh-CN.md](README.zh-CN.md) for installation and configuration.

@@ -25,6 +25,8 @@ import { compactSessionHistory, shadowSessionImages } from '../src/session.js'
 import { installHarnessSettings, SETTINGS_NAMESPACE } from '../src/settings.js'
 import { addUsage, emptyUsage, replayWithUsage } from '../src/stream.js'
 import { collectFinalWithBudget, fitOutputBudget } from '../src/token-safety.js'
+import { estimateInjectedTextTokens, UsageTracker } from '../src/usage.js'
+import { installUsageRpc } from '../src/usage-rpc.js'
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
 
 export const name = 'deepseekeyes'
@@ -80,7 +82,22 @@ async function* forwardText(ctx, options, logger) {
   yield* replayWithUsage(guarded.result.chunks, guarded.result.usage)
 }
 
-async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
+function usageHasTokens(usage) {
+  return usage !== undefined && Object.values(usage).some(value => typeof value === 'number' && value > 0)
+}
+
+async function recordEvidenceUsage(tracker, sessionId, result, category) {
+  if (result.cacheHit) {
+    await tracker.recordCacheHit(sessionId)
+    return
+  }
+  if (usageHasTokens(result.usageBreakdown?.probe)) {
+    await tracker.recordCall(sessionId, 'visionProbe', result.usageBreakdown.probe)
+  }
+  await tracker.recordCall(sessionId, category, result.usageBreakdown?.model ?? result.usage)
+}
+
+async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, logger) {
   const { config, router, evidenceManager } = runtime
   const upstreamModel = lockedUpstreamModel(config, options.model)
   const upstreamOptions = {
@@ -117,6 +134,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
   const historicalBlocks = historicalImageBlocks(options.messages)
   let route = activeBlocks.length === 0 ? undefined : await router.resolve(options.signal)
   const totalUsage = emptyUsage()
+  await usageTracker.recordVisualTurn(options.sessionId)
   const baseRecords = []
   const activeEvidence = new Map()
   const historicalEvidence = new Map()
@@ -129,6 +147,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
   for (const block of activeBlocks) {
     const result = await evidenceManager.baseFor(block, route, options.signal)
     addUsage(totalUsage, result.usage)
+    await recordEvidenceUsage(usageTracker, options.sessionId, result, 'visionBase')
     baseRecords.push(result.record)
     const key = attachmentKey(block.attachment)
     activeEvidence.set(key, renderBaseEvidence(result.record))
@@ -203,7 +222,12 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
     },
   )
 
+  let injectedEvidenceTokens = 0
+  for (const text of activeEvidence.values()) injectedEvidenceTokens += estimateInjectedTextTokens(text)
+  for (const text of historicalEvidence.values()) injectedEvidenceTokens += estimateInjectedTextTokens(text)
+
   if (activeBlocks.length === 0) {
+    await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
     yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
     return
   }
@@ -216,6 +240,11 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
       .map(record => ({ ...record, summary: record.evidence.summary.slice(0, config.historySummaryChars) })),
   ]
   const system = appendSystem(options.system, clarificationInstruction(catalogRecords))
+  const injectedSystemTokens = Math.max(
+    0,
+    estimateInjectedTextTokens(system) - estimateInjectedTextTokens(options.system ?? ''),
+  )
+  let injectedTargetTokens = 0
   const upstreamInfo = await ctx.llm.resolveModelInfo(
     config.upstreamProvider,
     upstreamModel,
@@ -231,10 +260,15 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
     const upstream = guarded.result
     addUsage(totalUsage, upstream.usage)
     const request = parseClarificationRequest(upstream.text, allowedHashes)
+    const bridgeEstimate = injectedEvidenceTokens + injectedSystemTokens + injectedTargetTokens
     if (request === undefined) {
+      await usageTracker.recordCall(options.sessionId, 'upstreamFinal', upstream.usage)
+      await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
       yield* replayWithUsage(upstream.chunks, totalUsage)
       return
     }
+    await usageTracker.recordCall(options.sessionId, 'upstreamClarification', upstream.usage)
+    await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
     if (clarificationCount >= config.maxClarifications) {
       throw new DeepSeekEyesError(
         `DeepSeek requested more than ${config.maxClarifications} visual clarification rounds`,
@@ -250,15 +284,19 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
     if (baseRecord === undefined) {
       const base = await evidenceManager.baseFor(block, route, options.signal)
       addUsage(totalUsage, base.usage)
+      await recordEvidenceUsage(usageTracker, options.sessionId, base, 'visionBase')
       baseRecord = base.record
       baseByHash.set(request.imageSha256, baseRecord)
     }
     const targeted = await evidenceManager.targetFor(block, baseRecord, request, route, options.signal)
     addUsage(totalUsage, targeted.usage)
+    await recordEvidenceUsage(usageTracker, options.sessionId, targeted, 'visionTarget')
+    const targetedText = renderTargetEvidence(targeted.record)
+    injectedTargetTokens += estimateInjectedTextTokens(targetedText, { message: true })
     messages = [
       ...messages,
       pluginUserMessage(
-        [{ type: 'text', text: renderTargetEvidence(targeted.record) }],
+        [{ type: 'text', text: targetedText }],
         'DeepSeekEyes 已补充视觉细节',
       ),
     ]
@@ -269,6 +307,11 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
 export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
   const logger = ctx.logger ?? console
   let runtime = createRuntime(ctx, rawConfig, logger)
+  const usage = new UsageTracker({
+    enabled: runtime.config.usageStats,
+    file: runtime.config.usageStatsPath,
+    logger,
+  })
   let lastCatalogFailure
 
   const state = {
@@ -277,12 +320,14 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
     get cache() { return runtime.cache },
     get probe() { return runtime.probe },
     get evidenceManager() { return runtime.evidenceManager },
+    usage,
     reconfigure(nextConfig) {
       const next = createRuntime(ctx, nextConfig, logger)
       if (next.config.providerId !== runtime.config.providerId) {
         throw new TypeError('deepseekeyes: providerId is fixed for the lifetime of the registered adapter')
       }
       runtime = next
+      state.usage.setEnabled(runtime.config.usageStats)
       state.browser?.reconfigure(runtime.config)
       state.desktop?.reconfigure(runtime.config)
       lastCatalogFailure = undefined
@@ -337,7 +382,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       return visionWrappedModel(info, current.config, route)
     },
     stream(options) {
-      return bridgeStream(ctx, runtime, options, state.look, logger)
+      return bridgeStream(ctx, runtime, options, state.look, state.usage, logger)
     },
   }
 
@@ -360,6 +405,7 @@ export function apply(ctx, rawConfig = {}) {
     }])
   }
   installHarnessSettings(ctx, state, rawConfig)
+  installUsageRpc(ctx, state.usage)
 
   if (typeof ctx.on === 'function') {
     ctx.on('llm/adapters-updated', () => {

@@ -32,6 +32,7 @@ export const SETTINGS_FIELDS = Object.freeze([
   'autoDetectVision',
   'activeProbe',
   'persistentEvidence',
+  'usageStats',
   'maxClarifications',
   'baseMaxTokens',
   'targetMaxTokens',
@@ -68,6 +69,7 @@ export const SettingsConfig = z.object({
   autoDetectVision: z.boolean().default(true),
   activeProbe: z.boolean().default(true),
   persistentEvidence: z.boolean().default(true),
+  usageStats: z.boolean().default(true),
   maxClarifications: z.number().step(1).min(0).max(8).default(DEFAULT_MAX_CLARIFICATIONS),
   baseMaxTokens: z.number().step(1).min(0).default(DEFAULT_BASE_MAX_TOKENS),
   targetMaxTokens: z.number().step(1).min(0).default(DEFAULT_TARGET_MAX_TOKENS),
@@ -108,6 +110,7 @@ export function settingsInput(rawConfig, section) {
     ...(rawConfig.providerId === undefined ? {} : { providerId: rawConfig.providerId }),
     ...(rawConfig.displayName === undefined ? {} : { displayName: rawConfig.displayName }),
     ...(rawConfig.cacheDir === undefined ? {} : { cacheDir: rawConfig.cacheDir }),
+    ...(rawConfig.usageStatsPath === undefined ? {} : { usageStatsPath: rawConfig.usageStatsPath }),
   }
   return { ...rawConfig, ...section, ...fixed }
 }

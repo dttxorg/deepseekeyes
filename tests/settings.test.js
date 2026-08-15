@@ -66,11 +66,13 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /browserViewportWidth/)
   assert.match(JSON.stringify(json), /desktopComputerUse/)
   assert.match(JSON.stringify(json), /desktopWindowsPowerShell/)
+  assert.match(JSON.stringify(json), /usageStats/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
   assert.equal(base.upstreamProvider, 'deepseek-official')
   assert.equal(base.upstreamModel, undefined)
   assert.equal(base.activeProbe, false)
+  assert.equal(base.usageStats, true)
   assert.equal(base.baseMaxTokens, 16_384)
   assert.equal(base.targetMaxTokens, 8_192)
   assert.equal(base.historyImageLimit, 8)
@@ -85,12 +87,13 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal('providerId' in base, false)
 
   const merged = settingsInput(
-    { providerId: 'fixed-eyes', displayName: 'Fixed', cacheDir: false },
+    { providerId: 'fixed-eyes', displayName: 'Fixed', cacheDir: false, usageStatsPath: '/fixed/usage.json' },
     { providerId: 'wrong', upstreamProvider: 'custom-text' },
   )
   assert.equal(merged.providerId, 'fixed-eyes')
   assert.equal(merged.displayName, 'Fixed')
   assert.equal(merged.cacheDir, false)
+  assert.equal(merged.usageStatsPath, '/fixed/usage.json')
   assert.equal(merged.upstreamProvider, 'custom-text')
 })
 
@@ -136,6 +139,7 @@ test('native settings registration exposes the namespace and reconfigures routin
     upstreamModel: 'alternate-model-b',
     visionProvider: 'configured-eye',
     visionModel: 'vision-model',
+    usageStats: false,
     activeProbe: false,
     baseMaxTokens: 0,
     targetMaxTokens: 131_072,
@@ -156,6 +160,8 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.upstreamModel, 'alternate-model-b')
   assert.equal(state.config.visionProvider, 'configured-eye')
   assert.equal(state.config.visionModel, 'vision-model')
+  assert.equal(state.config.usageStats, false)
+  assert.equal(state.usage.enabled, false)
   assert.equal(state.config.activeProbe, false)
   assert.equal(state.config.baseMaxTokens, 0)
   assert.equal(state.config.targetMaxTokens, 131_072)

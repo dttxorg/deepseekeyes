@@ -111,6 +111,16 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     cacheDir = join(dshBase, 'deepseekeyes', 'evidence')
   }
 
+  const configuredUsageStatsPath = input.usageStatsPath ?? environment.DEEPSEEKEYES_USAGE_STATS_PATH
+  let usageStatsPath
+  if (configuredUsageStatsPath === false || (configuredUsageStatsPath === undefined && configuredCacheDir === false)) {
+    usageStatsPath = undefined
+  } else if (configuredUsageStatsPath !== undefined) {
+    usageStatsPath = requiredString(configuredUsageStatsPath, 'usageStatsPath')
+  } else {
+    usageStatsPath = join(dshBase, 'deepseekeyes', 'usage-stats.json')
+  }
+
   const configuredBrowserArtifactsDir = input.browserArtifactsDir
     ?? environment.DEEPSEEKEYES_BROWSER_ARTIFACTS_DIR
   let browserArtifactsDir
@@ -143,6 +153,13 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     autoDetectVision: booleanValue(input.autoDetectVision, 'autoDetectVision', true),
     activeProbe: booleanValue(input.activeProbe, 'activeProbe', true),
     persistentEvidence: booleanValue(input.persistentEvidence, 'persistentEvidence', true),
+    usageStats: booleanValue(
+      input.usageStats
+        ?? environmentBoolean(environment.DEEPSEEKEYES_USAGE_STATS, 'DEEPSEEKEYES_USAGE_STATS'),
+      'usageStats',
+      true,
+    ),
+    usageStatsPath,
     cacheDir,
     maxClarifications: integerValue(
       input.maxClarifications,

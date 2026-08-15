@@ -17,6 +17,8 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.browserHistoryLimit, 8)
   assert.equal(config.browserComputerUse, false)
   assert.equal(config.cacheDir, join('/test-home', '.deepseekeyes', 'deepseekeyes', 'evidence'))
+  assert.equal(config.usageStats, true)
+  assert.equal(config.usageStatsPath, join('/test-home', '.deepseekeyes', 'deepseekeyes', 'usage-stats.json'))
 })
 
 test('visual token budgets accept large custom values and provider-managed output', () => {
@@ -41,6 +43,17 @@ test('configuration accepts environment-selected Harness vision route', () => {
   assert.equal(config.visionModel, 'vision-1')
   assert.equal(config.upstreamModel, 'deepseek-v4-pro')
   assert.equal(config.cacheDir, join('/dsh-home', 'deepseekeyes', 'evidence'))
+  assert.equal(config.usageStatsPath, join('/dsh-home', 'deepseekeyes', 'usage-stats.json'))
+})
+
+test('usage statistics can be disabled or kept memory-only', () => {
+  const memoryOnly = resolveConfig({ cacheDir: false }, {}, '/tmp')
+  assert.equal(memoryOnly.usageStats, true)
+  assert.equal(memoryOnly.usageStatsPath, undefined)
+  const disabled = resolveConfig({}, { DEEPSEEKEYES_USAGE_STATS: 'false' }, '/tmp')
+  assert.equal(disabled.usageStats, false)
+  const explicit = resolveConfig({ cacheDir: false, usageStatsPath: '/usage/stats.json' }, {}, '/tmp')
+  assert.equal(explicit.usageStatsPath, '/usage/stats.json')
 })
 
 test('configuration rejects a model without a provider and recursive upstream id', () => {

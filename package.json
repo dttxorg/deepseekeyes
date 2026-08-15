@@ -1,6 +1,6 @@
 {
   "name": "deepseekeyes",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A multimodal vision, browser and native desktop computer-use bridge for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",

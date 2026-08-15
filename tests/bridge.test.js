@@ -25,7 +25,7 @@ function setupBridge({ visionHandler, upstreamHandler, activeProbe = false, brid
       visionHandler,
     )
   }
-  apply(ctx, {
+  ctx.deepseekEyesState = apply(ctx, {
     visionProvider: visionHandler === undefined ? undefined : 'configured-vision',
     visionModel: visionHandler === undefined ? undefined : 'vision-model',
     activeProbe,
@@ -92,6 +92,15 @@ test('virtual model advertises images, keeps the session block, and completes a 
   assert.equal(upstreamCalls, 2)
   assert.equal(originalMessage.content[1].type, 'image')
   assert.deepEqual(Buffer.from((await ctx.attachments.readImage(ref)).data), bytes)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.derived.exactAdditionalTokens, 6)
+  assert.ok(usage.totals.derived.estimatedBridgeInputTokens > 0)
+  assert.equal(usage.totals.derived.finalModelVisualTurnTokens, 2)
+  assert.equal(usage.totals.visualTurns, 1)
+  assert.equal(usage.totals.calls.visionBase, 1)
+  assert.equal(usage.totals.calls.visionTarget, 1)
+  assert.equal(usage.totals.calls.upstreamClarification, 1)
+  assert.equal(usage.totals.calls.upstreamFinal, 1)
 })
 
 test('text-only turns delegate directly without spending a visual call', async () => {
@@ -115,6 +124,9 @@ test('text-only turns delegate directly without spending a visual call', async (
   assert.equal(result.text, 'plain text answer')
   assert.equal(visionCalls, 0)
   assert.equal(upstreamCalls, 1)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.derived.estimatedAdditionalTokens, 0)
+  assert.deepEqual(usage.sessions, [])
 })
 
 test('browser screenshot inside a tool result is reread by Eyes before DeepSeek continues', async () => {

@@ -1,6 +1,7 @@
 import { DeepSeekEyesError } from './error.js'
 import { preservedImageReferences } from './protocol.js'
 import { addUsage, emptyUsage } from './stream.js'
+import { estimateInjectedTextTokens } from './usage.js'
 
 export const LOOK_TOOL_NAME = 'deepseekeyes_look'
 
@@ -61,6 +62,21 @@ function referencesFrom(agent) {
   return preservedImageReferences(agent?.session?.deriveMessages?.() ?? [])
 }
 
+function usageHasTokens(usage) {
+  return usage !== undefined && Object.values(usage).some(value => typeof value === 'number' && value > 0)
+}
+
+async function recordEvidenceUsage(tracker, sessionId, result, category) {
+  if (result.cacheHit) {
+    await tracker.recordCacheHit(sessionId)
+    return
+  }
+  if (usageHasTokens(result.usageBreakdown?.probe)) {
+    await tracker.recordCall(sessionId, 'visionProbe', result.usageBreakdown.probe)
+  }
+  await tracker.recordCall(sessionId, category, result.usageBreakdown?.model ?? result.usage)
+}
+
 export const LOOK_SYSTEM_PROMPT = `## DeepSeekEyes preserved images
 
 Some earlier image blocks may appear as compact "[DeepSeekEyes preserved image]" records. The original attachment bytes are still available. For a normal text task, do not call a visual model. Only when the current request needs a visual fact missing from the compact summary, call deepseekeyes_look with that record's imageSha256 and one precise question. Ask for one detail at a time and use a normalized region when it reduces visual work.`
@@ -102,12 +118,15 @@ export class LookToolManager {
       throw new DeepSeekEyesError('requested image hash is not preserved in this session', 'UNKNOWN_PRESERVED_IMAGE')
     }
     const route = await this.state.router.resolve(exec.signal)
+    const sessionId = this.sessionKey(exec.agent)
+    await this.state.usage.recordLookCall(sessionId)
     const block = { type: 'image', attachment: reference.attachment }
     const totalUsage = emptyUsage()
     let baseRecord = this.state.evidenceManager.knownBase(request.imageSha256)
     if (baseRecord === undefined) {
       const base = await this.state.evidenceManager.baseFor(block, route, exec.signal)
       addUsage(totalUsage, base.usage)
+      await recordEvidenceUsage(this.state.usage, sessionId, base, 'visionBase')
       baseRecord = base.record
     }
     if (baseRecord.source.sha256 !== request.imageSha256) {
@@ -115,7 +134,8 @@ export class LookToolManager {
     }
     const target = await this.state.evidenceManager.targetFor(block, baseRecord, request, route, exec.signal)
     addUsage(totalUsage, target.usage)
-    return {
+    await recordEvidenceUsage(this.state.usage, sessionId, target, 'visionTarget')
+    const value = {
       imageSha256: request.imageSha256,
       question: request.question,
       ...(request.region === undefined ? {} : { region: request.region }),
@@ -123,6 +143,11 @@ export class LookToolManager {
       evidence: target.record.evidence,
       usage: totalUsage,
     }
+    await this.state.usage.recordBridgeEstimate(
+      sessionId,
+      estimateInjectedTextTokens(`[DeepSeekEyes on-demand visual evidence]\n${JSON.stringify(value)}`, { message: true }),
+    )
+    return value
   }
 
   ensureInstalled(agent) {

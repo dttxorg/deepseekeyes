@@ -38,8 +38,10 @@ test('ordinary sessions receive neither Browser nor preserved-image tool overhea
   })
 
   assert.equal(ctx.tools.get('browser'), undefined)
+  assert.equal(ctx.tools.get('computer'), undefined)
   assert.equal(ctx.tools.get('deepseekeyes_look'), undefined)
   assert.equal(ctx.systemPrompt.sections.has('deepseekeyes:preserved-images'), false)
+  assert.equal(ctx.systemPrompt.sections.has('deepseekeyes:desktop-computer-use'), false)
 })
 
 class SurfaceSession {

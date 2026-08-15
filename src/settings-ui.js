@@ -23,6 +23,14 @@ const SETTINGS_FIELDS = Object.freeze([
   'browserViewportHeight',
   'browserMaxElements',
   'browserMaxTextChars',
+  'desktopHistoryLimit',
+  'desktopComputerUse',
+  'desktopTimeoutMs',
+  'desktopSettleMs',
+  'desktopMaxWindows',
+  'desktopMacDisplay',
+  'desktopWindowsPowerShell',
+  'desktopArtifactsDir',
 ])
 
 const OPTIONAL_ROUTE_FIELDS = new Set([
@@ -31,6 +39,8 @@ const OPTIONAL_ROUTE_FIELDS = new Set([
   'visionModel',
   'browserChannel',
   'browserExecutablePath',
+  'desktopWindowsPowerShell',
+  'desktopArtifactsDir',
 ])
 
 export function valueAt(root, path) {
@@ -68,6 +78,14 @@ export function normalizeSettingsDraft(value = {}) {
     browserViewportHeight: Number.isInteger(value.browserViewportHeight) ? value.browserViewportHeight : 900,
     browserMaxElements: Number.isInteger(value.browserMaxElements) ? value.browserMaxElements : 200,
     browserMaxTextChars: Number.isInteger(value.browserMaxTextChars) ? value.browserMaxTextChars : 20_000,
+    desktopHistoryLimit: Number.isInteger(value.desktopHistoryLimit) ? value.desktopHistoryLimit : 8,
+    desktopComputerUse: value.desktopComputerUse === true,
+    desktopTimeoutMs: Number.isInteger(value.desktopTimeoutMs) ? value.desktopTimeoutMs : 15_000,
+    desktopSettleMs: Number.isInteger(value.desktopSettleMs) ? value.desktopSettleMs : 300,
+    desktopMaxWindows: Number.isInteger(value.desktopMaxWindows) ? value.desktopMaxWindows : 50,
+    desktopMacDisplay: Number.isInteger(value.desktopMacDisplay) ? value.desktopMacDisplay : 1,
+    desktopWindowsPowerShell: typeof value.desktopWindowsPowerShell === 'string' ? value.desktopWindowsPowerShell : '',
+    desktopArtifactsDir: typeof value.desktopArtifactsDir === 'string' ? value.desktopArtifactsDir : '',
   }
 }
 
@@ -117,6 +135,11 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
     ['browserViewportHeight', 240, 2_160],
     ['browserMaxElements', 20, 500],
     ['browserMaxTextChars', 1_000, 100_000],
+    ['desktopHistoryLimit', 0, 32],
+    ['desktopTimeoutMs', 1_000, 120_000],
+    ['desktopSettleMs', 0, 10_000],
+    ['desktopMaxWindows', 1, 200],
+    ['desktopMacDisplay', 1, 32],
   ]
   for (const [field, minimum, maximum] of ranges) {
     if (!Number.isInteger(draft[field]) || draft[field] < minimum || draft[field] > maximum) {

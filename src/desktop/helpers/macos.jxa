@@ -1,0 +1,349 @@
+ObjC.import('Foundation')
+ObjC.import('AppKit')
+ObjC.import('CoreGraphics')
+
+const currentApplication = Application.currentApplication()
+currentApplication.includeStandardAdditions = true
+
+function pause(seconds) {
+  currentApplication.delay(seconds)
+}
+
+function readInput() {
+  const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
+  const string = $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding)
+  return JSON.parse(ObjC.unwrap(string))
+}
+
+function messageOf(error) {
+  try { return String(error.message || error) } catch { return 'unknown macOS helper error' }
+}
+
+function runTask(path, args) {
+  const task = $.NSTask.alloc.init
+  const errorPipe = $.NSPipe.pipe
+  task.launchPath = path
+  task.arguments = args
+  task.standardError = errorPipe
+  task.launch
+  task.waitUntilExit
+  const status = Number(task.terminationStatus)
+  if (status !== 0) {
+    const data = errorPipe.fileHandleForReading.readDataToEndOfFile
+    const text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
+    throw new Error(`${path} exited ${status}: ${text}`)
+  }
+}
+
+function screenInfo(display) {
+  const screens = $.NSScreen.screens
+  const count = Number(screens.count)
+  const index = Math.max(0, Math.min(count - 1, Number(display || 1) - 1))
+  const selected = screens.objectAtIndex(index)
+  const frame = selected.frame
+  const mainFrame = screens.objectAtIndex(0).frame
+  const scaleFactor = Number(selected.backingScaleFactor) || 1
+  return {
+    x: Number(frame.origin.x),
+    y: Number(mainFrame.size.height) - Number(frame.origin.y) - Number(frame.size.height),
+    width: Math.round(Number(frame.size.width) * scaleFactor),
+    height: Math.round(Number(frame.size.height) * scaleFactor),
+    scaleFactor,
+  }
+}
+
+function globalPoint(input, x, y) {
+  const screen = input.screen || screenInfo(input.macDisplay)
+  const scale = Number(screen.scaleFactor) || 1
+  return {
+    x: Number(screen.x || 0) + Number(x) / scale,
+    y: Number(screen.y || 0) + Number(y) / scale,
+  }
+}
+
+function postMouse(type, x, y, button) {
+  const point = $.CGPointMake(Number(x), Number(y))
+  const event = $.CGEventCreateMouseEvent(null, type, point, button)
+  if (!event) throw new Error('CGEventCreateMouseEvent returned null')
+  $.CGEventPost($.kCGHIDEventTap, event)
+  // The osascript JXA bridge owns the process-scoped CF object. Calling
+  // CFRelease directly here crashes osascript on current macOS releases.
+}
+
+function clickAt(input, x, y, button, count) {
+  const point = globalPoint(input, x, y)
+  const down = button === $.kCGMouseButtonRight
+    ? $.kCGEventRightMouseDown
+    : $.kCGEventLeftMouseDown
+  const up = button === $.kCGMouseButtonRight
+    ? $.kCGEventRightMouseUp
+    : $.kCGEventLeftMouseUp
+  for (let index = 0; index < count; index += 1) {
+    postMouse(down, point.x, point.y, button)
+    pause(0.04)
+    postMouse(up, point.x, point.y, button)
+    if (index + 1 < count) pause(0.08)
+  }
+}
+
+function moveCursor(input, x, y) {
+  const point = globalPoint(input, x, y)
+  postMouse($.kCGEventMouseMoved, point.x, point.y, $.kCGMouseButtonLeft)
+}
+
+function drag(input) {
+  const steps = Math.max(2, Math.min(120, Math.round((input.durationMs || 400) / 16)))
+  const start = globalPoint(input, input.x, input.y)
+  const end = globalPoint(input, input.endX, input.endY)
+  moveCursor(input, input.x, input.y)
+  postMouse($.kCGEventLeftMouseDown, start.x, start.y, $.kCGMouseButtonLeft)
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps
+    const x = start.x + (end.x - start.x) * ratio
+    const y = start.y + (end.y - start.y) * ratio
+    postMouse($.kCGEventLeftMouseDragged, x, y, $.kCGMouseButtonLeft)
+    pause(Math.max(0.001, (input.durationMs || 400) / steps / 1000))
+  }
+  postMouse($.kCGEventLeftMouseUp, end.x, end.y, $.kCGMouseButtonLeft)
+}
+
+function scroll(input) {
+  const vertical = Math.round(-(input.deltaY || 0))
+  const horizontal = Math.round(-(input.deltaX || 0))
+  const event = $.CGEventCreateScrollWheelEvent(
+    null,
+    $.kCGScrollEventUnitPixel,
+    2,
+    vertical,
+    horizontal,
+  )
+  if (!event) throw new Error('CGEventCreateScrollWheelEvent returned null')
+  $.CGEventPost($.kCGHIDEventTap, event)
+}
+
+function typeUnicode(text) {
+  const value = String(text)
+  for (let offset = 0; offset < value.length;) {
+    let end = Math.min(value.length, offset + 20)
+    const last = value.charCodeAt(end - 1)
+    const next = value.charCodeAt(end)
+    if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end += 1
+    const part = value.slice(offset, end)
+    const down = $.CGEventCreateKeyboardEvent(null, 0, true)
+    const up = $.CGEventCreateKeyboardEvent(null, 0, false)
+    if (!down || !up) throw new Error('CGEventCreateKeyboardEvent returned null')
+    $.CGEventKeyboardSetUnicodeString(down, part.length, part)
+    $.CGEventKeyboardSetUnicodeString(up, part.length, part)
+    $.CGEventPost($.kCGHIDEventTap, down)
+    $.CGEventPost($.kCGHIDEventTap, up)
+    offset = end
+  }
+}
+
+function modifierName(value) {
+  const normalized = value.toUpperCase()
+  if (['CMD', 'COMMAND', 'META'].includes(normalized)) return 'command down'
+  if (['CTRL', 'CONTROL'].includes(normalized)) return 'control down'
+  if (normalized === 'ALT' || normalized === 'OPTION') return 'option down'
+  if (normalized === 'SHIFT') return 'shift down'
+  return undefined
+}
+
+const KEY_CODES = {
+  ENTER: 36, RETURN: 36, TAB: 48, SPACE: 49, BACKSPACE: 51, ESC: 53, ESCAPE: 53,
+  LEFT: 123, RIGHT: 124, DOWN: 125, UP: 126, DELETE: 117, HOME: 115, END: 119,
+  PAGEUP: 116, PAGEDOWN: 121, F1: 122, F2: 120, F3: 99, F4: 118, F5: 96,
+  F6: 97, F7: 98, F8: 100, F9: 101, F10: 109, F11: 103, F12: 111,
+}
+
+function sendKey(value) {
+  const events = Application('System Events')
+  const parts = value.split('+').map(part => part.trim()).filter(Boolean)
+  const key = parts.pop()
+  const modifiers = parts.map(modifierName).filter(Boolean)
+  const options = modifiers.length === 0 ? {} : { using: modifiers }
+  const code = KEY_CODES[key.toUpperCase()]
+  if (code !== undefined) events.keyCode(code, options)
+  else if (key.length === 1) events.keystroke(key.toLowerCase(), options)
+  else throw new Error(`unsupported macOS key ${key}`)
+}
+
+function visibleProcesses() {
+  const result = []
+  const systemEvents = Application('System Events')
+  let processes = []
+  try { processes = systemEvents.applicationProcesses() } catch {}
+  for (const process of processes) {
+    try {
+      if (process.backgroundOnly()) continue
+      const application = String(process.name())
+      const pid = Number(process.unixId())
+      const active = Boolean(process.frontmost())
+      const windows = process.windows()
+      if (windows.length === 0) {
+        result.push({ nativeId: `${pid}:app`, pid, application, title: application, active })
+        continue
+      }
+      for (let index = 0; index < windows.length; index += 1) {
+        const window = windows[index]
+        let title = application
+        let position
+        let size
+        try { title = String(window.name()) || application } catch {}
+        try { position = window.position().map(Number) } catch {}
+        try { size = window.size().map(Number) } catch {}
+        result.push({
+          nativeId: `${pid}:${index}`,
+          pid,
+          index,
+          application,
+          title,
+          active,
+          ...(position === undefined ? {} : { x: position[0], y: position[1] }),
+          ...(size === undefined ? {} : { width: size[0], height: size[1] }),
+        })
+      }
+    } catch {}
+  }
+  return result
+}
+
+function resolveProcess(input) {
+  const systemEvents = Application('System Events')
+  const processes = systemEvents.applicationProcesses()
+  const wantedPid = Number(input.window && input.window.pid)
+  const wantedApplication = String((input.window && input.window.application) || input.application || '').toLowerCase()
+  const wantedTitle = String(input.title || '').toLowerCase()
+  for (const process of processes) {
+    try {
+      const name = String(process.name())
+      const pid = Number(process.unixId())
+      if (Number.isFinite(wantedPid) && wantedPid > 0 && pid === wantedPid) return process
+      if (wantedApplication && name.toLowerCase().includes(wantedApplication)) return process
+      if (wantedTitle) {
+        const matches = process.windows().some(window => String(window.name()).toLowerCase().includes(wantedTitle))
+        if (matches) return process
+      }
+    } catch {}
+  }
+  throw new Error('target macOS application/window was not found')
+}
+
+function resolveWindow(input) {
+  const process = resolveProcess(input)
+  const windows = process.windows()
+  const wantedIndex = Number(input.window && input.window.index)
+  const wantedTitle = String(input.title || (input.window && input.window.title) || '').toLowerCase()
+  if (Number.isInteger(wantedIndex) && wantedIndex >= 0 && wantedIndex < windows.length) {
+    return { process, window: windows[wantedIndex] }
+  }
+  if (wantedTitle) {
+    for (const window of windows) {
+      try {
+        if (String(window.name()).toLowerCase().includes(wantedTitle)) return { process, window }
+      } catch {}
+    }
+  }
+  if (windows.length > 0) return { process, window: windows[0] }
+  throw new Error('target macOS window was not found')
+}
+
+function perform(input) {
+  const action = input.action
+  if (action === 'observe' || action === 'assert' || action === 'report') return { observed: true }
+  if (action === 'wait') {
+    pause((input.durationMs || 500) / 1000)
+    return { waitedMs: input.durationMs || 500 }
+  }
+  if (action === 'click') clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 1)
+  else if (action === 'double_click') clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 2)
+  else if (action === 'right_click') clickAt(input, input.x, input.y, $.kCGMouseButtonRight, 1)
+  else if (action === 'move_cursor') moveCursor(input, input.x, input.y)
+  else if (action === 'drag') drag(input)
+  else if (action === 'scroll') scroll(input)
+  else if (action === 'type') typeUnicode(input.text)
+  else if (action === 'key') sendKey(input.key)
+  else if (action === 'launch') {
+    const app = Application(input.application)
+    app.activate()
+  } else if (action === 'focus') {
+    const process = resolveProcess(input)
+    process.frontmost = true
+  } else if (action === 'move_window') {
+    const target = resolveWindow(input)
+    const point = globalPoint(input, input.x, input.y)
+    target.process.frontmost = true
+    target.window.position = [point.x, point.y]
+  } else if (action === 'resize_window') {
+    const target = resolveWindow(input)
+    const scale = Number((input.screen || {}).scaleFactor) || 1
+    target.process.frontmost = true
+    target.window.size = [input.width / scale, input.height / scale]
+  } else if (action === 'close_window') {
+    const target = resolveWindow(input)
+    target.process.frontmost = true
+    try { target.window.actions.byName('AXClose').perform() }
+    catch { Application('System Events').keystroke('w', { using: ['command down'] }) }
+  } else {
+    throw new Error(`unsupported macOS action ${action}`)
+  }
+  return { performed: action }
+}
+
+function cursorPosition(screen) {
+  try {
+    const event = $.CGEventCreate(null)
+    const point = $.CGEventGetLocation(event)
+    const scale = Number(screen.scaleFactor) || 1
+    return {
+      x: (Number(point.x) - Number(screen.x || 0)) * scale,
+      y: (Number(point.y) - Number(screen.y || 0)) * scale,
+    }
+  } catch { return undefined }
+}
+
+function frontmostApplication() {
+  try {
+    const application = $.NSWorkspace.sharedWorkspace.frontmostApplication
+    return {
+      application: ObjC.unwrap(application.localizedName),
+      pid: Number(application.processIdentifier),
+    }
+  } catch { return undefined }
+}
+
+function run() {
+  try {
+    const input = readInput()
+    const screen = screenInfo(input.macDisplay)
+    input.screen = input.screen || screen
+    const actionResult = perform(input)
+    if (input.settleMs > 0 && !['wait', 'observe'].includes(input.action)) pause(input.settleMs / 1000)
+    runTask('/usr/sbin/screencapture', [
+      '-x', '-t', 'png', '-D', String(input.macDisplay || 1), String(input.screenshotPath),
+    ])
+    const windows = visibleProcesses().slice(0, input.maxWindows || 50)
+    return JSON.stringify({
+      ok: true,
+      actionResult,
+      screen,
+      cursor: cursorPosition(screen),
+      activeWindow: frontmostApplication(),
+      windows,
+      capabilities: {
+        screenshot: true,
+        mouse: true,
+        keyboard: true,
+        launch: true,
+        windows: true,
+        platform: 'macOS',
+      },
+    })
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      code: 'MACOS_DESKTOP_ACTION_FAILED',
+      message: messageOf(error),
+    })
+  }
+}

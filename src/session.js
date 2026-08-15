@@ -67,11 +67,11 @@ export function shadowSessionImages(ctx, sessionId, preservedByAttachment, logge
   return { agent, shadowed, skipped }
 }
 
-/** Keep only the configured recent compact image/browser records on the model Surface. */
+/** Keep only the configured recent compact image/browser/desktop records on the model Surface. */
 export function compactSessionHistory(
   ctx,
   sessionId,
-  { historyImageLimit = 8, browserHistoryLimit = 8 } = {},
+  { historyImageLimit = 8, browserHistoryLimit = 8, desktopHistoryLimit = 8 } = {},
   logger = console,
 ) {
   const agent = liveAgent(ctx, sessionId)
@@ -82,6 +82,7 @@ export function compactSessionHistory(
 
   const preserved = new Map()
   const browser = new Map()
+  const desktop = new Map()
   for (const seq of session.surface.nodes) {
     const markers = messageHistoryMarkers(messageOf(session.events[seq]))
     for (const text of markers.preserved) {
@@ -92,9 +93,14 @@ export function compactSessionHistory(
       browser.delete(text)
       browser.set(text, text)
     }
+    for (const text of markers.desktop) {
+      desktop.delete(text)
+      desktop.set(text, text)
+    }
   }
   const preservedRetention = new Set(tail([...preserved.values()], historyImageLimit))
   const browserRetention = new Set(tail([...browser.values()], browserHistoryLimit))
+  const desktopRetention = new Set(tail([...desktop.values()], desktopHistoryLimit))
 
   let compacted = 0
   let skipped = 0
@@ -105,10 +111,11 @@ export function compactSessionHistory(
     if (event?.type !== 'user/message' && event?.type !== 'tool/result') continue
     const message = messageOf(event)
     const markers = messageHistoryMarkers(message)
-    if (markers.preserved.length === 0 && markers.browser.length === 0) continue
+    if (markers.preserved.length === 0 && markers.browser.length === 0 && markers.desktop.length === 0) continue
     const replacement = rewriteMessageForRetention(message, {
       preservedRetention,
       browserRetention,
+      desktopRetention,
     })
     if (JSON.stringify(replacement.content) === JSON.stringify(message.content)) continue
     try {

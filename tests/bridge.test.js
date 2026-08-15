@@ -154,6 +154,43 @@ test('browser screenshot inside a tool result is reread by Eyes before DeepSeek 
   assert.equal(toolResult.content[0].content[1].type, 'image')
 })
 
+test('desktop screenshot inside computer output is reread by Eyes in the same conversation', async () => {
+  const bytes = Buffer.from('desktop screenshot bytes')
+  let visionCalls = 0
+  const ctx = setupBridge({
+    visionHandler(options) {
+      visionCalls += 1
+      assert.equal(options.messages[0].content.some(block => block.type === 'image'), true)
+      return jsonStream(validBaseEvidence({ summary: 'Native desktop shows the expected application window' }))
+    },
+    upstreamHandler(options) {
+      const wire = JSON.stringify(options.messages)
+      assert.equal(wire.includes('"type":"image"'), false)
+      assert.match(wire, /DeepSeekEyes desktop state/)
+      assert.match(wire, /Native desktop shows the expected application window/)
+      return textStream('桌面状态已验证')
+    },
+  })
+  const ref = ctx.attachments.add(bytes, { width: 1920, height: 1080 })
+  const toolResult = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'computer-call-1',
+    toolName: 'computer',
+    content: [
+      { type: 'text', text: '[DeepSeekEyes desktop state]\n{"stateId":"desktop-state:test"}' },
+      { type: 'image', attachment: ref },
+    ],
+  }])
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [toolResult],
+  }))
+  assert.equal(result.text, '桌面状态已验证')
+  assert.equal(visionCalls, 1)
+  assert.equal(toolResult.content[0].content[1].type, 'image')
+})
+
 test('explicit final model locks catalog, text turns, image turns, and exposes both model roles', async () => {
   const ctx = mockContext()
   const upstreamModels = []

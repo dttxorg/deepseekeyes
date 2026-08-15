@@ -8,6 +8,11 @@ import {
   DEFAULT_BROWSER_TIMEOUT_MS,
   DEFAULT_BROWSER_VIEWPORT_HEIGHT,
   DEFAULT_BROWSER_VIEWPORT_WIDTH,
+  DEFAULT_DESKTOP_HISTORY_LIMIT,
+  DEFAULT_DESKTOP_MAC_DISPLAY,
+  DEFAULT_DESKTOP_MAX_WINDOWS,
+  DEFAULT_DESKTOP_SETTLE_MS,
+  DEFAULT_DESKTOP_TIMEOUT_MS,
   DEFAULT_MAX_CLARIFICATIONS,
   DEFAULT_HISTORY_IMAGE_LIMIT,
   DEFAULT_HISTORY_SUMMARY_CHARS,
@@ -44,6 +49,14 @@ export const SETTINGS_FIELDS = Object.freeze([
   'browserViewportHeight',
   'browserMaxElements',
   'browserMaxTextChars',
+  'desktopHistoryLimit',
+  'desktopComputerUse',
+  'desktopTimeoutMs',
+  'desktopSettleMs',
+  'desktopMaxWindows',
+  'desktopMacDisplay',
+  'desktopWindowsPowerShell',
+  'desktopArtifactsDir',
 ])
 
 /** Schemastery schema serialized by Harness and consumed by the native settings client. */
@@ -72,6 +85,14 @@ export const SettingsConfig = z.object({
   browserViewportHeight: z.number().step(1).min(240).max(2_160).default(DEFAULT_BROWSER_VIEWPORT_HEIGHT),
   browserMaxElements: z.number().step(1).min(20).max(500).default(DEFAULT_BROWSER_MAX_ELEMENTS),
   browserMaxTextChars: z.number().step(1).min(1_000).max(100_000).default(DEFAULT_BROWSER_MAX_TEXT_CHARS),
+  desktopHistoryLimit: z.number().step(1).min(0).max(32).default(DEFAULT_DESKTOP_HISTORY_LIMIT),
+  desktopComputerUse: z.boolean().default(false),
+  desktopTimeoutMs: z.number().step(1).min(1_000).max(120_000).default(DEFAULT_DESKTOP_TIMEOUT_MS),
+  desktopSettleMs: z.number().step(1).min(0).max(10_000).default(DEFAULT_DESKTOP_SETTLE_MS),
+  desktopMaxWindows: z.number().step(1).min(1).max(200).default(DEFAULT_DESKTOP_MAX_WINDOWS),
+  desktopMacDisplay: z.number().step(1).min(1).max(32).default(DEFAULT_DESKTOP_MAC_DISPLAY),
+  desktopWindowsPowerShell: z.string(),
+  desktopArtifactsDir: z.string(),
 })
 
 /** Detach only settings-owned values from a resolved plugin configuration. */

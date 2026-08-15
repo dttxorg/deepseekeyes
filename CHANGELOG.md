@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 - 2026-08-15
+
+- Add opt-in native Desktop Computer Use for Windows and macOS without replacing the existing Browser Computer Use flow.
+- Register a separate `computer` tool only while desktop control is enabled; ordinary sessions receive no desktop tool, prompt, screenshot or visual-call overhead.
+- Support observe, mouse movement/click/drag, Unicode text, shortcut keys, scrolling, application launch/focus, window movement/resizing/closing, waits, visual pass/fail assertions, evidence reports and session close.
+- Use PowerShell plus user32/System.Drawing on Windows and JXA plus CoreGraphics/System Events/screencapture on macOS, with no new desktop automation runtime dependency.
+- Bind every stateful action to the latest screenshot `stateId`, reject stale actions before mutation, bound coordinates to the newest screenshot and scope window refs to one observation.
+- Return a fresh full-screen PNG and window catalog after every action and route those pixels through the same DeepSeekEyes evidence/clarification loop before DeepSeek continues.
+- Recompress system screenshots without pixel changes and losslessly tile only when the Host's 5 MB single-image limit requires it; record source, full-pixel, tile-pixel and attachment SHA-256 values.
+- Hash typed text and launch arguments in persisted reports instead of storing their original values.
+- Add independent Desktop history retention so old screenshots and full window lists do not repeat across turns or inflate normal model context.
+- Add live GUI settings for desktop enablement, history, action timeout, settle delay, window count, macOS display, Windows PowerShell path and evidence directory.
+- Add macOS native observe acceptance, Windows/macOS driver simulation, native-helper validation, lossless tile reconstruction tests and cross-platform CI coverage.
+
 ## 0.2.0 - 2026-08-15
 
 - Merge Browser Computer Use into `main` with Playwright-based open, observe, semantic action, wait, assertion, reporting and close operations.

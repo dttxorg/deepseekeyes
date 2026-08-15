@@ -1,7 +1,7 @@
 {
   "name": "deepseekeyes",
-  "version": "0.2.0",
-  "description": "A multimodal vision and browser-computer-use bridge for DeepSeek Harness with source-preserving evidence and closed-loop Playwright actions.",
+  "version": "0.3.0",
+  "description": "A multimodal vision, browser and native desktop computer-use bridge for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",
   "exports": {
@@ -30,7 +30,8 @@
     "pack:dry": "npm pack --dry-run",
     "pack:release": "npm pack",
     "build:client": "node scripts/build-client.mjs",
-    "prepack": "npm run check"
+    "prepack": "npm run check",
+    "test:desktop": "node acceptance/desktop-native.mjs"
   },
   "engines": {
     "node": ">=22.19"
@@ -45,7 +46,9 @@
     "ocr",
     "computer-use",
     "playwright",
-    "browser-testing"
+    "desktop-automation",
+    "windows",
+    "macos"
   ],
   "license": "MIT",
   "publishConfig": {

@@ -32,6 +32,10 @@ test('GUI draft emits minimal live settings mutations and validates routing cons
   assert.equal(settingsDraftFailure({ ...current, historyImageLimit: 33 }), 'historyImageLimitRange')
   assert.equal(settingsDraftFailure({ ...current, historySummaryChars: 63 }), 'historySummaryCharsRange')
   assert.equal(settingsDraftFailure({ ...current, browserHistoryLimit: -1 }), 'browserHistoryLimitRange')
+  assert.equal(settingsDraftFailure({ ...current, desktopHistoryLimit: 33 }), 'desktopHistoryLimitRange')
+  assert.equal(settingsDraftFailure({ ...current, desktopTimeoutMs: 999 }), 'desktopTimeoutMsRange')
+  assert.equal(settingsDraftFailure({ ...current, desktopMaxWindows: 201 }), 'desktopMaxWindowsRange')
+  assert.equal(settingsDraftFailure({ ...current, desktopMacDisplay: 0 }), 'desktopMacDisplayRange')
   assert.equal(settingsDraftFailure(current), undefined)
 })
 

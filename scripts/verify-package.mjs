@@ -7,6 +7,9 @@ const required = [
   'src/index.js',
   'src/settings.js',
   'src/browser/index.js',
+  'src/desktop/index.js',
+  'src/desktop/helpers/macos.jxa',
+  'src/desktop/helpers/windows.ps1',
   'lib/client.js',
   'cordis.patch.yml',
   'README.md',
@@ -15,7 +18,7 @@ const required = [
 ]
 
 if (manifest.name !== 'deepseekeyes') throw new Error('package name must be deepseekeyes')
-if (manifest.version !== '0.2.0') throw new Error('release version must be 0.2.0')
+if (manifest.version !== '0.3.0') throw new Error('release version must be 0.3.0')
 if (manifest.dependencies?.['playwright-core'] !== '1.61.1') {
   throw new Error('browser computer use must pin playwright-core 1.61.1')
 }

@@ -16,6 +16,11 @@ export const DEFAULT_BROWSER_VIEWPORT_WIDTH = 1440
 export const DEFAULT_BROWSER_VIEWPORT_HEIGHT = 900
 export const DEFAULT_BROWSER_MAX_ELEMENTS = 200
 export const DEFAULT_BROWSER_MAX_TEXT_CHARS = 20_000
+export const DEFAULT_DESKTOP_HISTORY_LIMIT = 8
+export const DEFAULT_DESKTOP_TIMEOUT_MS = 15_000
+export const DEFAULT_DESKTOP_SETTLE_MS = 300
+export const DEFAULT_DESKTOP_MAX_WINDOWS = 50
+export const DEFAULT_DESKTOP_MAC_DISPLAY = 1
 
 function optionalString(value, field) {
   if (value === undefined || value === null || value === '') return undefined
@@ -115,6 +120,17 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     browserArtifactsDir = requiredString(configuredBrowserArtifactsDir, 'browserArtifactsDir')
   } else {
     browserArtifactsDir = join(dshBase, 'deepseekeyes', 'browser-runs')
+  }
+
+  const configuredDesktopArtifactsDir = input.desktopArtifactsDir
+    ?? environment.DEEPSEEKEYES_DESKTOP_ARTIFACTS_DIR
+  let desktopArtifactsDir
+  if (configuredDesktopArtifactsDir === false) {
+    desktopArtifactsDir = undefined
+  } else if (configuredDesktopArtifactsDir !== undefined) {
+    desktopArtifactsDir = requiredString(configuredDesktopArtifactsDir, 'desktopArtifactsDir')
+  } else {
+    desktopArtifactsDir = join(dshBase, 'deepseekeyes', 'desktop-runs')
   }
 
   return Object.freeze({
@@ -232,5 +248,51 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       1_000,
       100_000,
     ),
+    desktopHistoryLimit: integerValue(
+      input.desktopHistoryLimit,
+      'desktopHistoryLimit',
+      DEFAULT_DESKTOP_HISTORY_LIMIT,
+      0,
+      32,
+    ),
+    desktopComputerUse: booleanValue(
+      input.desktopComputerUse
+        ?? environmentBoolean(environment.DEEPSEEKEYES_DESKTOP_ENABLED, 'DEEPSEEKEYES_DESKTOP_ENABLED'),
+      'desktopComputerUse',
+      false,
+    ),
+    desktopTimeoutMs: integerValue(
+      input.desktopTimeoutMs,
+      'desktopTimeoutMs',
+      DEFAULT_DESKTOP_TIMEOUT_MS,
+      1_000,
+      120_000,
+    ),
+    desktopSettleMs: integerValue(
+      input.desktopSettleMs,
+      'desktopSettleMs',
+      DEFAULT_DESKTOP_SETTLE_MS,
+      0,
+      10_000,
+    ),
+    desktopMaxWindows: integerValue(
+      input.desktopMaxWindows,
+      'desktopMaxWindows',
+      DEFAULT_DESKTOP_MAX_WINDOWS,
+      1,
+      200,
+    ),
+    desktopMacDisplay: integerValue(
+      input.desktopMacDisplay,
+      'desktopMacDisplay',
+      DEFAULT_DESKTOP_MAC_DISPLAY,
+      1,
+      32,
+    ),
+    desktopWindowsPowerShell: optionalString(
+      input.desktopWindowsPowerShell ?? environment.DEEPSEEKEYES_DESKTOP_WINDOWS_POWERSHELL,
+      'desktopWindowsPowerShell',
+    ),
+    desktopArtifactsDir,
   })
 }

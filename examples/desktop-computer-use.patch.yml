@@ -1,0 +1,15 @@
+- id: deepseekeyes
+  config:
+    upstreamProvider: deepseek-official
+    upstreamModel: deepseek-v4-pro
+    visionProvider: openai
+    visionModel: gpt-4.1
+    activeProbe: true
+    desktopComputerUse: true
+    desktopHistoryLimit: 8
+    desktopTimeoutMs: 15000
+    desktopSettleMs: 300
+    desktopMaxWindows: 50
+    desktopMacDisplay: 1
+    # Windows only; omit when powershell.exe is already on PATH.
+    # desktopWindowsPowerShell: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe

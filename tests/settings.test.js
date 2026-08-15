@@ -64,6 +64,8 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /maxClarifications/)
   assert.match(JSON.stringify(json), /browserComputerUse/)
   assert.match(JSON.stringify(json), /browserViewportWidth/)
+  assert.match(JSON.stringify(json), /desktopComputerUse/)
+  assert.match(JSON.stringify(json), /desktopWindowsPowerShell/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
   assert.equal(base.upstreamProvider, 'deepseek-official')
@@ -75,6 +77,10 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal(base.historySummaryChars, 320)
   assert.equal(base.browserHistoryLimit, 8)
   assert.equal(base.browserComputerUse, false)
+  assert.equal(base.desktopHistoryLimit, 8)
+  assert.equal(base.desktopComputerUse, false)
+  assert.equal(base.desktopTimeoutMs, 15_000)
+  assert.equal(base.desktopMacDisplay, 1)
   assert.equal('cacheDir' in base, false)
   assert.equal('providerId' in base, false)
 
@@ -137,6 +143,13 @@ test('native settings registration exposes the namespace and reconfigures routin
     historySummaryChars: 256,
     browserHistoryLimit: 3,
     browserHeadless: true,
+    desktopComputerUse: true,
+    desktopHistoryLimit: 2,
+    desktopTimeoutMs: 20_000,
+    desktopSettleMs: 450,
+    desktopMaxWindows: 25,
+    desktopMacDisplay: 2,
+    desktopWindowsPowerShell: 'C:\\Windows\\powershell.exe',
   })
 
   assert.equal(state.config.upstreamProvider, 'alternate-deepseek')
@@ -150,6 +163,14 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.historySummaryChars, 256)
   assert.equal(state.config.browserHistoryLimit, 3)
   assert.equal(state.config.browserHeadless, true)
+  assert.equal(state.config.desktopComputerUse, true)
+  assert.equal(state.config.desktopHistoryLimit, 2)
+  assert.equal(state.config.desktopTimeoutMs, 20_000)
+  assert.equal(state.config.desktopSettleMs, 450)
+  assert.equal(state.config.desktopMaxWindows, 25)
+  assert.equal(state.config.desktopMacDisplay, 2)
+  assert.equal(state.config.desktopWindowsPowerShell, 'C:\\Windows\\powershell.exe')
+  assert.ok(ctx.tools.get('computer'))
   const models = await ctx.llm.listModels('deepseekeyes')
   assert.deepEqual(models.map(model => model.id), ['alternate-model-b'])
   assert.equal(models[0].name, 'Alternate B · vision-model Eyes')

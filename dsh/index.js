@@ -1,5 +1,6 @@
 import { EvidenceCache } from '../src/cache.js'
 import { applyBrowserComputerUse } from '../src/browser/index.js'
+import { applyDesktopComputerUse } from '../src/desktop/index.js'
 import {
   activeImageBlocks,
   attachmentKey,
@@ -93,6 +94,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
       compactSessionHistory(ctx, options.sessionId, {
         historyImageLimit: config.historyImageLimit,
         browserHistoryLimit: config.browserHistoryLimit,
+        desktopHistoryLimit: config.desktopHistoryLimit,
       }, logger)
     }
     const messages = needsCompaction
@@ -103,6 +105,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
           {
             historyImageLimit: config.historyImageLimit,
             browserHistoryLimit: config.browserHistoryLimit,
+            desktopHistoryLimit: config.desktopHistoryLimit,
           },
         )
       : options.messages
@@ -186,6 +189,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
   compactSessionHistory(ctx, options.sessionId, {
     historyImageLimit: config.historyImageLimit,
     browserHistoryLimit: config.browserHistoryLimit,
+    desktopHistoryLimit: config.desktopHistoryLimit,
   }, logger)
 
   let messages = rewriteMessagesForBridge(
@@ -195,6 +199,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, logger) {
     {
       historyImageLimit: config.historyImageLimit,
       browserHistoryLimit: config.browserHistoryLimit,
+      desktopHistoryLimit: config.desktopHistoryLimit,
     },
   )
 
@@ -279,6 +284,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       }
       runtime = next
       state.browser?.reconfigure(runtime.config)
+      state.desktop?.reconfigure(runtime.config)
       lastCatalogFailure = undefined
       return runtime.config
     },
@@ -343,6 +349,7 @@ export function apply(ctx, rawConfig = {}) {
   ctx.llm.registerAdapter([state.config.providerId], state.adapter)
   state.look = applyLookTool(ctx, state)
   state.browser = applyBrowserComputerUse(ctx, state.config)
+  state.desktop = applyDesktopComputerUse(ctx, state.config)
 
   if (typeof ctx.llm.registerConfigurableProviders === 'function') {
     ctx.llm.registerConfigurableProviders([{

@@ -116,6 +116,17 @@ export function apply(ctx) {
 
       const hasLookTool = options.tools?.some(tool => tool.name === 'deepseekeyes_look') === true
       const hasLookPrompt = options.system?.includes('DeepSeekEyes preserved images') === true
+      const hasComputerTool = options.tools?.some(tool => tool.name === 'computer') === true
+      if (corpus.includes('DESKTOP_COMPUTER_USE_ACCEPTANCE')) {
+        if (!hasComputerTool) return output('DESKTOP_COMPUTER_TOOL_MISSING')
+        if (corpus.includes('[DeepSeekEyes desktop state]')) {
+          return output('DESKTOP_COMPUTER_USE_OK: native screenshot reached the vision bridge and final model.')
+        }
+        return toolCall('computer', { action: 'observe' })
+      }
+      if (corpus.includes('DESKTOP_DISABLED_ACCEPTANCE')) {
+        return output(hasComputerTool ? 'DESKTOP_DISABLED_TOOL_LEAK' : 'DESKTOP_DISABLED_OK')
+      }
       if (hasLookTool && hasLookPrompt) {
         if (corpus.includes('[DeepSeekEyes on-demand visual evidence]')) {
           return output('DIRECT_SWITCH_LOOK_OK: The original pixel is blue.')

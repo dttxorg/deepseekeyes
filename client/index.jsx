@@ -59,7 +59,7 @@ const zh = {
   tokenUnlimited: '不限制 · 由 Provider 决定',
   tokenUnlimitedInput: '未发送 maxTokens',
   tokenHint: '可选择建议档位，也可直接输入任意安全整数；“不限制”表示插件不发送 maxTokens，模型或 Provider 自身上限仍然生效。',
-  computerUse: 'Computer Use 0.2',
+  computerUse: 'Computer Use 0.3',
   browserComputerUse: '启用浏览器 Computer Use',
   browserComputerUseHint: '在当前对话中注册 browser 工具，每一步返回最新 DOM、截图、状态 ID 和测试证据。',
   browserHeadless: '无界面运行浏览器',
@@ -76,6 +76,18 @@ const zh = {
   browserViewportHeight: '视口高度',
   browserMaxElements: '每步最多控件数',
   browserMaxTextChars: '每步最多页面字符',
+  desktopComputerUse: '启用 Windows / macOS 桌面 Computer Use',
+  desktopComputerUseHint: '在当前对话中注册 computer 工具，控制本机应用；每一步都返回新的全屏截图、窗口状态和状态 ID。',
+  desktopPermissionHint: 'macOS 首次使用时，请在「系统设置 → 隐私与安全性」为运行 DSH 的终端授予“屏幕录制”和“辅助功能”；Windows 使用系统原生 user32 与桌面截图。',
+  desktopTimeoutMs: '桌面动作超时（毫秒）',
+  desktopSettleMs: '桌面操作后等待（毫秒）',
+  desktopMaxWindows: '每步最多窗口数',
+  desktopMacDisplay: 'macOS 显示器编号',
+  desktopWindowsPowerShell: 'Windows PowerShell 路径',
+  desktopWindowsPowerShellPlaceholder: '留空使用 powershell.exe',
+  desktopArtifactsDir: '桌面测试证据目录',
+  desktopArtifactsDirPlaceholder: '留空使用 DSH 默认证据目录',
+  desktopHistoryLimit: '最近 Desktop 状态摘要数',
   advanced: '高级设置',
   statusReady: '视觉路由元数据检测已通过',
   statusReadyProbe: '；发送首张图片时还会执行随机像素探针。',
@@ -105,6 +117,11 @@ const zh = {
   browserViewportHeightRange: '视口高度必须是 240–2160 的整数。',
   browserMaxElementsRange: '控件数量必须是 20–500 的整数。',
   browserMaxTextCharsRange: '页面字符数必须是 1000–100000 的整数。',
+  desktopHistoryLimitRange: 'Desktop 状态摘要数必须是 0–32 的整数。',
+  desktopTimeoutMsRange: '桌面动作超时必须是 1000–120000 的整数。',
+  desktopSettleMsRange: '桌面稳定等待必须是 0–10000 的整数。',
+  desktopMaxWindowsRange: '窗口数量必须是 1–200 的整数。',
+  desktopMacDisplayRange: 'macOS 显示器编号必须是 1–32 的整数。',
   noProviders: 'Harness 中还没有可用 Provider，请先在「设置 → 模型」添加。',
   inactive: '（未激活）',
 }
@@ -151,7 +168,7 @@ const en = {
   tokenUnlimited: 'Unlimited · provider managed',
   tokenUnlimitedInput: 'maxTokens omitted',
   tokenHint: 'Choose a suggested tier or enter any safe integer. Unlimited omits maxTokens; the model or provider may still impose its own limit.',
-  computerUse: 'Computer Use 0.2',
+  computerUse: 'Computer Use 0.3',
   browserComputerUse: 'Enable browser computer use',
   browserComputerUseHint: 'Registers the browser tool in this conversation and returns fresh DOM, screenshot, state ID, and test evidence after every step.',
   browserHeadless: 'Run browser headless',
@@ -168,6 +185,18 @@ const en = {
   browserViewportHeight: 'Viewport height',
   browserMaxElements: 'Maximum controls per step',
   browserMaxTextChars: 'Maximum page characters per step',
+  desktopComputerUse: 'Enable Windows / macOS desktop computer use',
+  desktopComputerUseHint: 'Registers the computer tool for native applications in this conversation. Every step returns a fresh full-screen screenshot, window state, and state ID.',
+  desktopPermissionHint: 'On first use, grant Screen Recording and Accessibility to the terminal running DSH under macOS System Settings → Privacy & Security. Windows uses native user32 input and desktop capture.',
+  desktopTimeoutMs: 'Desktop action timeout (ms)',
+  desktopSettleMs: 'Desktop post-action settle (ms)',
+  desktopMaxWindows: 'Maximum windows per step',
+  desktopMacDisplay: 'macOS display number',
+  desktopWindowsPowerShell: 'Windows PowerShell path',
+  desktopWindowsPowerShellPlaceholder: 'Blank uses powershell.exe',
+  desktopArtifactsDir: 'Desktop evidence directory',
+  desktopArtifactsDirPlaceholder: 'Blank uses the DSH evidence default',
+  desktopHistoryLimit: 'Recent desktop state summaries',
   advanced: 'Advanced settings',
   statusReady: 'Vision route metadata check passed',
   statusReadyProbe: '; the first image will also run the randomized pixel probe.',
@@ -197,6 +226,11 @@ const en = {
   browserViewportHeightRange: 'Viewport height must be an integer from 240 through 2160.',
   browserMaxElementsRange: 'Maximum controls must be an integer from 20 through 500.',
   browserMaxTextCharsRange: 'Maximum page characters must be an integer from 1000 through 100000.',
+  desktopHistoryLimitRange: 'Desktop state summaries must be an integer from 0 through 32.',
+  desktopTimeoutMsRange: 'Desktop action timeout must be an integer from 1000 through 120000.',
+  desktopSettleMsRange: 'Desktop settle time must be an integer from 0 through 10000.',
+  desktopMaxWindowsRange: 'Maximum windows must be an integer from 1 through 200.',
+  desktopMacDisplayRange: 'The macOS display number must be an integer from 1 through 32.',
   noProviders: 'No provider is available in Harness. Add one under Settings → Models first.',
   inactive: ' (inactive)',
 }
@@ -222,6 +256,7 @@ const styles = {
   tokenGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', alignItems: 'start', gap: 10 },
   details: { borderTop: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', paddingTop: 12 },
   detailsSummary: { cursor: 'pointer', fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  divider: { height: 1, margin: '18px 0', background: 'var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))' },
 }
 
 function messageOf(error) {
@@ -617,6 +652,47 @@ function DeepSeekEyesSettingsCard({ scope, api, t }) {
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-browser-text">{t('browserMaxTextChars')}</label>
                 <input id="deepseekeyes-browser-text" style={styles.input} type="number" min="1000" max="100000" step="1" value={draft.browserMaxTextChars} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserMaxTextChars', numberFrom(event))} />
+              </div>
+            </div>
+            <div style={styles.divider} />
+            <label style={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={draft.desktopComputerUse}
+                disabled={saving || !snapshot.writable}
+                onChange={event => update('desktopComputerUse', event.target.checked)}
+              />
+              <span>{t('desktopComputerUse')}<br /><small style={styles.hint}>{t('desktopComputerUseHint')}</small></span>
+            </label>
+            <p style={{ ...styles.hint, marginTop: 10 }}>{t('desktopPermissionHint')}</p>
+            <div style={{ ...styles.grid, marginTop: 14 }}>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-timeout">{t('desktopTimeoutMs')}</label>
+                <input id="deepseekeyes-desktop-timeout" style={styles.input} type="number" min="1000" max="120000" step="1" value={draft.desktopTimeoutMs} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopTimeoutMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-settle">{t('desktopSettleMs')}</label>
+                <input id="deepseekeyes-desktop-settle" style={styles.input} type="number" min="0" max="10000" step="1" value={draft.desktopSettleMs} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopSettleMs', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-windows">{t('desktopMaxWindows')}</label>
+                <input id="deepseekeyes-desktop-windows" style={styles.input} type="number" min="1" max="200" step="1" value={draft.desktopMaxWindows} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopMaxWindows', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-display">{t('desktopMacDisplay')}</label>
+                <input id="deepseekeyes-desktop-display" style={styles.input} type="number" min="1" max="32" step="1" value={draft.desktopMacDisplay} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopMacDisplay', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-powershell">{t('desktopWindowsPowerShell')}</label>
+                <input id="deepseekeyes-desktop-powershell" style={styles.input} type="text" value={draft.desktopWindowsPowerShell} placeholder={t('desktopWindowsPowerShellPlaceholder')} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopWindowsPowerShell', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-artifacts">{t('desktopArtifactsDir')}</label>
+                <input id="deepseekeyes-desktop-artifacts" style={styles.input} type="text" value={draft.desktopArtifactsDir} placeholder={t('desktopArtifactsDirPlaceholder')} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopArtifactsDir', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-desktop-history">{t('desktopHistoryLimit')}</label>
+                <input id="deepseekeyes-desktop-history" style={styles.input} type="number" min="0" max="32" step="1" value={draft.desktopHistoryLimit} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopHistoryLimit', numberFrom(event))} />
               </div>
             </div>
           </details>

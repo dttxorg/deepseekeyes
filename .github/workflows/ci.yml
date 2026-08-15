@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Parse Windows native helper
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'src/desktop/helpers/windows.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+          Write-Host 'WINDOWS_HELPER_PARSE_OK'
+      - name: Compile macOS native helper
+        if: runner.os == 'macOS'
+        run: /usr/bin/osacompile -l JavaScript -o "$RUNNER_TEMP/deepseekeyes-macos-helper.scpt" src/desktop/helpers/macos.jxa
+      - name: Native desktop observe
+        if: runner.os != 'Linux'
+        run: npm run test:desktop

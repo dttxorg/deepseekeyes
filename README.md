@@ -4,7 +4,7 @@
 
 DeepSeekEyes is an installable DeepSeek Harness bundle. It registers a virtual `deepseekeyes` provider which accepts native Harness image attachments, asks an already-configured multimodal Harness model for structured evidence, and delegates reasoning to the selected DeepSeek model. DeepSeek may privately request additional visual detail; the user stays in one conversation.
 
-Version `0.2.0` adds an opt-in, state-bound Playwright Browser Computer Use tool and exposes its browser settings in the native **Settings → Plugins → DeepSeekEyes** card. It also prevents old screenshots from being re-read on every turn, bounds model-facing visual/browser history, fits final output to the selected model's context window, and lets a processed-image session switch directly to a native text-only model such as DeepSeek V4 Flash. The native model receives a session-scoped `deepseekeyes_look` tool only when it needs to re-read preserved original pixels.
+Version `0.3.0` adds opt-in native Desktop Computer Use for both Windows and macOS alongside the existing Playwright Browser Computer Use tool. The same native **Settings → Plugins → DeepSeekEyes** card controls both modes. Every desktop action is bound to the latest screenshot state, returns a new full-screen PNG and window catalog, and sends those pixels back through the DeepSeekEyes vision bridge before DeepSeek continues.
 
 Core properties:
 
@@ -22,5 +22,10 @@ Core properties:
 - stale-state rejection, semantic element refs, coordinate fallback, diagnostics and content-addressed evidence reports;
 - bounded historical Browser states instead of repeatedly carrying full OCR/DOM evidence;
 - native settings for installed Edge/Chrome selection, headless mode, viewport, timing and observation limits; Browser Computer Use is disabled by default so ordinary text sessions receive no browser tool/prompt overhead.
+- native Windows and macOS `computer` actions for observation, pointer, keyboard, scrolling, application launch/focus, window movement/resizing/closing, waits and evidence reports;
+- stale desktop state rejection, screenshot-coordinate bounds and latest-state-only window refs;
+- exact desktop PNG pixel preservation: oversized screenshots are losslessly recompressed and, only when required by the Host's 5 MB attachment limit, split into coordinate-labelled lossless tiles without scaling or JPEG conversion;
+- independently bounded desktop history so earlier full screenshots/window lists do not create repeated visual calls or runaway context growth;
+- Desktop Computer Use is also disabled by default, so ordinary text/image sessions keep their existing tool set, prompt and token behavior.
 
 See [README.zh-CN.md](README.zh-CN.md) for installation and configuration.

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   BROWSER_HISTORY_PREFIX,
+  DESKTOP_HISTORY_PREFIX,
+  DESKTOP_STATE_PREFIX,
   messagesHaveImages,
   messagesNeedHistoryCompaction,
   replaceImagesWithEvidence,
@@ -69,4 +71,48 @@ test('compact Surface markers obey recent limits including the zero setting', ()
   assert.equal(zero.includes('a'.repeat(64)), false)
   assert.equal(zero.includes('b'.repeat(64)), false)
   assert.equal(zero.includes('stateId'), false)
+})
+
+test('historical desktop states are independently bounded and stripped of full window lists', () => {
+  const desktop = (id, title) => `${DESKTOP_STATE_PREFIX}${JSON.stringify({
+    ok: true,
+    action: 'observe',
+    sequence: id,
+    stateId: `desktop-state:${id}`,
+    observedAt: `time-${id}`,
+    platform: 'darwin',
+    windowCount: 1,
+    activeWindow: { application: 'Fixture', title },
+    windows: [{ ref: 'win_1', title, extra: 'full-window-record' }],
+    screenshot: { sha256: String(id).repeat(64) },
+  })}`
+  const assistant = id => ({
+    id: `assistant-${id}`,
+    role: 'assistant',
+    content: [{ type: 'text', text: `step-${id}` }],
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'fixture' },
+  })
+  const messages = [
+    userMessage([{ type: 'text', text: desktop(1, 'old-window') }]),
+    assistant(1),
+    userMessage([{ type: 'text', text: desktop(2, 'new-window') }]),
+    assistant(2),
+    userMessage([{ type: 'text', text: 'continue' }]),
+  ]
+  const one = JSON.stringify(rewriteMessagesForBridge(messages, new Map(), new Map(), {
+    historyImageLimit: 0,
+    browserHistoryLimit: 0,
+    desktopHistoryLimit: 1,
+  }))
+  assert.equal(one.includes('desktop-state:1'), false)
+  assert.equal(one.includes('desktop-state:2'), true)
+  assert.equal(one.includes(DESKTOP_HISTORY_PREFIX.trim()), true)
+  assert.equal(one.includes('full-window-record'), false)
+
+  const zero = JSON.stringify(rewriteMessagesForBridge(messages, new Map(), new Map(), {
+    historyImageLimit: 0,
+    browserHistoryLimit: 0,
+    desktopHistoryLimit: 0,
+  }))
+  assert.equal(zero.includes('desktop-state:'), false)
 })

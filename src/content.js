@@ -3,6 +3,8 @@ import { PRESERVED_IMAGE_PREFIX } from './protocol.js'
 
 export const BROWSER_STATE_PREFIX = '[DeepSeekEyes browser state]\n'
 export const BROWSER_HISTORY_PREFIX = '[DeepSeekEyes browser history]\n'
+export const DESKTOP_STATE_PREFIX = '[DeepSeekEyes desktop state]\n'
+export const DESKTOP_HISTORY_PREFIX = '[DeepSeekEyes desktop history]\n'
 
 export function contentHasImage(content) {
   return Array.isArray(content) && content.some((block) =>
@@ -60,6 +62,10 @@ function isBrowserStateText(text) {
   return text.startsWith(BROWSER_STATE_PREFIX) || text.startsWith(BROWSER_HISTORY_PREFIX)
 }
 
+function isDesktopStateText(text) {
+  return text.startsWith(DESKTOP_STATE_PREFIX) || text.startsWith(DESKTOP_HISTORY_PREFIX)
+}
+
 function collectMarkerTexts(blocks, predicate, found) {
   if (!Array.isArray(blocks)) return
   for (const block of blocks) {
@@ -80,16 +86,48 @@ function tail(values, limit) {
 export function messageHistoryMarkers(message) {
   const preserved = new Map()
   const browser = new Map()
+  const desktop = new Map()
   collectMarkerTexts(message?.content, text => text.startsWith(PRESERVED_IMAGE_PREFIX), preserved)
   collectMarkerTexts(message?.content, isBrowserStateText, browser)
-  return { preserved: [...preserved.values()], browser: [...browser.values()] }
+  collectMarkerTexts(message?.content, isDesktopStateText, desktop)
+  return {
+    preserved: [...preserved.values()],
+    browser: [...browser.values()],
+    desktop: [...desktop.values()],
+  }
 }
 
 export function messagesNeedHistoryCompaction(messages) {
   return (messages ?? []).some((message) => {
     const markers = messageHistoryMarkers(message)
-    return markers.preserved.length > 0 || markers.browser.length > 0
+    return markers.preserved.length > 0 || markers.browser.length > 0 || markers.desktop.length > 0
   })
+}
+
+function compactDesktopStateText(text) {
+  if (text.startsWith(DESKTOP_HISTORY_PREFIX)) return text
+  if (!text.startsWith(DESKTOP_STATE_PREFIX)) return text
+  try {
+    const state = JSON.parse(text.slice(DESKTOP_STATE_PREFIX.length))
+    const compact = {
+      ok: state.ok,
+      code: state.code,
+      action: state.action,
+      sequence: state.sequence,
+      stateId: state.stateId,
+      observedAt: state.observedAt,
+      platform: state.platform,
+      screen: state.screen,
+      cursor: state.cursor,
+      activeWindow: state.activeWindow,
+      windowCount: state.windowCount,
+      screenshotSha256: state.screenshot?.sha256,
+      actionResult: state.actionResult,
+    }
+    return `${DESKTOP_HISTORY_PREFIX}${JSON.stringify(compact)}`
+  } catch {
+    return `${DESKTOP_HISTORY_PREFIX}${JSON.stringify({ unreadableState: true })}`
+  }
 }
 
 function compactBrowserStateText(text) {
@@ -166,6 +204,10 @@ function bridgeBlocks(blocks, context) {
       if (context.browserMode === 'omit') return []
       return [{ ...block, text: context.browserMode === 'compact' ? compactBrowserStateText(block.text) : block.text }]
     }
+    if (block?.type === 'text' && isDesktopStateText(block.text)) {
+      if (context.desktopMode === 'omit') return []
+      return [{ ...block, text: context.desktopMode === 'compact' ? compactDesktopStateText(block.text) : block.text }]
+    }
     if (block?.type === 'tool-result') {
       return [{ ...block, content: bridgeBlocks(block.content, context) }]
     }
@@ -177,18 +219,19 @@ function bridgeBlocks(blocks, context) {
  * Build the model-facing copy for one bridge call.
  *
  * Only images introduced after the latest assistant message receive full evidence.
- * Historical pixels become bounded references, and stale browser DOM snapshots are
- * reduced to the last few state summaries. The durable messages remain untouched.
+ * Historical pixels become bounded references, while stale browser and desktop
+ * snapshots are reduced to the last few state summaries. Durable messages remain untouched.
  */
 export function rewriteMessagesForBridge(
   messages,
   activeEvidence,
   historicalEvidence = new Map(),
-  { historyImageLimit = 8, browserHistoryLimit = 8 } = {},
+  { historyImageLimit = 8, browserHistoryLimit = 8, desktopHistoryLimit = 8 } = {},
 ) {
   const start = activeMessageStart(messages)
   const historicalPreserved = new Map()
   const historicalBrowser = new Map()
+  const historicalDesktop = new Map()
   for (let index = 0; index < start; index += 1) {
     const markers = messageHistoryMarkers(messages[index])
     for (const text of markers.preserved) {
@@ -199,19 +242,26 @@ export function rewriteMessagesForBridge(
       historicalBrowser.delete(text)
       historicalBrowser.set(text, text)
     }
+    for (const text of markers.desktop) {
+      historicalDesktop.delete(text)
+      historicalDesktop.set(text, text)
+    }
   }
   const preservedRetention = new Set(tail([...historicalPreserved.values()], historyImageLimit))
   const browserRetention = new Set(tail([...historicalBrowser.values()], browserHistoryLimit))
+  const desktopRetention = new Set(tail([...historicalDesktop.values()], desktopHistoryLimit))
   return messages.map((message, index) => {
     const active = index >= start
     const markers = messageHistoryMarkers(message)
     const retainsBrowser = markers.browser.some(text => browserRetention.has(text))
+    const retainsDesktop = markers.desktop.some(text => desktopRetention.has(text))
     const content = bridgeBlocks(message.content, {
       active,
       activeEvidence,
       historicalEvidence,
       preservedRetention,
       browserMode: active ? 'full' : retainsBrowser ? 'compact' : 'omit',
+      desktopMode: active ? 'full' : retainsDesktop ? 'compact' : 'omit',
     })
     if (content.length === 0) {
       return { ...message, content: [{ type: 'text', text: '' }] }
@@ -228,6 +278,7 @@ export function rewriteMessageForStorage(message, preservedByAttachment) {
     historicalEvidence: new Map(),
     preservedRetention: undefined,
     browserMode: 'compact',
+    desktopMode: 'compact',
   })
   return {
     ...message,
@@ -238,7 +289,7 @@ export function rewriteMessageForStorage(message, preservedByAttachment) {
 /** Remove old compact references from a durable Surface copy without touching the raw source event. */
 export function rewriteMessageForRetention(
   message,
-  { preservedRetention = new Set(), browserRetention = new Set() } = {},
+  { preservedRetention = new Set(), browserRetention = new Set(), desktopRetention = new Set() } = {},
 ) {
   const markers = messageHistoryMarkers(message)
   const content = bridgeBlocks(message.content, {
@@ -247,6 +298,7 @@ export function rewriteMessageForRetention(
     historicalEvidence: new Map(),
     preservedRetention,
     browserMode: markers.browser.some(text => browserRetention.has(text)) ? 'compact' : 'omit',
+    desktopMode: markers.desktop.some(text => desktopRetention.has(text)) ? 'compact' : 'omit',
   })
   return {
     ...message,

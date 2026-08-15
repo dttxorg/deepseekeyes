@@ -19,7 +19,7 @@ DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表�
 
 ## 原生模型切换与按需重新看图
 
-视觉读取成功后，0.2 会把**模型可见的会话表面**中的图片块替换为一个短小的保留记录，其中只包含原图 SHA-256、附件引用、尺寸和有界摘要；原始图片事件与附件字节仍完整保存在 Harness 的追加式会话日志和附件存储中。
+视觉读取成功后，0.2 及后续版本会把**模型可见的会话表面**中的图片块替换为一个短小的保留记录，其中只包含原图 SHA-256、附件引用、尺寸和有界摘要；原始图片事件与附件字节仍完整保存在 Harness 的追加式会话日志和附件存储中。
 
 因此，同一个会话可以直接从 `DeepSeekEyes → DeepSeek V4 Flash · Eyes` 切换到原生 `DeepSeek V4 Flash`，不会再触发：
 
@@ -56,10 +56,38 @@ $DSH_HOME/deepseekeyes/browser-runs/<run-id>/
 
 Browser Computer Use 默认关闭，普通图文桥接和纯文本会话不会携带 `browser` 工具或相关系统提示。启用后，只有最新 Browser 状态保留完整 DOM/OCR/截图证据；历史状态默认只保留最近 8 个紧凑摘要，避免每一步把此前的完整页面证据再次发送给模型。
 
+## Windows / macOS Desktop Computer Use 0.3（默认关闭）
+
+0.3 在浏览器之外新增独立的 `computer` 工具，Windows 和 macOS 都使用系统原生接口，不要求切换对话窗口：
+
+```text
+observe 获取全屏截图和窗口目录
+→ DeepSeekEyes 把截图交给当前后台视觉模型
+→ DeepSeek 使用最新 stateId 和截图坐标执行动作
+→ 原生 Helper 操作桌面
+→ 返回新的全屏截图、窗口目录和 stateId
+→ 视觉模型读取新状态，DeepSeek 验证结果并继续
+```
+
+支持：`observe`、`click`、`double_click`、`right_click`、`move_cursor`、`drag`、`type`、`key`、`scroll`、`launch`、`focus`、`move_window`、`resize_window`、`close_window`、`wait`、`assert`、`report` 和 `close`。DeepSeek 在检查最新视觉证据后用 `assert` 记录预期、实际值和通过状态，最终 `report` 汇总断言失败与动作失败，形成可重复的桌面自动测试证据。
+
+- 第一步使用 `observe`；会改变桌面或依赖窗口的动作必须提交最新 `stateId`。
+- 坐标绑定最新截图像素，越界坐标在调用系统接口前被拒绝。
+- `windowRef` 每次观察都会重建，只能用于产生它的最新状态。
+- Windows 通过 PowerShell、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
+- 输入文本和启动参数只在报告中保存长度和 SHA-256，不保存原文。
+- 每一步原始 PNG 和最终 JSON 报告默认写入 `$DSH_HOME/deepseekeyes/desktop-runs/`。
+
+Harness 单图片附件存在 5 MB 边界。桌面截图先做**像素无损** PNG 重压；若仍超限，插件按明确的 `x/y/width/height` 坐标拆成若干无损 PNG 图块，在同一次工具结果中全部交给视觉桥接。该过程不缩放、不转 JPEG；状态同时记录原始 PNG SHA-256、完整像素 SHA-256、每块像素 SHA-256 和附件 SHA-256。配置证据目录时，原始编码 PNG 也会完整保留。
+
+Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或桌面系统提示，也不会截图、调用视觉模型或增加普通对话的 Token 开销。启用后，只有当前动作的新截图自动读图；历史桌面状态独立按 `desktopHistoryLimit` 压缩，默认只保留最近 8 个短摘要，不重复携带旧截图和完整窗口列表。
+
+macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
+
 ## 安装本地交付包
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.2.0.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.3.0.tgz
 ```
 
 重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
@@ -70,7 +98,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.2）
+## 全 GUI 配置（0.3）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -82,7 +110,9 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
    - **后台读图 Provider**；
    - **后台读图模型**（只读取原图并回答细节追问）。
 4. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
-5. 在 **Computer Use 0.2** 区域选择启用状态、Edge/Chrome、无界面模式、视口和动作参数。
+5. 在 **Computer Use 0.3** 区域分别设置：
+   - Browser Computer Use 的启用状态、Edge/Chrome、无界面模式、视口和动作参数；
+   - Windows/macOS Desktop Computer Use 的启用状态、动作超时、稳定等待、窗口数、macOS 显示器编号、Windows PowerShell 路径和证据目录。
 6. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
 7. 在对话模型选择器中选择 `DeepSeekEyes → DeepSeek-V4-Pro · MiniMax-M3 Eyes`。
 
@@ -137,6 +167,12 @@ defaultInput: [text, image]
     targetMaxTokens: 8192
     browserComputerUse: true
     browserChannel: msedge
+    desktopComputerUse: true
+    desktopHistoryLimit: 8
+    desktopTimeoutMs: 15000
+    desktopSettleMs: 300
+    desktopMaxWindows: 50
+    desktopMacDisplay: 1
 ```
 
 也可以通过启动环境指定最终模型和视觉路由：
@@ -145,6 +181,7 @@ defaultInput: [text, image]
 export DEEPSEEKEYES_UPSTREAM_MODEL=deepseek-v4-pro
 export DEEPSEEKEYES_VISION_PROVIDER=openai
 export DEEPSEEKEYES_VISION_MODEL=gpt-4.1
+export DEEPSEEKEYES_DESKTOP_ENABLED=true
 dsh web
 ```
 
@@ -153,6 +190,8 @@ dsh web
 ## 数据保真
 
 DeepSeekEyes 只通过 `ctx.attachments.readImage()` 读取图片，并把原始 `ImageBlock` 交给 Harness 已注册的视觉适配器。插件不会裁剪、缩放、转格式或重新压缩用户图片。
+
+上述规则针对用户粘贴/上传的原图。Computer Use 的系统截图由插件自己产生：原始编码 PNG 写入测试证据目录，模型附件只做像素无损重压；超过 Host 单附件边界时按坐标无损切片。完整像素哈希用于证明视觉模型收到的所有图块可以无损还原为原截图。
 
 每份证据记录包含：
 
@@ -209,12 +248,21 @@ $DSH_HOME/deepseekeyes/evidence/
 | `browserViewportHeight` | `900` | 浏览器视口高度 |
 | `browserMaxElements` | `200` | 单次观察最多返回的交互控件数 |
 | `browserMaxTextChars` | `20000` | 单次观察最多返回的页面字符数 |
+| `desktopHistoryLimit` | `8` | 最终模型上下文中保留的最近 Desktop 状态紧凑摘要数；`0` 表示不自动带入历史状态 |
+| `desktopComputerUse` | `false` | 是否注册 Windows/macOS 原生 `computer` 工具；默认关闭以隔离普通会话开销 |
+| `desktopTimeoutMs` | `15000` | 单次原生桌面动作超时 |
+| `desktopSettleMs` | `300` | 操作完成后等待界面稳定的时间 |
+| `desktopMaxWindows` | `50` | 单次观察最多返回的窗口数 |
+| `desktopMacDisplay` | `1` | macOS 截图和坐标绑定的显示器编号 |
+| `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
+| `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |
 
 ## 本地验证
 
 ```sh
 npm test
 npm run test:browser
+npm run test:desktop
 npm run check
 npm pack --dry-run
 ```

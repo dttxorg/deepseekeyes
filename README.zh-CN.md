@@ -1,6 +1,50 @@
-# DeepSeekEyes
+<p align="center">
+  <img src="assets/deepseekeyes-banner.png" width="100%" alt="DeepSeekEyes 把视觉证据通过可信桥接交给 DeepSeek 推理" />
+</p>
 
-DeepSeekEyes 是一个可安装的 DeepSeek Harness Bundle。它在模型列表中注册 `DeepSeekEyes` 虚拟供应商，使 DeepSeek 在同一个对话框里接收图片、调用已经在 Harness「模型」页面配置好的多模态模型，并在证据不足时继续向视觉模型追问。
+<p align="center">
+  <img src="assets/deepseekeyes-logo.png" width="112" alt="DeepSeekEyes Logo" />
+</p>
+
+<h1 align="center">DeepSeekEyes</h1>
+
+<p align="center"><strong>让 DeepSeek 看见，而且全程不离开当前对话。</strong></p>
+
+<p align="center">面向 DeepSeek Harness 的原图保真视觉桥接与 Windows / macOS Computer Use 插件。</p>
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="#安装本地交付包">快速安装</a> ·
+  <a href="#工作方式">工作方式</a> ·
+  <a href="#windows--macos-desktop-computer-use-03默认关闭">Computer Use</a> ·
+  <a href="#本插件-token-消耗统计">Token 统计</a> ·
+  <a href="#配置字段">完整配置</a> ·
+  <a href="https://x.com/lucars2026">X / @lucars2026</a>
+</p>
+
+<p align="center">
+  <a href="https://x.com/lucars2026"><img src="https://img.shields.io/badge/follow-%40lucars2026-000000?style=flat-square&logo=x&logoColor=white" alt="在 X 关注 @lucars2026" /></a>
+  <a href="https://github.com/dttxorg/deepseekeyes/releases/latest"><img src="https://img.shields.io/github/v/release/dttxorg/deepseekeyes?style=flat-square&color=0969da" alt="最新版本" /></a>
+  <a href="https://github.com/dttxorg/deepseekeyes/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dttxorg/deepseekeyes/ci.yml?branch=main&style=flat-square&label=CI" alt="CI 状态" /></a>
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-00b8d9?style=flat-square" alt="DeepSeek Harness 插件" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-5b5fc7?style=flat-square" alt="Windows 和 macOS" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
+</p>
+
+DeepSeekEyes 把你在 Harness「模型」页面已经配置好的多模态模型变成 DeepSeek 的眼睛，而 DeepSeek 继续负责推理和最终回答。粘贴一次图片后，视觉模型先生成与原图 SHA-256 绑定的证据；证据不够时，DeepSeek 还能在后台继续询问一个精确细节，并让视觉模型重新读取同一份原图。
+
+**不切窗口、不手工抄图、不把缩略图当原图，也不让普通纯文字会话承担视觉插件开销。**
+
+## 一眼看懂
+
+| 你关心的问题 | DeepSeekEyes 的处理方式 |
+| :-- | :-- |
+| 图片会不会在转交时失真？ | 用户原图不缩放、不转格式、不重压；每次追问重新引用原始内容寻址附件。 |
+| 第一次视觉描述不够怎么办？ | DeepSeek 可以携带图片 SHA-256、精确问题和可选区域继续向视觉模型追问。 |
+| 视觉模型选错了怎么办？ | 先检查图片能力声明，再通过随机 3×3 色块探针验证它确实读取了像素。 |
+| 会不会影响正常文字对话？ | 纯文字轮次走原有直通路径，不读图、不截图、不注册 Computer Use 工具，也不增加插件统计。 |
+| 能否自动测试网页和桌面？ | Browser Computer Use 与 Windows/macOS 原生 Desktop Computer Use 均已实现，且默认关闭、按需启用。 |
+| 插件到底用了多少 Token？ | 设置卡分别展示 Provider 精确额外用量、桥接输入估算和被排除的正常最终回答用量。 |
 
 ## 工作方式
 
@@ -86,11 +130,22 @@ macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为
 
 ## 安装本地交付包
 
-```sh
-npx -y @deepseek-ai/dsh plugin --profile web add /ABSOLUTE/PATH/deepseekeyes-0.3.1.tgz
+macOS / Linux：
+
+```bash
+curl -fL -o deepseekeyes-0.3.1.tgz https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add "$PWD/deepseekeyes-0.3.1.tgz"
 ```
 
-重新启动 `dsh web`，然后在当前对话框的模型选择器中选择：
+Windows PowerShell：
+
+```powershell
+$pkg = Join-Path $env:TEMP "deepseekeyes-0.3.1.tgz"
+Invoke-WebRequest "https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz" -OutFile $pkg
+npx -y @deepseek-ai/dsh plugin --profile web add $pkg
+```
+
+安装后重新启动一次 `dsh web`，然后在当前对话框的模型选择器中选择：
 
 ```text
 DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
@@ -280,6 +335,12 @@ $DSH_HOME/deepseekeyes/evidence/
 | `desktopMacDisplay` | `1` | macOS 截图和坐标绑定的显示器编号 |
 | `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
 | `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |
+
+## 社区与更新
+
+- 遇到问题或希望增加新的 Computer Use 动作，可以提交 [GitHub Issue](https://github.com/dttxorg/deepseekeyes/issues)。
+- 在 X 关注 **[@lucars2026](https://x.com/lucars2026)**，获取版本发布、实机测试和后续路线更新。
+- 如果 DeepSeekEyes 帮你少切了一次窗口，欢迎为项目点一个 Star，让下一位开发者更快找到它。
 
 ## 本地验证
 

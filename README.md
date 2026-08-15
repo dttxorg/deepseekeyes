@@ -1,32 +1,218 @@
-# DeepSeekEyes
+<p align="center">
+  <img src="assets/deepseekeyes-banner.png" width="100%" alt="DeepSeekEyes — vision evidence flows through a trusted bridge into DeepSeek reasoning" />
+</p>
 
-[简体中文](README.zh-CN.md)
+<p align="center">
+  <img src="assets/deepseekeyes-logo.png" width="112" alt="DeepSeekEyes logo" />
+</p>
 
-DeepSeekEyes is an installable DeepSeek Harness bundle. It registers a virtual `deepseekeyes` provider which accepts native Harness image attachments, asks an already-configured multimodal Harness model for structured evidence, and delegates reasoning to the selected DeepSeek model. DeepSeek may privately request additional visual detail; the user stays in one conversation.
+<h1 align="center">DeepSeekEyes</h1>
 
-Version `0.3.1` adds local DeepSeekEyes token-usage accounting to the native **Settings → Plugins → DeepSeekEyes** card. Provider-reported visual/probe/clarification usage is separated from estimated bridge input, while the final answer model's normal response usage is shown separately and excluded from plugin overhead. Reading, refreshing and resetting statistics uses a loopback-only RPC and never calls a model. Version `0.3.0` added opt-in native Desktop Computer Use for both Windows and macOS alongside the existing Playwright Browser Computer Use tool.
+<p align="center"><strong>Give DeepSeek sight without leaving the conversation.</strong></p>
 
-Core properties:
+<p align="center">
+  A source-preserving vision and cross-platform Computer Use bridge for
+  <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a>.
+</p>
 
-- no API keys or provider clients of its own;
-- final-answer and vision routes come from the Harness Models configuration and are selected independently in the native plugin settings card;
-- static `inputModalities: [text, image]` gating plus a randomized active pixel probe;
-- original content-addressed image events and attachment bytes remain in the append-only session log;
-- every visual call reuses the original attachment reference;
-- persistent, source-hashed evidence records;
-- historical images cause zero automatic visual calls and become bounded model-facing pointers;
-- a session-scoped `deepseekeyes_look` tool can re-read one preserved original image on demand after switching models;
-- final-output budgets are reduced only when input plus output would exceed the resolved context window, with one exact retry for provider-reported overflow;
-- clarification failure stops the turn instead of letting DeepSeek guess;
-- browser open/observe/action/assert/report loops with fresh screenshots after every step;
-- stale-state rejection, semantic element refs, coordinate fallback, diagnostics and content-addressed evidence reports;
-- bounded historical Browser states instead of repeatedly carrying full OCR/DOM evidence;
-- native settings for installed Edge/Chrome selection, headless mode, viewport, timing and observation limits; Browser Computer Use is disabled by default so ordinary text sessions receive no browser tool/prompt overhead.
-- native Windows and macOS `computer` actions for observation, pointer, keyboard, scrolling, application launch/focus, window movement/resizing/closing, waits and evidence reports;
-- stale desktop state rejection, screenshot-coordinate bounds and latest-state-only window refs;
-- exact desktop PNG pixel preservation: oversized screenshots are losslessly recompressed and, only when required by the Host's 5 MB attachment limit, split into coordinate-labelled lossless tiles without scaling or JPEG conversion;
-- independently bounded desktop history so earlier full screenshots/window lists do not create repeated visual calls or runaway context growth;
-- Desktop Computer Use is also disabled by default, so ordinary text/image sessions keep their existing tool set, prompt and token behavior.
-- local token statistics with exact Provider usage, estimated plugin-injected input, per-session counters, persistent atomic storage and one-click reset; pure-text turns create no DeepSeekEyes usage entry.
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#computer-use">Computer Use</a> ·
+  <a href="#token-accounting">Token accounting</a> ·
+  <a href="https://x.com/lucars2026">X / @lucars2026</a>
+</p>
 
-See [README.zh-CN.md](README.zh-CN.md) for installation and configuration.
+<p align="center">
+  <a href="https://x.com/lucars2026"><img src="https://img.shields.io/badge/follow-%40lucars2026-000000?style=flat-square&logo=x&logoColor=white" alt="Follow @lucars2026 on X" /></a>
+  <a href="https://github.com/dttxorg/deepseekeyes/releases/latest"><img src="https://img.shields.io/github/v/release/dttxorg/deepseekeyes?style=flat-square&color=0969da" alt="Latest release" /></a>
+  <a href="https://github.com/dttxorg/deepseekeyes/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dttxorg/deepseekeyes/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-00b8d9?style=flat-square" alt="DeepSeek Harness plugin" />
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D22.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js >= 22.19" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
+</p>
+
+DeepSeek's strongest text models can reason about code, documents and interfaces, but they do not consume image pixels. **DeepSeekEyes turns a multimodal model into their eyes while DeepSeek remains the reasoning model.** Paste an image once; the vision model produces hash-bound evidence, DeepSeek answers, and DeepSeek can privately ask the vision model for another exact detail from the original attachment.
+
+No window switching. No manual transcription. No lossy screenshot relay.
+
+## Why DeepSeekEyes
+
+| Requirement | What DeepSeekEyes does |
+| :-- | :-- |
+| **One conversation** | Image → vision evidence → DeepSeek reasoning → optional visual follow-up all happen inside the current Harness task. |
+| **Original pixels stay authoritative** | User images are not resized, converted or recompressed. Every reread references the original content-addressed attachment. |
+| **The models can communicate** | DeepSeek can request a precise region or detail instead of depending on one oversized first description. |
+| **No surprise text overhead** | Pure-text turns keep the direct model path: no visual call, no Computer Use tool and no DeepSeekEyes usage entry. |
+| **The eye is verified** | Static image-capability metadata is followed by an optional randomized 3×3 pixel probe. A text-only model cannot silently pose as the eye. |
+| **Automation is built in** | Browser Computer Use plus native Windows/macOS desktop control can observe, act, verify and preserve evidence. |
+| **Usage is visible** | The native settings card separates exact Provider usage, estimated bridge input and normal final-answer usage. |
+
+## Quick start
+
+### 1. Download and install
+
+macOS / Linux:
+
+```bash
+curl -fL -o deepseekeyes-0.3.1.tgz https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz
+npx -y @deepseek-ai/dsh plugin --profile web add "$PWD/deepseekeyes-0.3.1.tgz"
+```
+
+Windows PowerShell:
+
+```powershell
+$pkg = Join-Path $env:TEMP "deepseekeyes-0.3.1.tgz"
+Invoke-WebRequest "https://github.com/dttxorg/deepseekeyes/releases/download/v0.3.1/deepseekeyes-0.3.1.tgz" -OutFile $pkg
+npx -y @deepseek-ai/dsh plugin --profile web add $pkg
+```
+
+Restart `dsh web` once after installation.
+
+### 2. Configure entirely in Harness
+
+1. Open **Settings → Models** and add the text Provider/model and multimodal Provider/model you already use.
+2. Open **Settings → Plugins → DeepSeekEyes**.
+3. Select:
+   - **Final answer Provider + model** — the DeepSeek model that reasons and replies;
+   - **Background vision Provider + model** — the multimodal model that reads pixels.
+4. Keep the randomized pixel probe enabled for the first real image.
+5. Save, then select the `DeepSeekEyes` model entry in the conversation model picker.
+
+Custom OpenAI-compatible gateways can be declared image-capable from the same card; the plugin writes the exact Harness `defaultInput: [text, image]` setting without replacing sibling Provider fields.
+
+### 3. Paste an image
+
+Ask normally:
+
+> Read this screenshot, identify the failure, and tell me the next action.
+
+DeepSeekEyes automatically reads the new image, gives DeepSeek structured evidence, and preserves the original for later targeted questions.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Original image attachment"] --> B["DeepSeekEyes bridge"]
+    B --> C["Verified multimodal model"]
+    C --> D["Structured, hash-bound evidence"]
+    D --> E["DeepSeek final-answer model"]
+    E -->|needs one more detail| F["Precise visual question"]
+    F --> C
+    E --> G["Answer in the same conversation"]
+    B -. preserves .-> H["Original bytes + append-only event"]
+```
+
+The first read is deliberately not the end of the visual conversation. DeepSeek may emit a bounded private clarification request naming the image SHA-256, one exact question and an optional normalized region. The eye rereads the original pixels and returns targeted evidence; DeepSeek then continues reasoning.
+
+Historical images are compacted into bounded SHA-256 pointers. They cause no automatic reread, but the session-scoped `deepseekeyes_look` tool can recover one preserved original on demand—even after switching to a native text-only model.
+
+## Capability matrix
+
+| Capability | Status | Notes |
+| :-- | :--: | :-- |
+| Native pasted-image bridge | ✅ | Original Harness attachment stays in the append-only session log. |
+| DeepSeek ↔ vision clarification | ✅ | Bounded, precise questions against the same original image. |
+| Vision-model capability probe | ✅ | Metadata gate plus randomized pixel test. |
+| Custom multimodal gateways | ✅ | OpenAI-compatible routes can be declared from the GUI. |
+| Browser Computer Use | ✅ | Open, observe, click, type, select, wait, assert, report and close. |
+| Windows desktop Computer Use | ✅ | PowerShell + native user32/System.Drawing helper. |
+| macOS desktop Computer Use | ✅ | JXA + CoreGraphics/System Events/screencapture helper. |
+| Lossless oversized screenshots | ✅ | Recompressed without pixel changes, then tiled only when the Host's 5 MB limit requires it. |
+| Local Token accounting | ✅ | Exact Provider usage plus clearly labelled bridge estimates. |
+| Pure-text isolation | ✅ | No visual call, screenshot or Computer Use prompt when none is needed. |
+
+## Computer Use
+
+Both automation modes are **off by default** and are enabled independently from **Settings → Plugins → DeepSeekEyes**.
+
+### Browser Computer Use
+
+The Playwright-powered browser loop returns a fresh screenshot and semantic element references after every action. Mutations require the latest `stateId`, stale actions are rejected, and an assertion/report loop turns the same feature into an automatic test runner.
+
+Supported operations include navigation, observation, click, type, select, check, keyboard input, wait, visual assertions, evidence reports and session close.
+
+### Windows / macOS Desktop Computer Use
+
+The native `computer` tool can:
+
+- observe the current display and window catalog;
+- move, click and drag the pointer;
+- type Unicode text and keyboard shortcuts;
+- scroll, wait, launch and focus applications;
+- move, resize and close windows;
+- run visual assertions and save evidence reports.
+
+Every action is bound to the newest screenshot state and returns another full-screen PNG through the same visual bridge. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
+
+## Token accounting
+
+The native plugin card exposes **Token usage statistics** without making a statistics model call.
+
+| Counter | Meaning |
+| :-- | :-- |
+| **Exact additional Tokens** | Provider-reported pixel probe, initial read, targeted reread and DeepSeek visual-clarification rounds. |
+| **Estimated bridge input** | Evidence/protocol/tool text injected by the plugin, estimated with the Harness fixed-density rule. |
+| **Estimated plugin total** | Exact additional usage plus estimated bridge input. |
+| **Final model visual-turn usage** | Recorded separately and excluded from plugin overhead, so DeepSeek's normal answer is not charged to the plugin. |
+| **Operational counters** | Visual turns, original-image rereads and vision-cache hits. |
+
+Statistics refresh/reset uses the loopback-only `/deepseekeyes` RPC. Data is atomically stored at `$DSH_HOME/deepseekeyes/usage-stats.json` with mode `0600` and a 50-session detail limit. A temporary write failure keeps counting in memory and does not interrupt the user's turn.
+
+Disable collection in the GUI or use:
+
+```bash
+export DEEPSEEKEYES_USAGE_STATS=false
+```
+
+## Data integrity by design
+
+- User images pass through `ctx.attachments.readImage()` as the original Harness `ImageBlock`.
+- Original MIME type, byte length, dimensions and SHA-256 are recorded with the evidence.
+- Visual evidence is schema-validated before DeepSeek sees it.
+- A targeted reread references original pixels—not a thumbnail, JPEG copy or summary of a summary.
+- Failed vision calls, invalid evidence or exhausted clarification bounds stop the visual turn instead of inviting a guess.
+- Browser/Desktop screenshots carry content-addressed state and stale-action protection.
+- Typed text and launch arguments are hashed in persisted Computer Use reports.
+
+## Configuration reference
+
+The common route and automation settings are available in the GUI. Headless deployments may use the same fields in `cordis.patch.yml` or environment variables.
+
+| Area | Important fields |
+| :-- | :-- |
+| Model routing | `upstreamProvider`, `upstreamModel`, `visionProvider`, `visionModel` |
+| Vision validation | `autoDetectVision`, `activeProbe`, `maxClarifications` |
+| Visual budgets | `baseMaxTokens`, `targetMaxTokens` — `0` delegates the limit to the Provider |
+| History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
+| Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
+| Desktop | `desktopComputerUse`, timeout, settle delay, display, PowerShell and evidence directory |
+| Usage | `usageStats`, `usageStatsPath` |
+
+See the [complete Chinese configuration reference](README.zh-CN.md#配置字段) for every field and default.
+
+## Verification
+
+```bash
+npm ci
+npm run check
+npm run test:coverage
+npm run test:browser
+npm run test:desktop
+npm audit --omit=dev
+```
+
+The release is continuously checked on Ubuntu, macOS and Windows. Native helper parsing/compilation and desktop observation run on their respective CI hosts.
+
+## Community
+
+Built something with DeepSeekEyes, found an edge case, or want a new Computer Use action?
+
+- Open a [GitHub issue](https://github.com/dttxorg/deepseekeyes/issues).
+- Follow and message **[@lucars2026 on X](https://x.com/lucars2026)** for release notes and project updates.
+- Star the repository if the bridge saves you a window switch—the next developer will find it faster.
+
+## License
+
+[MIT](LICENSE)

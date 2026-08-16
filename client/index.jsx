@@ -16,9 +16,11 @@ import {
 
 const NS = 'deepseekeyes.settings'
 const PROVIDER_ID = 'deepseekeyes'
+const PLUGIN_VERSION = __DEEPSEEKEYES_VERSION__
 
 const zh = {
   title: 'DeepSeekEyes',
+  version: '版本',
   description: '在同一对话框内为 DeepSeek 接入视觉模型，并保留对原图的按需追问。',
   expand: '展开',
   collapse: '收起',
@@ -178,6 +180,7 @@ const zh = {
 
 const en = {
   title: 'DeepSeekEyes',
+  version: 'Version',
   description: 'Give DeepSeek a visual model in the same conversation, with follow-up access to the original image.',
   expand: 'Expand',
   collapse: 'Collapse',
@@ -341,7 +344,9 @@ const styles = {
   summary: { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 },
   header: { appearance: 'none', width: '100%', font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer', background: 'transparent', border: 0, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' },
   headText: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
+  titleRow: { minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   title: { fontSize: 15, fontWeight: 600, lineHeight: 1.4, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  version: { flex: 'none', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #d9dee8))', borderRadius: 999, padding: '0 7px', fontSize: 11, fontWeight: 500, lineHeight: '18px', fontVariantNumeric: 'tabular-nums', background: 'var(--dsw-alias-bg-module-platform, rgba(127, 127, 127, .08))', color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
   description: { fontSize: 13, lineHeight: 1.5, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
   chevron: { width: 14, height: 14, flex: 'none', color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))', transition: 'transform .16s' },
   chevronOpen: { transform: 'rotate(180deg)' },
@@ -614,11 +619,14 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
         style={styles.header}
         aria-expanded={open}
         aria-controls="deepseekeyes-settings-body"
-        aria-label={`${t(open ? 'collapse' : 'expand')}: ${t('title')}`}
+        aria-label={`${t(open ? 'collapse' : 'expand')}: ${t('title')} v${PLUGIN_VERSION}`}
         onClick={() => setOpen(current => !current)}
       >
         <span style={styles.headText}>
-          <span style={styles.title}>{t('title')}</span>
+          <span style={styles.titleRow}>
+            <span style={styles.title}>{t('title')}</span>
+            <span style={styles.version} aria-label={`${t('version')}: ${PLUGIN_VERSION}`}>v{PLUGIN_VERSION}</span>
+          </span>
           <span style={styles.description}>{t('description')}</span>
         </span>
         {dirty || declarationDirty ? <span style={styles.pending}>{t('unsaved')}</span> : null}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4 - 2026-08-16
+
+- Show the installed DeepSeekEyes version beside the plugin name even while the settings card is collapsed.
+- Inject the badge value from `package.json` during the client build so the displayed version and published package cannot drift independently.
+- Include the version in the settings-card accessible name and cover both the bundled value and rendered badge in tests.
+
 ## 0.5.3 - 2026-08-16
 
 - Add a default `desktopVisualMode: auto` semantic/action fast path so complete Accessibility/UIA states and successful mutations continue without a visual-model call.

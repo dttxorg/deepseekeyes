@@ -75,8 +75,13 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
   assert.equal(header.type, 'button')
   assert.equal(header.props['aria-expanded'], false)
   assert.equal(header.props['aria-controls'], 'deepseekeyes-settings-body')
-  assert.equal(header.props['aria-label'], 'expand: title')
+  assert.equal(header.props['aria-label'], `expand: title v${manifest.version}`)
   assert.equal(body, null)
+  const headText = header.props.children[0]
+  const titleRow = headText.props.children[0]
+  const version = titleRow.props.children[1]
+  assert.equal(version.props.children.join(''), `v${manifest.version}`)
+  assert.equal(version.props['aria-label'], `version: ${manifest.version}`)
   const chevron = header.props.children.at(-1)
   assert.equal(chevron.type, 'svg')
   assert.equal(chevron.props['data-deepseekeyes-chevron'], '')
@@ -116,6 +121,8 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /aria-controls="deepseekeyes-settings-body"/)
   assert.match(source, /data-deepseekeyes-chevron/)
   assert.match(source, /chevronOpen: \{ transform: 'rotate\(180deg\)' \}/)
+  assert.match(source, /const PLUGIN_VERSION = __DEEPSEEKEYES_VERSION__/)
+  assert.match(source, />v\{PLUGIN_VERSION\}<\/span>/)
   assert.match(source, /\{open \? \(\s*<div id="deepseekeyes-settings-body"/)
   assert.doesNotMatch(source, /<li style=\{styles\.card\}>\s*<details open>/)
   assert.doesNotMatch(source, /id="deepseekeyes-base-tokens"[^>]*max=/)

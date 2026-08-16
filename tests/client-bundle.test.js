@@ -22,7 +22,11 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
     useState: value => [typeof value === 'function' ? value() : value, () => {}],
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
   }
-  const runtime = { Fragment: Symbol('Fragment'), jsx: () => null, jsxs: () => null }
+  const runtime = {
+    Fragment: Symbol('Fragment'),
+    jsx: (type, props) => ({ type, props }),
+    jsxs: (type, props) => ({ type, props }),
+  }
   const client = record.factory((id) => {
     if (id === 'react') return react
     if (id === 'react/jsx-runtime') return runtime
@@ -63,6 +67,19 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
   assert.equal(registered.options.inject().api, api)
   assert.equal(registered.options.inject().usageRpc, rpc)
   assert.equal(typeof registered.component, 'function')
+
+  scope.getSnapshot = () => ({ status: 'ready', value: {}, writable: true, revision: 1 })
+  const card = registered.component({ ...registered.options.inject(), t: key => key })
+  const [header, body] = card.props.children
+  assert.equal(card.type, 'li')
+  assert.equal(header.type, 'button')
+  assert.equal(header.props['aria-expanded'], false)
+  assert.equal(header.props['aria-controls'], 'deepseekeyes-settings-body')
+  assert.equal(header.props['aria-label'], 'expand: title')
+  assert.equal(body, null)
+  const chevron = header.props.children.at(-1)
+  assert.equal(chevron.type, 'svg')
+  assert.equal(chevron.props['data-deepseekeyes-chevron'], '')
 })
 
 test('settings card inherits Harness theme tokens and top-aligns side-by-side fields', async () => {
@@ -94,5 +111,12 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /Token 消耗统计/)
   assert.match(source, /usage\.snapshot/)
   assert.match(source, /精确额外 Token/)
+  assert.match(source, /const \[open, setOpen\] = useState\(false\)/)
+  assert.match(source, /aria-expanded=\{open\}/)
+  assert.match(source, /aria-controls="deepseekeyes-settings-body"/)
+  assert.match(source, /data-deepseekeyes-chevron/)
+  assert.match(source, /chevronOpen: \{ transform: 'rotate\(180deg\)' \}/)
+  assert.match(source, /\{open \? \(\s*<div id="deepseekeyes-settings-body"/)
+  assert.doesNotMatch(source, /<li style=\{styles\.card\}>\s*<details open>/)
   assert.doesNotMatch(source, /id="deepseekeyes-base-tokens"[^>]*max=/)
 })

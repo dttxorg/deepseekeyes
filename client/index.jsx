@@ -20,6 +20,9 @@ const PROVIDER_ID = 'deepseekeyes'
 const zh = {
   title: 'DeepSeekEyes',
   description: '在同一对话框内为 DeepSeek 接入视觉模型，并保留对原图的按需追问。',
+  expand: '展开',
+  collapse: '收起',
+  unsaved: '未保存',
   loading: '正在读取 Harness 模型设置…',
   unavailable: 'DeepSeekEyes 设置尚未由 Host 暴露。',
   readOnly: '当前设置文件为只读。',
@@ -170,6 +173,9 @@ const zh = {
 const en = {
   title: 'DeepSeekEyes',
   description: 'Give DeepSeek a visual model in the same conversation, with follow-up access to the original image.',
+  expand: 'Expand',
+  collapse: 'Collapse',
+  unsaved: 'Unsaved',
   loading: 'Loading Harness model settings…',
   unavailable: 'The Host has not exposed the DeepSeekEyes settings namespace.',
   readOnly: 'The settings document is read-only.',
@@ -318,11 +324,17 @@ const en = {
 }
 
 const styles = {
-  card: { listStyle: 'none', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #d9dee8))', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-3, var(--card-bg, #fff))', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))', overflow: 'hidden' },
-  summary: { cursor: 'pointer', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 5 },
-  title: { fontSize: 16, fontWeight: 650, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  card: { listStyle: 'none', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #d9dee8))', borderRadius: 12, background: 'var(--dsw-alias-bg-layer-3, var(--card-bg, #fff))', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))', overflow: 'hidden', transition: 'border-color .16s, background .16s' },
+  cardOpen: { background: 'var(--dsw-alias-bg-layer-2, var(--card-bg, #fff))', borderColor: 'var(--dsw-alias-label-dimmed, var(--border-color, #ccd3df))' },
+  summary: { padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 },
+  header: { appearance: 'none', width: '100%', font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer', background: 'transparent', border: 0, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' },
+  headText: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
+  title: { fontSize: 15, fontWeight: 600, lineHeight: 1.4, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
   description: { fontSize: 13, lineHeight: 1.5, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
-  body: { padding: '2px 20px 20px', display: 'grid', gap: 16 },
+  chevron: { width: 14, height: 14, flex: 'none', color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))', transition: 'transform .16s' },
+  chevronOpen: { transform: 'rotate(180deg)' },
+  pending: { whiteSpace: 'nowrap', borderRadius: 999, padding: '1px 8px', fontSize: 11, fontWeight: 500, lineHeight: '17px', background: 'var(--dsw-alias-bg-module-platform, rgba(127, 127, 127, .10))', color: 'var(--dsw-alias-label-secondary, var(--text-primary, #172033))' },
+  body: { borderTop: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', margin: '0 16px', padding: '12px 0 8px', display: 'grid', gap: 16 },
   field: { display: 'grid', gap: 7, alignContent: 'start', minWidth: 0 },
   label: { fontSize: 14, fontWeight: 400, lineHeight: 1.5, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
   hint: { margin: 0, fontSize: 12, lineHeight: 1.5, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
@@ -426,6 +438,7 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
     listener => scope.subscribe(listener),
     () => scope.getSnapshot(),
   )
+  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(() => normalizeSettingsDraft(snapshot.value))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -583,13 +596,33 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
   }
 
   return (
-    <li style={styles.card}>
-      <details open>
-        <summary style={styles.summary}>
+    <li style={{ ...styles.card, ...(open ? styles.cardOpen : {}) }}>
+      <button
+        type="button"
+        style={styles.header}
+        aria-expanded={open}
+        aria-controls="deepseekeyes-settings-body"
+        aria-label={`${t(open ? 'collapse' : 'expand')}: ${t('title')}`}
+        onClick={() => setOpen(current => !current)}
+      >
+        <span style={styles.headText}>
           <span style={styles.title}>{t('title')}</span>
           <span style={styles.description}>{t('description')}</span>
-        </summary>
-        <div style={styles.body}>
+        </span>
+        {dirty || declarationDirty ? <span style={styles.pending}>{t('unsaved')}</span> : null}
+        <svg
+          data-deepseekeyes-chevron=""
+          aria-hidden="true"
+          viewBox="0 0 14 14"
+          width="14"
+          height="14"
+          style={{ ...styles.chevron, ...(open ? styles.chevronOpen : {}) }}
+        >
+          <path d="m3.5 5.25 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.25" />
+        </svg>
+      </button>
+      {open ? (
+        <div id="deepseekeyes-settings-body" style={styles.body}>
           {!snapshot.writable ? <p style={styles.statusWarn}>{t('readOnly')}</p> : null}
           <div style={styles.grid}>
             <div style={styles.field}>
@@ -963,7 +996,7 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
             <button type="button" style={{ ...styles.primary, opacity: saveBlocked ? 0.55 : 1 }} disabled={saveBlocked} onClick={() => { void save() }}>{t(saving ? 'saving' : 'save')}</button>
           </div>
         </div>
-      </details>
+      ) : null}
     </li>
   )
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 - 2026-08-16
+
+- Match the native Harness plugin-card disclosure pattern with a full-width accessible header button and rotating chevron.
+- Keep the DeepSeekEyes settings card collapsed by default so the Plugins page remains compact alongside the built-in cards.
+- Preserve staged edits when collapsing, show an unsaved badge in the header, and keep all existing live-save behavior after reopening.
+
 ## 0.5.1 - 2026-08-16
 
 - Make desktop `launch` stateless and resolve macOS applications by display name, renamed alias, bundle ID or full `.app` path through `NSWorkspace` plus `/usr/bin/open`.

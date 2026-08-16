@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="README.md">English</a> ·
+  <a href="#实机能力展示">实机能力</a> ·
   <a href="#安装升级与-doctor">快速安装</a> ·
   <a href="#工作方式">工作方式</a> ·
   <a href="#windows--macos-desktop-computer-use-05默认关闭">Computer Use</a> ·
@@ -35,6 +36,40 @@
 DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉与 Computer Use Runtime**。它负责视觉路由排序、健康检查、严格证据 Schema、原图身份、故障转移记录和自动化状态；DeepSeek 继续负责推理与最终回答。
 
 **不切窗口、不手工抄图、不把缩略图当原图，也不让普通纯文字会话承担视觉插件开销。**
+
+## 实机能力展示
+
+下面四张图均来自 DeepSeek Harness 的真实运行界面，不是概念图，分别展示两条完整闭环：
+
+- **识图闭环：**粘贴图片 → 后台多模态模型读取原始像素 → 严格证据交给 DeepSeek → DeepSeek 在当前对话完成总结，并可继续按区域追问原图。
+- **浏览器控制闭环：**提出网页任务 → Browser Computer Use 打开、观察、滚动和点击 → 每步返回新截图与状态 → DeepSeek 验证结果；目标不存在时也可以根据真实页面重新规划路径。
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>一个可直接选择的 DeepSeekEyes 路由</strong><br />
+      <sub>模型选择器会把最终回答模型与后台 “Eyes” 视觉模型组合成一个明确入口，不需要切换对话窗口。</sub><br /><br />
+      <img src="assets/screenshots/model-picker-vision-route.png" width="100%" alt="DeepSeek Harness 模型选择器中的 DeepSeekEyes 最终回答模型与后台视觉模型组合路由" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>在 Harness 原生设置中配置视觉路由</strong><br />
+      <sub>分别选择最终回答与后台读图 Provider/模型，实时核对路由，并启用自动能力检测、随机像素探针、健康检查与故障转移。</sub><br /><br />
+      <img src="assets/screenshots/plugin-routing-settings.png" width="100%" alt="DeepSeekEyes 设置卡配置最终回答和后台读图 Provider 与模型" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>在当前对话直接识别粘贴图片</strong><br />
+      <sub>图片留在原任务中，DeepSeek 根据视觉证据识别网页布局、导航、文字与界面元素并输出结构化总结。</sub><br /><br />
+      <img src="assets/screenshots/image-understanding.png" width="100%" alt="DeepSeek 在同一对话中总结粘贴的网站截图内容和布局" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>控制浏览器并验证结果</strong><br />
+      <sub>Agent 打开网站、读取真实页面、滚动、选择正确导航路径、点击登录，并确认最终到达认证页面。</sub><br /><br />
+      <img src="assets/screenshots/browser-computer-use.png" width="100%" alt="DeepSeek 调用 Browser Computer Use 打开滚动点击网页并验证目标页面" />
+    </td>
+  </tr>
+</table>
 
 ## 一眼看懂
 

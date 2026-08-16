@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="#see-it-in-action">Live screenshots</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#computer-use">Computer Use</a> ·
@@ -39,6 +40,40 @@ DeepSeek's strongest text models can reason about code, documents and interfaces
 No window switching. No manual transcription. No lossy screenshot relay.
 
 This is not another captioning window. It is the **DSH auditable vision and Computer Use runtime** for image evidence, Browser automation and native Windows/macOS control.
+
+## See it in action
+
+These are real DeepSeek Harness captures, not product mockups. They show the two complete loops DeepSeekEyes adds to a normal DeepSeek conversation:
+
+- **Image understanding:** paste an image → the configured multimodal model reads the original pixels → DeepSeek receives validated evidence and answers in the same task.
+- **Browser control:** ask DeepSeek to open a page → Browser Computer Use observes, opens, scrolls and clicks → every action returns a fresh state so DeepSeek can verify the result or recover from a missing target.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>One visible DeepSeekEyes route</strong><br />
+      <sub>The model picker exposes the DeepSeek final-answer model and its multimodal “Eyes” model as one selectable route.</sub><br /><br />
+      <img src="assets/screenshots/model-picker-vision-route.png" width="100%" alt="DeepSeek Harness model picker showing a DeepSeekEyes route with a DeepSeek final model and a multimodal Eyes model" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>Harness-native visual routing</strong><br />
+      <sub>Select both Provider/model pairs, inspect the live route, enable automatic capability detection, randomized pixel probing, health checks and failover.</sub><br /><br />
+      <img src="assets/screenshots/plugin-routing-settings.png" width="100%" alt="DeepSeekEyes settings card configuring final-answer and background-vision providers and models" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Understand a pasted screenshot</strong><br />
+      <sub>The image stays in the current task while DeepSeek returns a structured description of layout, navigation and visible content.</sub><br /><br />
+      <img src="assets/screenshots/image-understanding.png" width="100%" alt="DeepSeek describing the contents and layout of a pasted website screenshot in the same conversation" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>Control and verify a browser</strong><br />
+      <sub>The agent opens the site, inspects the live page, scrolls, follows the correct navigation path, clicks Login and verifies the resulting authentication page.</sub><br /><br />
+      <img src="assets/screenshots/browser-computer-use.png" width="100%" alt="DeepSeek using Browser Computer Use open scroll and click actions and verifying the destination page" />
+    </td>
+  </tr>
+</table>
 
 ## Why DeepSeekEyes
 

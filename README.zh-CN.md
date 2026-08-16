@@ -440,7 +440,7 @@ npm pack --dry-run
 ## 卸载
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web remove @dttxorg/deepseekeyes
+npx -y --package=@deepseek-ai/dsh dsh plugin --profile web remove @dttxorg/deepseekeyes
 ```
 
 卸载只移除 Bundle；Harness 会话中的原始附件保持原状。证据缓存可在确认不再需要后单独删除。

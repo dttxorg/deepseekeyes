@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6 - 2026-08-17
+
+- Make the one-line install/upgrade/migration commands work from inside `npm exec` on npm 11 by selecting the scoped DSH package and its `dsh` binary explicitly; update the documented uninstall command to use the same argument-safe form.
+
 ## 0.5.5 - 2026-08-16
 
 - Recover visual evidence from MiniMax-style reasoning preambles and multiple balanced JSON candidates by selecting the final contract object, while keeping private DeepSeek control messages whole-response strict.

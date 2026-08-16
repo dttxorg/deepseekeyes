@@ -94,7 +94,8 @@ async function installOrUpgrade(command, options, io) {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
   const dshArgs = [
     '-y',
-    DSH_PACKAGE,
+    `--package=${DSH_PACKAGE}`,
+    'dsh',
     'plugin',
     '--profile',
     options.profile,
@@ -114,7 +115,10 @@ async function installOrUpgrade(command, options, io) {
   try {
     const profile = await profileManifest(dshHome, options.profile)
     if (legacyInstalled(profile.manifest)) {
-      const removeArgs = ['-y', DSH_PACKAGE, 'plugin', '--profile', options.profile, 'remove', 'deepseekeyes']
+      const removeArgs = [
+        '-y', `--package=${DSH_PACKAGE}`, 'dsh',
+        'plugin', '--profile', options.profile, 'remove', 'deepseekeyes',
+      ]
       io.out(`DEEPSEEKEYES_MIGRATE=${commandLine(npx, removeArgs)}`)
       const removeCode = await run(npx, removeArgs, environment)
       if (removeCode !== 0) return removeCode

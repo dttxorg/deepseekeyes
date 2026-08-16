@@ -77,6 +77,7 @@ test('install and upgrade expose argument-safe one-line dry runs', async () => {
     assert.deepEqual(captured.errors, [])
     assert.equal(captured.output.length, 1)
     assert.match(captured.output[0], new RegExp(`^DEEPSEEKEYES_${command.toUpperCase()}=`))
+    assert.match(captured.output[0], /npx -y --package=@deepseek-ai\/dsh dsh plugin/)
     assert.match(captured.output[0], /--profile "qa profile" add @dttxorg\/deepseekeyes@0\.4\.0$/)
   }
 })

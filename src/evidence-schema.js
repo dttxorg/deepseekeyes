@@ -54,6 +54,136 @@ export const VISUAL_EVIDENCE_SCHEMA = deepFreeze(clone(schemaDocument))
 export const BASE_EVIDENCE_SCHEMA = schemaVariant('baseEvidence', 'DeepSeekEyes base visual evidence')
 export const TARGET_EVIDENCE_SCHEMA = schemaVariant('targetEvidence', 'DeepSeekEyes targeted visual evidence')
 
+const STRUCTURAL_LISTS = Object.freeze({
+  base: Object.freeze({
+    ocr: 'object',
+    regions: 'object',
+    objects: 'object',
+    relations: 'string',
+    quantitativeFacts: 'string',
+    uncertainties: 'string',
+  }),
+  target: Object.freeze({
+    observations: 'object',
+    ocr: 'object',
+    uncertainties: 'string',
+  }),
+})
+
+function canonicalVersion(kind) {
+  if (kind === 'base') return BASE_SCHEMA_VERSION
+  if (kind === 'target') return TARGET_SCHEMA_VERSION
+  throw new TypeError(`deepseekeyes: unknown evidence schema kind ${kind}`)
+}
+
+function repairRecord(path, action, original, canonical) {
+  return Object.freeze({
+    path,
+    action,
+    ...(original === undefined ? {} : { original: clone(original) }),
+    canonical: clone(canonical),
+  })
+}
+
+function canonicalNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  const trimmed = value.trim()
+  const percent = /^(-?(?:\d+(?:\.\d*)?|\.\d+))%$/.exec(trimmed)
+  const number = Number(percent === null ? trimmed : percent[1])
+  if (!Number.isFinite(number)) return undefined
+  return percent === null ? number : number / 100
+}
+
+function canonicalBox(value) {
+  if (Array.isArray(value)) {
+    const converted = value.map(canonicalNumber)
+    return converted.length === 4 && converted.every(entry => entry !== undefined)
+      ? converted
+      : undefined
+  }
+  if (value === null || typeof value !== 'object') return undefined
+  const xywh = ['x', 'y', 'width', 'height']
+  const xyxy = ['x1', 'y1', 'x2', 'y2']
+  const fields = xywh.every(field => Object.hasOwn(value, field))
+    ? xywh
+    : xyxy.every(field => Object.hasOwn(value, field)) ? xyxy : undefined
+  if (fields === undefined) return undefined
+  const converted = fields.map(field => canonicalNumber(value[field]))
+  return converted.every(entry => entry !== undefined) ? converted : undefined
+}
+
+function canonicalizeEntry(entry, path, repairs) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return
+  if (Object.hasOwn(entry, 'confidence')) {
+    const confidence = canonicalNumber(entry.confidence)
+    if (confidence !== undefined && confidence !== entry.confidence) {
+      repairs.push(repairRecord(`${path}/confidence`, 'number', entry.confidence, confidence))
+      entry.confidence = confidence
+    }
+  }
+  if (Object.hasOwn(entry, 'bbox')) {
+    const bbox = canonicalBox(entry.bbox)
+    if (bbox !== undefined && JSON.stringify(bbox) !== JSON.stringify(entry.bbox)) {
+      repairs.push(repairRecord(`${path}/bbox`, 'bbox-array', entry.bbox, bbox))
+      entry.bbox = bbox
+    }
+  }
+  if (Object.hasOwn(entry, 'attributes')) {
+    if (entry.attributes === null) {
+      repairs.push(repairRecord(`${path}/attributes`, 'empty-list', null, []))
+      entry.attributes = []
+    } else if (typeof entry.attributes === 'string') {
+      repairs.push(repairRecord(`${path}/attributes`, 'singleton-list', entry.attributes, [entry.attributes]))
+      entry.attributes = [entry.attributes]
+    }
+  } else if (Object.hasOwn(entry, 'name')) {
+    repairs.push(repairRecord(`${path}/attributes`, 'empty-list', undefined, []))
+    entry.attributes = []
+  }
+}
+
+/**
+ * Deterministically repair only contract structure and common scalar formats.
+ * No observed text/fact is invented or discarded; strict Ajv validation remains
+ * the final gate and the audit records every applied repair.
+ */
+export function canonicalizeEvidenceStructure(kind, value) {
+  const lists = STRUCTURAL_LISTS[kind]
+  if (lists === undefined) throw new TypeError(`deepseekeyes: unknown evidence schema kind ${kind}`)
+  const canonical = clone(value)
+  const repairs = []
+  const version = canonicalVersion(kind)
+  if (canonical.schemaVersion === undefined) {
+    repairs.push(repairRecord('/schemaVersion', 'contract-constant', undefined, version))
+    canonical.schemaVersion = version
+  }
+
+  for (const [field, itemType] of Object.entries(lists)) {
+    const current = canonical[field]
+    if (current === undefined || current === null) {
+      repairs.push(repairRecord(`/${field}`, 'empty-list', current, []))
+      canonical[field] = []
+      continue
+    }
+    if (!Array.isArray(current)
+      && ((itemType === 'string' && typeof current === 'string')
+        || (itemType === 'object' && typeof current === 'object'))) {
+      repairs.push(repairRecord(`/${field}`, 'singleton-list', current, [current]))
+      canonical[field] = [current]
+    }
+  }
+
+  for (const field of ['ocr', 'regions', 'objects', 'observations']) {
+    if (!Array.isArray(canonical[field])) continue
+    canonical[field].forEach((entry, index) => canonicalizeEntry(entry, `/${field}/${index}`, repairs))
+  }
+  return Object.freeze({
+    value: canonical,
+    audit: Object.freeze({ repairedCount: repairs.length, repairs: Object.freeze(repairs) }),
+  })
+}
+
 const BOX_EPSILON = 0.000001
 const COORDINATE_PRECISION = 1_000_000_000
 

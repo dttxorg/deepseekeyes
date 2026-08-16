@@ -4,13 +4,13 @@ import { DeepSeekEyesError, errorMessage } from './error.js'
 import {
   baseEvidencePrompt,
   evidenceCacheKey,
-  parseJsonObject,
+  parseEvidenceObject,
   targetEvidencePrompt,
   validateBaseEvidence,
   validateTargetEvidence,
 } from './protocol.js'
 import { addUsage, collectStream, emptyUsage } from './stream.js'
-import { normalizeEvidenceCoordinates } from './evidence-schema.js'
+import { canonicalizeEvidenceStructure, normalizeEvidenceCoordinates } from './evidence-schema.js'
 
 function acceptsVisionPrompt(info) {
   return Array.isArray(info?.inputModalities)
@@ -44,8 +44,21 @@ function maxTokenBudgetRejected(error) {
   return mentionsBudget && rejectsBudget
 }
 
-/** Retry once without an explicit output cap only when the provider rejected that cap before generation. */
-async function collectVisionStream(ctx, options) {
+function transientVisionTransportError(error) {
+  const code = failureCode(error)
+  const message = errorMessage(error)
+  if (code === 'INCOMPLETE_STREAM') return true
+  if (!['PI_AI_ERROR', 'VISION_MODEL_FAILED', 'invalid_request_error'].includes(code)) return false
+  return /(?:SSE|content_block_delta|Unexpected end of JSON input|stream ended|premature|connection reset|socket hang up)/i.test(message)
+}
+
+function combinedUsage(...values) {
+  const total = emptyUsage()
+  for (const value of values) addUsage(total, value)
+  return total
+}
+
+async function collectProviderManagedStream(ctx, options) {
   try {
     return await collectStream(ctx.llm.stream(options))
   } catch (error) {
@@ -55,6 +68,35 @@ async function collectVisionStream(ctx, options) {
     return {
       ...result,
       budgetFallback: Object.freeze({ requestedMaxTokens: maxTokens, applied: 'provider-managed' }),
+    }
+  }
+}
+
+/** Retry one same-route call only for a recognizable incomplete provider stream. */
+async function collectVisionStream(ctx, options) {
+  const started = Date.now()
+  try {
+    return await collectProviderManagedStream(ctx, options)
+  } catch (firstError) {
+    if (options.signal?.aborted || !transientVisionTransportError(firstError)) throw firstError
+    const retry = Object.freeze({
+      errorCode: failureCode(firstError),
+      durationMs: Date.now() - started,
+      usage: structuredClone(firstError.usage ?? emptyUsage()),
+    })
+    try {
+      const result = await collectProviderManagedStream(ctx, options)
+      return {
+        ...result,
+        usage: combinedUsage(retry.usage, result.usage),
+        transportRetries: Object.freeze([retry]),
+      }
+    } catch (error) {
+      if (error !== null && typeof error === 'object') {
+        error.usage = combinedUsage(retry.usage, error.usage)
+        error.transportRetries = Object.freeze([retry])
+      }
+      throw error
     }
   }
 }
@@ -95,13 +137,23 @@ function publicAttempts(attempts) {
   }))
 }
 
-function resultWithAttempts(result, route, attempts) {
-  const routeAttempts = publicAttempts(attempts)
-  if (result?.record === undefined) return { ...result, route, routeAttempts }
+function usageBreakdown(value) {
   return {
-    ...result,
-    route,
-    routeAttempts,
+    probe: structuredClone(value?.probe ?? emptyUsage()),
+    model: structuredClone(value?.model ?? emptyUsage()),
+  }
+}
+
+function resultWithAttempts(result, route, attempts, failedUsage, failedBreakdown) {
+  const routeAttempts = publicAttempts(attempts)
+  const breakdown = usageBreakdown(failedBreakdown)
+  addUsage(breakdown.probe, result?.usageBreakdown?.probe)
+  addUsage(breakdown.model, result?.usageBreakdown?.model ?? result?.usage)
+  const usage = combinedUsage(failedUsage, result?.usage)
+  const routed = { ...result, usage, usageBreakdown: breakdown, route, routeAttempts }
+  if (result?.record === undefined) return routed
+  return {
+    ...routed,
     record: {
       ...structuredClone(result.record),
       vision: {
@@ -286,6 +338,18 @@ export class VisionRouter {
     return this.attempts === undefined ? attempt : this.attempts.record(attempt)
   }
 
+  async recordTransportRetries(attempts, retries, input) {
+    for (const retry of retries ?? []) {
+      attempts.push(await this.recordAttempt({
+        ...input,
+        phase: 'transport-retry',
+        status: 'retry',
+        durationMs: retry.durationMs,
+        errorCode: retry.errorCode,
+      }))
+    }
+  }
+
   /** Execute one visual operation through ordered routes with bounded failover. */
   async run(operation, context, callback, signal) {
     const seeds = await this.routeSeeds(signal, context?.preferred)
@@ -296,6 +360,22 @@ export class VisionRouter {
     let lastError
     let openFallback
     const failureDetails = []
+    const failedUsage = emptyUsage()
+    const failedBreakdown = { probe: emptyUsage(), model: emptyUsage() }
+
+    const accumulateFailureUsage = (error) => {
+      addUsage(failedUsage, error?.usage)
+      addUsage(failedBreakdown.probe, error?.usageBreakdown?.probe)
+      addUsage(failedBreakdown.model, error?.usageBreakdown?.model ?? error?.usage)
+    }
+    const attachFailureContext = (error) => {
+      if (error !== null && typeof error === 'object') {
+        error.attempts = publicAttempts(attempts)
+        error.usage = structuredClone(failedUsage)
+        error.usageBreakdown = usageBreakdown(failedBreakdown)
+      }
+      return error
+    }
 
     for (const seed of seeds) {
       if (failoverIndex >= maximum) break
@@ -325,7 +405,7 @@ export class VisionRouter {
           imageSha256: context?.imageSha256,
         }))
         failoverIndex += 1
-        if (!failoverEligible(error, signal)) throw error
+        if (!failoverEligible(error, signal)) throw attachFailureContext(error)
         continue
       }
 
@@ -352,6 +432,15 @@ export class VisionRouter {
       try {
         const result = await callback(route)
         this.markSuccess(route)
+        await this.recordTransportRetries(attempts, result?.transportRetries, {
+          operation,
+          provider: route.provider,
+          model: route.model,
+          priority: seed.priority,
+          failoverIndex,
+          sessionId: context?.sessionId,
+          imageSha256: context?.imageSha256,
+        })
         attempts.push(await this.recordAttempt({
           operation,
           provider: route.provider,
@@ -364,15 +453,25 @@ export class VisionRouter {
           sessionId: context?.sessionId,
           imageSha256: context?.imageSha256,
         }))
-        return resultWithAttempts(result, route, attempts)
+        return resultWithAttempts(result, route, attempts, failedUsage, failedBreakdown)
       } catch (error) {
         lastError = error
+        accumulateFailureUsage(error)
         this.markFailure(route)
         failureDetails.push({
           provider: route.provider,
           model: route.model,
           errorCode: failureCode(error),
           message: diagnosticErrorMessage(error),
+        })
+        await this.recordTransportRetries(attempts, error?.transportRetries, {
+          operation,
+          provider: route.provider,
+          model: route.model,
+          priority: seed.priority,
+          failoverIndex,
+          sessionId: context?.sessionId,
+          imageSha256: context?.imageSha256,
         })
         attempts.push(await this.recordAttempt({
           operation,
@@ -388,7 +487,7 @@ export class VisionRouter {
           imageSha256: context?.imageSha256,
         }))
         failoverIndex += 1
-        if (!failoverEligible(error, signal)) throw error
+        if (!failoverEligible(error, signal)) throw attachFailureContext(error)
         this.logger.warn?.(
           `deepseekeyes: ${operation} failed on ${route.provider}/${route.model}; trying next visual route`,
         )
@@ -401,6 +500,15 @@ export class VisionRouter {
       try {
         const result = await callback(route)
         this.markSuccess(route)
+        await this.recordTransportRetries(attempts, result?.transportRetries, {
+          operation,
+          provider: route.provider,
+          model: route.model,
+          priority: seed.priority,
+          failoverIndex,
+          sessionId: context?.sessionId,
+          imageSha256: context?.imageSha256,
+        })
         attempts.push(await this.recordAttempt({
           operation,
           provider: route.provider,
@@ -413,15 +521,25 @@ export class VisionRouter {
           sessionId: context?.sessionId,
           imageSha256: context?.imageSha256,
         }))
-        return resultWithAttempts(result, route, attempts)
+        return resultWithAttempts(result, route, attempts, failedUsage, failedBreakdown)
       } catch (error) {
         lastError = error
+        accumulateFailureUsage(error)
         this.markFailure(route)
         failureDetails.push({
           provider: route.provider,
           model: route.model,
           errorCode: failureCode(error),
           message: diagnosticErrorMessage(error),
+        })
+        await this.recordTransportRetries(attempts, error?.transportRetries, {
+          operation,
+          provider: route.provider,
+          model: route.model,
+          priority: seed.priority,
+          failoverIndex,
+          sessionId: context?.sessionId,
+          imageSha256: context?.imageSha256,
         })
         attempts.push(await this.recordAttempt({
           operation,
@@ -437,13 +555,13 @@ export class VisionRouter {
           imageSha256: context?.imageSha256,
         }))
         failoverIndex += 1
+        if (!failoverEligible(error, signal)) throw attachFailureContext(error)
       }
     }
 
     const failedAttempts = attempts.filter(attempt => attempt.status === 'failed')
     if (failedAttempts.length === 1 && lastError !== undefined) {
-      lastError.attempts = publicAttempts(attempts)
-      throw lastError
+      throw attachFailureContext(lastError)
     }
     const routeSummary = failureDetails
       .map(detail => `${detail.provider}/${detail.model} [${detail.errorCode}]`)
@@ -457,6 +575,8 @@ export class VisionRouter {
       { cause: lastError },
     )
     exhausted.attempts = publicAttempts(attempts)
+    exhausted.usage = structuredClone(failedUsage)
+    exhausted.usageBreakdown = usageBreakdown(failedBreakdown)
     throw exhausted
   }
 }
@@ -568,40 +688,57 @@ export class EvidenceManager {
     const proof = await this.probe.ensure(route, signal)
     addUsage(totalUsage, proof.usage)
 
-    const result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
-      provider: route.provider,
-      model: route.model,
-      system: 'You are the visual evidence component of DeepSeekEyes. Observe pixels literally and return strict JSON.',
-      messages: [pluginUserMessage([
-        { type: 'image', attachment: block.attachment },
-        { type: 'text', text: baseEvidencePrompt(source) },
-      ], 'DeepSeekEyes 基础视觉读取')],
-      temperature: 0,
-      ...tokenBudget(this.config.baseMaxTokens),
-      signal,
-    }), 'base visual evidence', this.config.baseMaxTokens)
-    addUsage(totalUsage, result.usage)
-    const parsed = parseJsonObject(result.text, 'base visual evidence', { allowWrapper: true })
-    const coordinates = normalizeEvidenceCoordinates('base', parsed, source, route)
-    const evidence = validateBaseEvidence(coordinates.value)
-    const record = this.rememberBase(await this.cache.write(key, {
-      recordVersion: 1,
-      kind: 'base',
-      createdAt: new Date().toISOString(),
-      source,
-      vision: {
+    let result
+    try {
+      result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
         provider: route.provider,
         model: route.model,
-        validation: proof.validation,
-        coordinateNormalization: coordinates.audit,
-      },
-      evidence,
-    }))
-    return {
-      record,
-      usage: totalUsage,
-      cacheHit: false,
-      usageBreakdown: { probe: proof.usage, model: result.usage },
+        system: 'You are the visual evidence component of DeepSeekEyes. Observe pixels literally and return strict JSON.',
+        messages: [pluginUserMessage([
+          { type: 'image', attachment: block.attachment },
+          { type: 'text', text: baseEvidencePrompt(source) },
+        ], 'DeepSeekEyes 基础视觉读取')],
+        temperature: 0,
+        ...tokenBudget(this.config.baseMaxTokens),
+        signal,
+      }), 'base visual evidence', this.config.baseMaxTokens)
+      addUsage(totalUsage, result.usage)
+      const parsed = parseEvidenceObject('base', result.text, 'base visual evidence')
+      const structure = canonicalizeEvidenceStructure('base', parsed)
+      const coordinates = normalizeEvidenceCoordinates('base', structure.value, source, route)
+      const evidence = validateBaseEvidence(coordinates.value)
+      const record = this.rememberBase(await this.cache.write(key, {
+        recordVersion: 1,
+        kind: 'base',
+        createdAt: new Date().toISOString(),
+        source,
+        vision: {
+          provider: route.provider,
+          model: route.model,
+          validation: proof.validation,
+          structuralCanonicalization: structure.audit,
+          coordinateNormalization: coordinates.audit,
+        },
+        evidence,
+      }))
+      return {
+        record,
+        usage: totalUsage,
+        cacheHit: false,
+        usageBreakdown: { probe: proof.usage, model: result.usage },
+        ...(result.transportRetries === undefined ? {} : { transportRetries: result.transportRetries }),
+      }
+    } catch (error) {
+      const modelUsage = result?.usage ?? error?.usage ?? emptyUsage()
+      if (result === undefined) addUsage(totalUsage, modelUsage)
+      if (error !== null && typeof error === 'object') {
+        error.usage = structuredClone(totalUsage)
+        error.usageBreakdown = { probe: structuredClone(proof.usage), model: structuredClone(modelUsage) }
+        if (error.transportRetries === undefined && result?.transportRetries !== undefined) {
+          error.transportRetries = result.transportRetries
+        }
+      }
+      throw error
     }
   }
 
@@ -623,44 +760,61 @@ export class EvidenceManager {
       }
     }
     const proof = await this.probe.ensure(route, signal)
-    const result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
-      provider: route.provider,
-      model: route.model,
-      system: 'You are the visual clarification component of DeepSeekEyes. Re-read the original pixels and return strict JSON.',
-      messages: [pluginUserMessage([
-        { type: 'image', attachment: block.attachment },
-        { type: 'text', text: targetEvidencePrompt(baseRecord.source, request) },
-      ], 'DeepSeekEyes 视觉细节核对')],
-      temperature: 0,
-      ...tokenBudget(this.config.targetMaxTokens),
-      signal,
-    }), 'target visual evidence', this.config.targetMaxTokens)
-    const parsed = parseJsonObject(result.text, 'target visual evidence', { allowWrapper: true })
-    const coordinates = normalizeEvidenceCoordinates('target', parsed, baseRecord.source, route)
-    const evidence = validateTargetEvidence(coordinates.value)
-    const record = await this.cache.write(key, {
-      recordVersion: 1,
-      kind: 'target',
-      createdAt: new Date().toISOString(),
-      source: baseRecord.source,
-      vision: {
-        provider: route.provider,
-        model: route.model,
-        validation: proof.validation,
-        coordinateNormalization: coordinates.audit,
-      },
-      question: request.question,
-      ...(request.region === undefined ? {} : { region: request.region }),
-      evidence,
-    })
+    let result
     const usage = emptyUsage()
     addUsage(usage, proof.usage)
-    addUsage(usage, result.usage)
-    return {
-      record,
-      usage,
-      cacheHit: false,
-      usageBreakdown: { probe: proof.usage, model: result.usage },
+    try {
+      result = requireCompleteEvidence(await collectVisionStream(this.ctx, {
+        provider: route.provider,
+        model: route.model,
+        system: 'You are the visual clarification component of DeepSeekEyes. Re-read the original pixels and return strict JSON.',
+        messages: [pluginUserMessage([
+          { type: 'image', attachment: block.attachment },
+          { type: 'text', text: targetEvidencePrompt(baseRecord.source, request) },
+        ], 'DeepSeekEyes 视觉细节核对')],
+        temperature: 0,
+        ...tokenBudget(this.config.targetMaxTokens),
+        signal,
+      }), 'target visual evidence', this.config.targetMaxTokens)
+      addUsage(usage, result.usage)
+      const parsed = parseEvidenceObject('target', result.text, 'target visual evidence')
+      const structure = canonicalizeEvidenceStructure('target', parsed)
+      const coordinates = normalizeEvidenceCoordinates('target', structure.value, baseRecord.source, route)
+      const evidence = validateTargetEvidence(coordinates.value)
+      const record = await this.cache.write(key, {
+        recordVersion: 1,
+        kind: 'target',
+        createdAt: new Date().toISOString(),
+        source: baseRecord.source,
+        vision: {
+          provider: route.provider,
+          model: route.model,
+          validation: proof.validation,
+          structuralCanonicalization: structure.audit,
+          coordinateNormalization: coordinates.audit,
+        },
+        question: request.question,
+        ...(request.region === undefined ? {} : { region: request.region }),
+        evidence,
+      })
+      return {
+        record,
+        usage,
+        cacheHit: false,
+        usageBreakdown: { probe: proof.usage, model: result.usage },
+        ...(result.transportRetries === undefined ? {} : { transportRetries: result.transportRetries }),
+      }
+    } catch (error) {
+      const modelUsage = result?.usage ?? error?.usage ?? emptyUsage()
+      if (result === undefined) addUsage(usage, modelUsage)
+      if (error !== null && typeof error === 'object') {
+        error.usage = structuredClone(usage)
+        error.usageBreakdown = { probe: structuredClone(proof.usage), model: structuredClone(modelUsage) }
+        if (error.transportRetries === undefined && result?.transportRetries !== undefined) {
+          error.transportRetries = result.transportRetries
+        }
+      }
+      throw error
     }
   }
 }

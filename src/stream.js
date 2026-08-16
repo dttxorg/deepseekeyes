@@ -39,20 +39,29 @@ export async function collectStream(stream) {
   const chunks = []
   const usage = emptyUsage()
   let finish
-  for await (const chunk of stream) {
-    chunks.push(chunk)
-    if (chunk.type === 'usage') addUsage(usage, chunk.usage)
-    if (chunk.type === 'finish') finish = chunk
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk)
+      if (chunk.type === 'usage') addUsage(usage, chunk.usage)
+      if (chunk.type === 'finish') finish = chunk
+    }
+  } catch (error) {
+    if (error !== null && typeof error === 'object') error.usage = structuredClone(usage)
+    throw error
   }
   if (finish === undefined) {
-    throw new DeepSeekEyesError('a nested model stream ended without a finish chunk', 'INCOMPLETE_STREAM')
+    const error = new DeepSeekEyesError('a nested model stream ended without a finish chunk', 'INCOMPLETE_STREAM')
+    error.usage = structuredClone(usage)
+    throw error
   }
   if (finish.reason?.kind === 'error' || finish.reason?.kind === 'aborted') {
     const failure = finish.reason.failure ?? {}
-    throw new DeepSeekEyesError(
+    const error = new DeepSeekEyesError(
       `nested ${finish.reason.kind} from model provider: ${failure.message ?? 'unknown failure'}`,
       failure.code ?? (finish.reason.kind === 'aborted' ? 'ABORTED' : 'VISION_MODEL_FAILED'),
     )
+    error.usage = structuredClone(usage)
+    throw error
   }
   return { chunks, usage, finish, text: textFromChunks(chunks) }
 }

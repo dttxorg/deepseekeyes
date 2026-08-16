@@ -54,6 +54,37 @@ export function activeImageBlocks(messages) {
   return uniqueImageBlocks((messages ?? []).slice(activeMessageStart(messages)))
 }
 
+function containsDesktopState(blocks) {
+  if (!Array.isArray(blocks)) return false
+  return blocks.some(block =>
+    (block?.type === 'text' && isDesktopStateText(block.text))
+      || (block?.type === 'tool-result' && containsDesktopState(block.content)),
+  )
+}
+
+function collectDesktopImageKeys(blocks, found) {
+  if (!Array.isArray(blocks)) return
+  for (const block of blocks) {
+    if (block?.type !== 'tool-result') continue
+    if (block.toolName === 'computer' && containsDesktopState(block.content)) {
+      const images = new Map()
+      collectBlocks(block.content, images)
+      for (const key of images.keys()) found.add(key)
+      continue
+    }
+    collectDesktopImageKeys(block.content, found)
+  }
+}
+
+/** Image attachments emitted by the active native computer tool result only. */
+export function activeDesktopImageAttachmentKeys(messages) {
+  const found = new Set()
+  for (const message of (messages ?? []).slice(activeMessageStart(messages))) {
+    collectDesktopImageKeys(message.content, found)
+  }
+  return found
+}
+
 export function historicalImageBlocks(messages) {
   return uniqueImageBlocks((messages ?? []).slice(0, activeMessageStart(messages)))
 }

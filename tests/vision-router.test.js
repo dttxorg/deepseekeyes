@@ -126,6 +126,47 @@ test('failover bound zero preserves the primary error and skips fallback executi
   assert.equal(calls, 1)
 })
 
+test('a route-independent stop preserves usage from every earlier visual attempt', async () => {
+  const ctx = mockContext()
+  for (const [provider, model] of [['primary', 'vision-a'], ['fallback', 'vision-b'], ['unused', 'vision-c']]) {
+    ctx.llm.addProvider(provider, [{ id: model, inputModalities: ['text', 'image'] }])
+  }
+  const router = new VisionRouter(ctx, resolveConfig({
+    cacheDir: false,
+    visionProvider: 'primary',
+    visionModel: 'vision-a',
+    visionRoutePriority: 'fallback/vision-b\nunused/vision-c',
+    autoDetectVision: false,
+    visionFailoverAttempts: 2,
+  }, {}, '/tmp'), { warn() {}, info() {} })
+  const visited = []
+  await assert.rejects(
+    router.run('base', {}, async (route) => {
+      visited.push(route.provider)
+      const error = new DeepSeekEyesError(
+        route.provider === 'primary' ? 'transient primary failure' : 'evidence persistence failed',
+        route.provider === 'primary' ? 'PROVIDER_UNAVAILABLE' : 'EVIDENCE_PERSIST_FAILED',
+      )
+      error.usage = route.provider === 'primary'
+        ? { inputTokens: 3, outputTokens: 1 }
+        : { inputTokens: 5, outputTokens: 2 }
+      error.usageBreakdown = {
+        probe: { inputTokens: 0, outputTokens: 0 },
+        model: structuredClone(error.usage),
+      }
+      throw error
+    }),
+    (error) => {
+      assert.equal(error.code, 'EVIDENCE_PERSIST_FAILED')
+      assert.deepEqual(error.usage, { inputTokens: 8, outputTokens: 3 })
+      assert.deepEqual(error.usageBreakdown.model, { inputTokens: 8, outputTokens: 3 })
+      assert.equal(error.attempts.length, 2)
+      return true
+    },
+  )
+  assert.deepEqual(visited, ['primary', 'fallback'])
+})
+
 test('multi-route exhaustion reports every route code and the final failure cause', async () => {
   const ctx = mockContext()
   for (const [provider, model] of [['primary', 'vision-a'], ['fallback', 'vision-b'], ['last', 'vision-c']]) {

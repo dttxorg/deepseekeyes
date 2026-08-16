@@ -89,7 +89,10 @@ On macOS, launch resolution uses Launch Services/`NSWorkspace` plus `/usr/bin/op
 
 - Attachment identity/persistence failures are route-independent and stop immediately.
 - Provider, probe, malformed-output and schema failures are eligible for bounded failover.
+- Reasoning-prefixed/multi-object evidence is selected by contract; known empty-list and numeric/bbox structure is canonicalized locally and audited before the unchanged strict Schema gate.
+- A recognizable incomplete SSE transport may retry once on the same route. Retry attempts and Provider-reported usage remain visible.
 - A single-route failure preserves its original error code; multi-route exhaustion returns `VISION_FAILOVER_EXHAUSTED` plus structured attempts.
 - The final DeepSeek model never receives unvalidated evidence.
+- Desktop screenshot exhaustion may forward only the already-validated native semantic state plus an explicit pixels-not-decoded marker; ordinary uploaded images remain fail-closed.
 - Pure-text turns create no vision route, probe, screenshot or attempt record.
 - Native desktop refs are current-state capabilities: stale refs do not execute actions, and missing window captures do not silently widen to the desktop.

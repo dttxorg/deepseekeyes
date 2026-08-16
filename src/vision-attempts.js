@@ -22,8 +22,8 @@ function normalizeAttempt(input, now) {
     model: String(input.model ?? '').slice(0, 512),
     priority: boundedInteger(input.priority),
     failoverIndex: boundedInteger(input.failoverIndex),
-    phase: ['health', 'operation', 'circuit'].includes(input.phase) ? input.phase : 'operation',
-    status: ['success', 'cache-hit', 'failed', 'skipped-open-circuit'].includes(input.status)
+    phase: ['health', 'operation', 'circuit', 'transport-retry'].includes(input.phase) ? input.phase : 'operation',
+    status: ['success', 'cache-hit', 'failed', 'skipped-open-circuit', 'retry'].includes(input.status)
       ? input.status
       : 'failed',
     durationMs: boundedInteger(input.durationMs),

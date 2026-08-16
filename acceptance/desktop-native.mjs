@@ -44,6 +44,7 @@ const session = new DesktopSession(ctx, config, { sessionId: 'native-acceptance'
 const result = await session.execute(parseDesktopArgs({
   action: 'observe', scope: 'desktop', includeScreenshot: true,
 }))
+let latestResult = result
 assert.equal(result.platform, process.platform)
 assert.ok(result.screenshot.bytes > 0)
 assert.equal(result.capabilities?.screenshot, true)
@@ -91,6 +92,7 @@ if (target !== undefined) {
     if (usableTarget(windowSource) === undefined) throw error
     windowResult = await observeTarget(windowSource)
   }
+  latestResult = windowResult
   assert.equal(windowResult.observationScope.type, 'window')
   assert.equal(
     windowResult.observationScope.window.ref,
@@ -148,6 +150,7 @@ if (process.platform === 'darwin' && acceptanceApplication) {
     action: 'observe', scope: 'window', windowRef: byApplication.observationScope.window.ref,
     includeScreenshot: true,
   }))
+  latestResult = byRef
   assert.equal(byRef.ok, true)
   assert.equal(byRef.observationScope.type, 'window')
   assert.equal(byRef.observationScope.window.ref, byApplication.observationScope.window.ref)
@@ -157,6 +160,42 @@ if (process.platform === 'darwin' && acceptanceApplication) {
     capturedApplication: byApplication.observationScope.window.application,
     refWithoutStateId: true,
     semanticStatus: byApplication.semanticStatus,
+  }
+}
+let windowsCoordinateAction = 'skipped-non-windows'
+if (process.platform === 'win32') {
+  const x = Math.max(0, Math.min(latestResult.screen.width - 1, Math.round(latestResult.cursor?.x ?? 0)))
+  const y = Math.max(0, Math.min(latestResult.screen.height - 1, Math.round(latestResult.cursor?.y ?? 0)))
+  const moved = await session.execute(parseDesktopArgs({
+    action: 'move_cursor', stateId: latestResult.stateId, x, y, includeScreenshot: false,
+  }))
+  assert.equal(moved.ok, true)
+  assert.equal(moved.actionResult?.moved, true)
+  assert.ok(Math.abs(moved.cursor.x - x) <= 1)
+  assert.ok(Math.abs(moved.cursor.y - y) <= 1)
+  latestResult = moved
+  windowsCoordinateAction = { moved: true, x, y, click: 'skipped-outside-ci' }
+  if (process.env.CI === 'true') {
+    const clicked = await session.execute(parseDesktopArgs({
+      action: 'click', stateId: latestResult.stateId, x: 0, y: 0, includeScreenshot: false,
+    }))
+    assert.equal(clicked.ok, true)
+    assert.equal(clicked.actionResult?.performed, 'click')
+    assert.ok(Math.abs(clicked.cursor.x) <= 1)
+    assert.ok(Math.abs(clicked.cursor.y) <= 1)
+    windowsCoordinateAction.click = 'passed'
+    const negativeOriginClicked = await session.driver.execute({
+      action: 'click',
+      x: 4,
+      y: 0,
+      screen: { x: result.screen.x - 4, y: result.screen.y },
+      captureScope: 'desktop',
+    })
+    assert.equal(negativeOriginClicked.ok, true)
+    assert.equal(negativeOriginClicked.actionResult?.performed, 'click')
+    assert.ok(Math.abs(negativeOriginClicked.cursor.x) <= 1)
+    assert.ok(Math.abs(negativeOriginClicked.cursor.y) <= 1)
+    windowsCoordinateAction.negativeOriginClick = 'passed'
   }
 }
 console.log(JSON.stringify({
@@ -182,5 +221,6 @@ console.log(JSON.stringify({
     discoveryRefreshes: windowRefreshes,
   },
   applicationRouting,
+  windowsCoordinateAction,
   capabilities: result.capabilities,
 }))

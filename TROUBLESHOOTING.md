@@ -34,14 +34,14 @@ Changing one does not change the other. Save the settings card before reopening 
 
 ## `base visual evidence was not one valid JSON object`
 
-The Provider returned prose, truncated JSON or a wrapper outside the JSON object. Version 0.4.2 restores 0.2-compatible extraction of one uniquely identifiable JSON object for visual evidence and the active probe; multiple objects and malformed JSON remain rejected. Clarification control messages remain whole-response strict.
+The Provider returned prose, truncated JSON or a wrapper outside the JSON object. Version 0.5.5 accepts a reasoning preamble and multiple balanced JSON candidates for visual evidence, preferring the final object that declares the expected evidence contract. Missing empty lists and common confidence/bbox scalar forms are repaired locally with an audit before strict Schema validation. Malformed JSON and unrepairable/extra fields remain rejected. Clarification control messages remain whole-response strict.
 
 1. Set **Fallback vision route priority** to one `provider/model` per line.
 2. Keep health checks and route-attempt logging enabled.
 3. Inspect `$DSH_HOME/deepseekeyes/vision-attempts.json` for status, error code and latency.
 4. Raise the visual output budget or select provider-managed output (`0`) when the model truncates a dense screenshot.
 
-Current releases keep the initial evidence pass bounded and leave the original attachment available for precise targeted rereads. If an explicit `maxTokens` value is rejected before generation, DeepSeekEyes retries that route once with Provider-managed output. This retry is limited to explicit budget-rejection diagnostics and is not used for content or Schema failures. A `max-tokens` finish after generation is reported as `VISION_OUTPUT_TRUNCATED` instead of being mislabelled as malformed JSON.
+Current releases keep the initial evidence pass bounded and leave the original attachment available for precise targeted rereads. If an explicit `maxTokens` value is rejected before generation, DeepSeekEyes retries that route once with Provider-managed output. A recognizable incomplete Anthropic SSE stream may also retry once on the same route; its attempt and both Provider-reported usages are recorded. Neither retry applies to content or Schema failures. A `max-tokens` finish after generation is reported as `VISION_OUTPUT_TRUNCATED` instead of being mislabelled as malformed JSON.
 
 ## `bbox/N must be <= 1` or `normalizedBox` validation failures
 
@@ -57,7 +57,9 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 If the `computer` result already contains `"ok": true`, a `stateId`, screenshot hashes and image attachments, desktop capture succeeded. This later error belongs to the visual evidence route, not the native mouse/screenshot driver.
 
-The surfaced error now includes the ordered `provider/model [ERROR_CODE]` chain and a redacted final cause. Use that chain together with `$DSH_HOME/deepseekeyes/vision-attempts.json` to distinguish Provider budget rejection, output truncation, active-probe failure and strict Schema rejection. The attempt log remains privacy-bounded and stores error codes rather than Provider message bodies.
+The surfaced error includes the ordered `provider/model [ERROR_CODE]` chain and a redacted final cause. Use that chain together with `$DSH_HOME/deepseekeyes/vision-attempts.json` to distinguish Provider budget rejection, output truncation, active-probe failure, transient transport retry and strict Schema rejection. The attempt log remains privacy-bounded and stores error codes rather than Provider message bodies.
+
+From 0.5.5, exhaustion while processing a `computer` screenshot does not discard an otherwise valid native state. The model receives the adjacent `actionResult`, windows, accessibility elements, `stateDelta`, screenshot hash and a `desktop visual fallback` marker that explicitly says pixels were not decoded. A pasted user image still fails strictly because it has no independent native state to reason from.
 
 When `DSH_HOME` is not exported into the web process, 0.4.2 follows Harness and resolves it to `~/.dsh`; logs and evidence therefore remain under `~/.dsh/deepseekeyes/` on Windows, macOS and Linux.
 
@@ -111,6 +113,8 @@ Grant **Screen Recording** and **Accessibility** to the terminal that starts `ds
 ## Windows desktop actions fail
 
 Confirm `powershell.exe` exists or configure its absolute path in the plugin card. DeepSeekEyes uses Windows UI Automation, `user32`, `SendInput` and `System.Drawing`; no separate desktop automation runtime is installed. If screenshots work but `elements` is empty, confirm the target app exposes UI Automation and that the DSH process runs at a compatible integrity level.
+
+If 0.5.4 or earlier reports mojibake together with `[System.Object[]]` and `op_Addition` on `click`, upgrade to 0.5.5. The Windows helper now forces UTF-8 JSON, scalarizes coordinate operands and uses the latest screenshot/window origin (including negative multi-monitor coordinates) before calling `user32`. Windows CI executes both `move_cursor` and a real `click` through this path.
 
 ## A window-scoped observation returns an error
 

@@ -85,7 +85,7 @@ These are real DeepSeek Harness captures, not product mockups. They show the two
 | **No surprise text overhead** | Pure-text turns keep the direct model path: no visual call, no Computer Use tool and no DeepSeekEyes usage entry. |
 | **The eye is verified** | Static image-capability metadata is followed by an optional randomized 3×3 pixel probe. A text-only model cannot silently pose as the eye. |
 | **Routes fail over visibly** | Ordered visual routes, health TTL, circuit cooldown and bounded attempts are persisted without prompt/image contents. |
-| **Evidence is a contract** | One public JSON Schema generates a compact model-friendly shape and drives strict Ajv validation; unknown or malformed nested fields stop the route. |
+| **Evidence is a contract** | One public JSON Schema drives strict Ajv validation; bounded local canonicalization repairs only known structure/scalar formats and audits every change. |
 | **Automation is built in** | Browser Computer Use plus native Windows/macOS desktop control can observe, act, verify and preserve evidence. |
 | **Usage is visible** | The native settings card separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
@@ -190,6 +190,10 @@ Every action captures and preserves another lossless PNG. The default `desktopVi
 
 A known target remains window-scoped; an explicit application/title always overrides the previous capture. On macOS, the runtime prefers the focused/main usable window over tiny auxiliary dialogs and walks Accessibility children under both the configured element bound and a helper-time budget, avoiding an unbounded Electron tree scan. `semanticStatus` reports availability, truncation/limit reason and elapsed semantic time. `timings` reports native round-trip, semantic collection, screenshot processing and total tool time; `visualDelivery` explains whether vision was invoked or bypassed. Coordinates are relative to a delivered image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
 
+On Windows, the native helper consumes and emits UTF-8 JSON under Windows PowerShell 5.1 and converts screenshot-relative coordinates through scalar screen origins before calling `user32`. Window-scoped clicks therefore honor negative/multi-monitor origins without the PowerShell `System.Object[] / op_Addition` failure. Cross-platform CI executes the real Windows move/click path rather than only parsing the helper.
+
+If every bounded visual route fails for a `computer` screenshot, the original PNG, hash and route attempts stay preserved and DeepSeek continues from the adjacent native state (`actionResult`, windows, accessibility elements and `stateDelta`). The fallback explicitly states that pixels were not decoded. Pasted user images and explicit pixel-dependent reads remain strict and still fail when no validated evidence exists.
+
 ## Token accounting
 
 The native plugin card exposes **Token usage statistics** without making a statistics model call.
@@ -214,10 +218,11 @@ export DEEPSEEKEYES_USAGE_STATS=false
 
 - User images pass through `ctx.attachments.readImage()` as the original Harness `ImageBlock`.
 - Original MIME type, byte length, dimensions and SHA-256 are recorded with the evidence.
-- Visual evidence is validated against the public [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json) before DeepSeek sees it; a compact example is generated from that same source for 0.2-compatible model prompting, and every nested object still rejects extra fields.
+- Visual evidence is validated against the public [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json) before DeepSeek sees it; a compact example is generated from that source, reasoning-prefixed outputs select the final matching evidence object, and every nested object still rejects extra fields.
+- Missing empty lists and common numeric confidence/bbox forms are canonicalized locally with a field-level audit. One recognizable incomplete SSE stream may retry once on the same route; both call usages are counted.
 - Common model coordinate conventions (normalized/pixel `xywh`, normalized/pixel `xyxy`, and Qwen 0–1000 `xyxy`) are deterministically normalized and audited without another model call.
 - A targeted reread references original pixels—not a thumbnail, JPEG copy or summary of a summary.
-- Failed vision calls, invalid evidence or exhausted clarification bounds stop the visual turn instead of inviting a guess.
+- Failed direct-image reads, invalid evidence and exhausted clarification bounds stop the visual turn instead of inviting a guess. Desktop tool screenshots alone may fall back to their explicit native semantic state, never to invented pixel claims.
 - Browser/Desktop screenshots carry content-addressed state and stale-action protection.
 - Typed text, assigned values and launch arguments are hashed in persisted Computer Use reports.
 

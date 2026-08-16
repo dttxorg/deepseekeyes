@@ -4,6 +4,7 @@ import {
   BROWSER_HISTORY_PREFIX,
   DESKTOP_HISTORY_PREFIX,
   DESKTOP_STATE_PREFIX,
+  activeDesktopImageAttachmentKeys,
   messagesHaveImages,
   messagesNeedHistoryCompaction,
   replaceImagesWithEvidence,
@@ -26,6 +27,39 @@ test('nested tool-result images are discovered and replaced without mutating his
   assert.equal(replaced[0].content[0].content[0].type, 'text')
   assert.equal(replaced[0].content[0].content[0].text, 'evidence')
   assert.equal(messages[0].content[0].content[0].type, 'image')
+})
+
+test('desktop fallback classification includes only active computer screenshots', () => {
+  const desktopRef = { attachmentId: 'desktop-image', mediaType: 'image/png' }
+  const browserRef = { attachmentId: 'browser-image', mediaType: 'image/png' }
+  const messages = [userMessage([
+    {
+      type: 'tool-result',
+      toolName: 'computer',
+      content: [
+        { type: 'text', text: `${DESKTOP_STATE_PREFIX}{"stateId":"desktop-state:test"}` },
+        { type: 'image', attachment: desktopRef },
+      ],
+    },
+    {
+      type: 'tool-result',
+      toolName: 'browser',
+      content: [
+        { type: 'text', text: `${BROWSER_HISTORY_PREFIX}{"stateId":"browser-state:test"}` },
+        { type: 'image', attachment: browserRef },
+      ],
+    },
+  ])]
+  assert.deepEqual([...activeDesktopImageAttachmentKeys(messages)], ['desktop-image'])
+  const spoofed = [userMessage([{
+    type: 'tool-result',
+    toolName: 'other-tool',
+    content: [
+      { type: 'text', text: `${DESKTOP_STATE_PREFIX}{"stateId":"spoofed"}` },
+      { type: 'image', attachment: desktopRef },
+    ],
+  }])]
+  assert.deepEqual([...activeDesktopImageAttachmentKeys(spoofed)], [])
 })
 
 test('compact Surface markers obey recent limits including the zero setting', () => {

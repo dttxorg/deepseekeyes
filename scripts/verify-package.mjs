@@ -30,7 +30,9 @@ const required = [
 ]
 
 if (manifest.name !== '@dttxorg/deepseekeyes') throw new Error('package name must be @dttxorg/deepseekeyes')
-if (manifest.version !== '0.5.4') throw new Error('release version must be 0.5.4')
+if (typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(manifest.version)) {
+  throw new Error('package version must be a stable semantic version')
+}
 if (manifest.bin?.deepseekeyes !== './bin/deepseekeyes.js') throw new Error('missing deepseekeyes CLI binary')
 if (manifest.dependencies?.ajv !== '8.20.0') throw new Error('strict JSON Schema validator must pin ajv 8.20.0')
 if (manifest.dependencies?.['playwright-core'] !== '1.61.1') {
@@ -47,6 +49,9 @@ const clientSource = await readFile(new URL('lib/client.js', root), 'utf8')
 const clientPrefix = `window.__ModuleLoader__.load({ id: ${JSON.stringify(manifest.name)}`
 if (!clientSource.startsWith(clientPrefix)) {
   throw new Error(`client bundle must register the scoped package id ${manifest.name}`)
+}
+if (!clientSource.includes(`var PLUGIN_VERSION = ${JSON.stringify(manifest.version)};`)) {
+  throw new Error(`client bundle version must match package version ${manifest.version}`)
 }
 
 const evidenceSchema = JSON.parse(await readFile(new URL('schemas/visual-evidence.schema.json', root), 'utf8'))

@@ -1,6 +1,13 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Windows PowerShell 5.1 otherwise inherits the active console code page. Keep
+# stdin JSON and localized error JSON UTF-8 so Node never receives mojibake.
+$script:DeepSeekEyesUtf8 = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $script:DeepSeekEyesUtf8
+[Console]::OutputEncoding = $script:DeepSeekEyesUtf8
+$OutputEncoding = $script:DeepSeekEyesUtf8
+
 Add-Type -AssemblyName System.Drawing
 
 $script:DeepSeekEyesSemanticAvailable = $false
@@ -341,10 +348,9 @@ function Resolve-AutomationElement($InputObject) {
 function Get-AutomationCenter($Element) {
     $rectangle = $Element.Current.BoundingRectangle
     if ($rectangle.Width -le 0 -or $rectangle.Height -le 0) { throw 'accessibility element has no clickable bounds' }
-    return @(
-        [int][Math]::Round($rectangle.X + $rectangle.Width / 2),
-        [int][Math]::Round($rectangle.Y + $rectangle.Height / 2)
-    )
+    $centerX = [int][Math]::Round([double]$rectangle.X + ([double]$rectangle.Width / 2))
+    $centerY = [int][Math]::Round([double]$rectangle.Y + ([double]$rectangle.Height / 2))
+    return [int[]]@($centerX, $centerY)
 }
 
 function Invoke-AutomationAction($Element, [string]$ActionName) {
@@ -387,10 +393,16 @@ function Invoke-AutomationAction($Element, [string]$ActionName) {
 }
 
 function Convert-ToAbsolutePoint($InputObject, $Screen, [string]$XName, [string]$YName) {
-    return @(
-        [int]$Screen.X + [int](Get-PropertyValue $InputObject $XName 0),
-        [int]$Screen.Y + [int](Get-PropertyValue $InputObject $YName 0)
-    )
+    # PowerShell 5.1 can promote inline comma expressions to Object[] before
+    # applying '+', producing the field report: Object[] has no op_Addition.
+    # Force every operand to a scalar before constructing the two-item array.
+    $originX = [Convert]::ToInt32((Get-PropertyValue $Screen 'X' 0))
+    $originY = [Convert]::ToInt32((Get-PropertyValue $Screen 'Y' 0))
+    $relativeX = [Convert]::ToInt32((Get-PropertyValue $InputObject $XName 0))
+    $relativeY = [Convert]::ToInt32((Get-PropertyValue $InputObject $YName 0))
+    $absoluteX = [int]($originX + $relativeX)
+    $absoluteY = [int]($originY + $relativeY)
+    return [int[]]@($absoluteX, $absoluteY)
 }
 
 function Send-KeyCombination([string]$Combination) {
@@ -568,13 +580,23 @@ function Invoke-Action($InputObject, $Screen) {
     throw "unsupported Windows action $action"
 }
 
+$inputObject = $null
 try {
     $inputObject = Read-DeepSeekEyesInput
     $initialScreen = [pscustomobject]@{
         X = [DeepSeekEyesNative]::GetSystemMetrics(76)
         Y = [DeepSeekEyesNative]::GetSystemMetrics(77)
     }
-    $actionResult = Invoke-Action $inputObject $initialScreen
+    $latestScreen = Get-PropertyValue $inputObject 'screen'
+    $actionScreen = if ($null -eq $latestScreen) {
+        $initialScreen
+    } else {
+        [pscustomobject]@{
+            X = [Convert]::ToInt32((Get-PropertyValue $latestScreen 'x' $initialScreen.X))
+            Y = [Convert]::ToInt32((Get-PropertyValue $latestScreen 'y' $initialScreen.Y))
+        }
+    }
+    $actionResult = Invoke-Action $inputObject $actionScreen
     $settleMs = [int](Get-PropertyValue $inputObject 'settleMs' 0)
     if ($settleMs -gt 0 -and $inputObject.action -notin @('wait', 'observe')) { Start-Sleep -Milliseconds $settleMs }
     $captureWindow = Resolve-CaptureWindow $inputObject
@@ -612,9 +634,13 @@ try {
         }
     } | ConvertTo-Json -Depth 8 -Compress
 } catch {
+    $failedAction = if ($null -eq $inputObject) { 'unknown' } else { [string](Get-PropertyValue $inputObject 'action' 'unknown') }
+    $line = [int]$_.InvocationInfo.ScriptLineNumber
     [pscustomobject]@{
         ok = $false
         code = 'WINDOWS_DESKTOP_ACTION_FAILED'
-        message = $_.Exception.Message
+        message = "Windows desktop action '$failedAction' failed at script line $line`: $($_.Exception.Message)"
+        exceptionType = $_.Exception.GetType().FullName
+        scriptLine = $line
     } | ConvertTo-Json -Depth 4 -Compress
 }

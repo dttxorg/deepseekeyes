@@ -79,7 +79,7 @@ DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉与 Compu
 | 第一次视觉描述不够怎么办？ | DeepSeek 可以携带图片 SHA-256、精确问题和可选区域继续向视觉模型追问。 |
 | 视觉模型选错了怎么办？ | 先检查图片能力声明，再通过随机 3×3 色块探针验证它确实读取了像素。 |
 | 主视觉模型出错怎么办？ | 按配置优先级执行有界故障转移，失败路由进入冷却期，每次 attempts 都写入本地审计记录。 |
-| 视觉模型乱加字段怎么办？ | 同一份公开 JSON Schema 生成模型易遵循的紧凑格式并执行 Ajv 严格验证，所有嵌套对象都拒绝额外字段。 |
+| 视觉模型输出不完全一致怎么办？ | 推理前缀、多 JSON 候选、缺失空列表及常见数值/bbox 格式先在本地确定性规范化并记录审计，最终仍由同一份公开 JSON Schema 严格校验。 |
 | 会不会影响正常文字对话？ | 纯文字轮次走原有直通路径，不读图、不截图、不注册 Computer Use 工具，也不增加插件统计。 |
 | 能否自动测试网页和桌面？ | Browser Computer Use 与 Windows/macOS 原生 Desktop Computer Use 均已实现，且默认关闭、按需启用。 |
 | 插件到底用了多少 Token？ | 设置卡分别展示 Provider 精确额外用量、桥接输入估算和被排除的正常最终回答用量。 |
@@ -109,7 +109,9 @@ $DSH_HOME/deepseekeyes/vision-attempts.json
 
 记录只包含 Provider、模型、阶段、状态、耗时、错误码、图片 SHA-256 和哈希后的会话 ID，不写入图片、提示或模型证据正文。
 
-基础读取与细节读取共同使用 [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json)。提示中的紧凑 JSON 示例由这份 Schema 自动生成，最终结果仍由 Ajv 按同一来源严格验证。常见的归一化/像素 `xywh`、归一化/像素 `xyxy` 与 Qwen 0–1000 `xyxy` 会在本地确定性转换并保留原坐标审计，不增加模型调用。所有 OCR、区域、对象、观察、bbox 和 confidence 嵌套字段都必须完整有效，任何额外字段都会让当前路由失败并进入有界 failover。
+基础读取与细节读取共同使用 [`schemas/visual-evidence.schema.json`](schemas/visual-evidence.schema.json)。提示中的紧凑 JSON 示例由这份 Schema 自动生成，最终结果仍由 Ajv 按同一来源严格验证。0.5.5 能从 MiniMax 一类可见推理前缀或多个平衡 JSON 候选中选择最后一个匹配证据对象；缺失的空列表、字符串数值、百分比 confidence 和对象式 bbox 会在本地确定性规范化，并逐字段记录 `structuralCanonicalization` 审计。常见的归一化/像素 `xywh`、归一化/像素 `xyxy` 与 Qwen 0–1000 `xyxy` 继续保留原坐标审计。整个修复不增加“修复模型”调用，也不改变原图；额外字段和无法确定修复的内容仍会让当前路由失败并进入有界 failover。
+
+遇到 Anthropic SSE `content_block_delta` 提前结束、`Unexpected end of JSON input` 这一类明确的瞬时流错误时，同一路由最多重试一次；该 retry 会写入 attempts，且前后两次 Provider 已返回的 Token 都计入统计。内容或 Schema 错误不会触发这种传输重试。
 
 ## 原生模型切换与按需重新看图
 
@@ -178,6 +180,7 @@ observe(scope=desktop) 发现窗口
 - 无论本轮是否把像素交给模型，每一步都会捕获并保存完整无损 PNG；省略图片块只减少模型调用，不删除、不缩放、不转码原始截图。结果中的 `visualDelivery` 会说明是否读图及原因，`timings` 会列出原生往返、语义收集、截图处理和工具总耗时。
 - 已知目标默认继续返回窗口级截图；`scope=desktop` 可显式回到全桌面发现。窗口截图坐标以返回图片左上角为原点，Helper 会映射回系统全局坐标。
 - Windows 通过 PowerShell、UI Automation、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、Accessibility、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
+- Windows PowerShell 5.1 的输入/输出固定为 UTF-8；点击、拖动与移动坐标先把最新截图原点和相对坐标强制转成标量，再调用 `user32`。因此负坐标/多显示器/窗口级截图不会再触发 `[System.Object[]] op_Addition`，且本地化错误信息保持可读。
 - 输入文本、`set_value` 的值和启动参数只在报告中保存长度和 SHA-256，不保存原文。
 - `stateDelta` 按完整像素哈希判断截图变化，并分别记录窗口与控件的 added/removed/changed，避免 PNG 编码变化被误判为 UI 变化。
 - 每一步原始 PNG 和最终 JSON 报告默认写入 `$DSH_HOME/deepseekeyes/desktop-runs/`。
@@ -350,7 +353,7 @@ $DSH_HOME/deepseekeyes/evidence/
 ~/.dsh/deepseekeyes/evidence/
 ```
 
-原图始终是事实源；多轮追问每次重新引用原始附件，而不是对上一次摘要继续摘要。若视觉调用、证据 JSON、持久化或追问协议失败，本轮以错误结束，DeepSeek 不会在缺失证据时继续生成。
+原图始终是事实源；多轮追问每次重新引用原始附件，而不是对上一次摘要继续摘要。用户直接粘贴图片或显式依赖像素的读取若没有通过视觉调用、证据 JSON、持久化或追问协议校验，本轮仍以错误结束。只有 `computer` 已经返回了明确的 `actionResult`、窗口、无障碍元素、`stateDelta` 与截图哈希时，全部有界视觉路由失败才会降级为“继续传递原生文本状态”；降级记录会明确标注本步没有解码像素，原始 PNG 和哈希仍保留，DeepSeek 不会把未读像素当成事实。
 
 视觉读取成功后，为了允许切换到原生纯文本模型，Harness 的模型可见 Surface 会使用上述保留记录；追加式原始事件和附件字节不会被覆盖。会话导出仍能从原始事件找到附件。`deepseekeyes_look` 每次也从原始附件读取并校验 SHA-256，不从缩略图、JPEG 副本或上一次文字摘要推断。
 

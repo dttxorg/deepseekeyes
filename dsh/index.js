@@ -2,6 +2,7 @@ import { EvidenceCache } from '../src/cache.js'
 import { applyBrowserComputerUse } from '../src/browser/index.js'
 import { applyDesktopComputerUse } from '../src/desktop/index.js'
 import {
+  activeDesktopImageAttachmentKeys,
   activeImageBlocks,
   attachmentKey,
   historicalImageBlocks,
@@ -101,12 +102,54 @@ function usageHasTokens(usage) {
 async function recordEvidenceUsage(tracker, sessionId, result, category) {
   if (result.cacheHit) {
     await tracker.recordCacheHit(sessionId)
-    return
   }
-  if (usageHasTokens(result.usageBreakdown?.probe)) {
+  const probeUsage = result.usageBreakdown?.probe
+  const modelUsage = result.usageBreakdown?.model ?? result.usage
+  if (usageHasTokens(probeUsage)) {
     await tracker.recordCall(sessionId, 'visionProbe', result.usageBreakdown.probe)
   }
-  await tracker.recordCall(sessionId, category, result.usageBreakdown?.model ?? result.usage)
+  if (!result.cacheHit || usageHasTokens(modelUsage)) {
+    await tracker.recordCall(sessionId, category, modelUsage)
+  }
+}
+
+function desktopVisualFallbackEligible(error, signal) {
+  return !signal?.aborted && ![
+    'ATTACHMENT_READ_FAILED',
+    'ABORTED',
+    'AbortError',
+    'EVIDENCE_PERSIST_FAILED',
+    'VISION_STATE_MISMATCH',
+    'UNKNOWN_PRESERVED_IMAGE',
+  ].includes(error?.code)
+}
+
+function boundedVisualFailure(error, maximum = 500) {
+  const text = errorMessage(error)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|npm)_[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`
+}
+
+function renderDesktopVisualFallback(source, error) {
+  const attempts = (error?.attempts ?? []).map(attempt => ({
+    provider: attempt.provider,
+    model: attempt.model,
+    phase: attempt.phase,
+    status: attempt.status,
+    ...(attempt.errorCode === undefined ? {} : { errorCode: attempt.errorCode }),
+  }))
+  return `[DeepSeekEyes desktop visual fallback]
+source_sha256: ${source.sha256}
+attachment_id: ${source.attachmentId}
+original: ${source.mediaType}, ${source.width}x${source.height}, ${source.bytes} bytes
+visual_status: unavailable-after-bounded-recovery
+failure_code: ${error?.code ?? 'VISION_ROUTE_ERROR'}
+failure_summary: ${boundedVisualFailure(error)}
+route_attempts: ${JSON.stringify(attempts)}
+continuation: Continue from the adjacent DeepSeekEyes desktop state, actionResult, windows, accessibility elements, stateDelta and screenshot metadata. Pixels were preserved but were not decoded in this step; request a later targeted reread only when a pixel-only fact is required.`
 }
 
 async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, logger) {
@@ -143,11 +186,13 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
   }
 
   const activeBlocks = activeImageBlocks(options.messages)
+  const desktopImageKeys = activeDesktopImageAttachmentKeys(options.messages)
   const historicalBlocks = historicalImageBlocks(options.messages)
   let route
   const totalUsage = emptyUsage()
   await usageTracker.recordVisualTurn(options.sessionId)
   const baseRecords = []
+  let desktopFallbackCount = 0
   const activeEvidence = new Map()
   const historicalEvidence = new Map()
   const preservedByAttachment = new Map()
@@ -155,18 +200,57 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
   const blockByHash = new Map()
   const baseByHash = new Map()
   const baseByAttachment = new Map()
+  let desktopVisualFailure
+
+  const preserveDesktopFallback = async (block, key, error) => {
+    const reference = await evidenceManager.referenceFor(block, options.signal)
+    const summary = 'Desktop pixels remain preserved; bounded visual recovery failed, so the adjacent semantic state was forwarded.'
+    activeEvidence.set(key, renderDesktopVisualFallback(reference.source, error))
+    desktopFallbackCount += 1
+    preservedByAttachment.set(
+      key,
+      renderPreservedImageReference({ source: reference.source, summary }, config.historySummaryChars),
+    )
+    preservedEntries.push({
+      imageSha256: reference.source.sha256,
+      attachment: block.attachment,
+      summary,
+    })
+    blockByHash.set(reference.source.sha256, block)
+  }
 
   for (const block of activeBlocks) {
-    const result = await router.run('base', {
-      sessionId: options.sessionId,
-      imageSha256: attachmentSha256(block),
-      preferred: route,
-    }, candidate => evidenceManager.baseFor(block, candidate, options.signal), options.signal)
+    const key = attachmentKey(block.attachment)
+    if (desktopVisualFailure !== undefined && desktopImageKeys.has(key)) {
+      await preserveDesktopFallback(block, key, desktopVisualFailure)
+      continue
+    }
+    let result
+    try {
+      result = await router.run('base', {
+        sessionId: options.sessionId,
+        imageSha256: attachmentSha256(block),
+        preferred: route,
+      }, candidate => evidenceManager.baseFor(block, candidate, options.signal), options.signal)
+    } catch (error) {
+      addUsage(totalUsage, error?.usage)
+      await recordEvidenceUsage(usageTracker, options.sessionId, {
+        cacheHit: false,
+        usage: error?.usage ?? emptyUsage(),
+        usageBreakdown: error?.usageBreakdown,
+      }, 'visionBase')
+      if (!desktopImageKeys.has(key) || !desktopVisualFallbackEligible(error, options.signal)) throw error
+      desktopVisualFailure = error
+      await preserveDesktopFallback(block, key, error)
+      logger.warn?.(
+        `deepseekeyes: desktop screenshot visual recovery failed; forwarding semantic state (${error?.code ?? 'VISION_ROUTE_ERROR'})`,
+      )
+      continue
+    }
     route = result.route
     addUsage(totalUsage, result.usage)
     await recordEvidenceUsage(usageTracker, options.sessionId, result, 'visionBase')
     baseRecords.push(result.record)
-    const key = attachmentKey(block.attachment)
     activeEvidence.set(key, renderBaseEvidence(result.record))
     preservedByAttachment.set(
       key,
@@ -243,9 +327,25 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
   for (const text of activeEvidence.values()) injectedEvidenceTokens += estimateInjectedTextTokens(text)
   for (const text of historicalEvidence.values()) injectedEvidenceTokens += estimateInjectedTextTokens(text)
 
-  if (activeBlocks.length === 0) {
+  if (baseRecords.length === 0) {
+    if (desktopFallbackCount === 0) {
+      await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
+      yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
+      return
+    }
+    const upstreamInfo = await ctx.llm.resolveModelInfo(
+      config.upstreamProvider,
+      upstreamModel,
+      options.signal,
+    )
+    const guarded = await collectFinalWithBudget(ctx, {
+      ...upstreamOptions,
+      messages,
+    }, upstreamInfo, logger)
+    addUsage(totalUsage, guarded.result.usage)
+    await usageTracker.recordCall(options.sessionId, 'upstreamFinal', guarded.result.usage)
     await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
-    yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
+    yield* replayWithUsage(guarded.result.chunks, totalUsage)
     return
   }
 

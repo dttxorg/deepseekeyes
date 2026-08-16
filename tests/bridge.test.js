@@ -402,6 +402,145 @@ test('wrapped Qwen evidence is normalized once before DeepSeek and retains an au
   assert.deepEqual(record.vision.coordinateNormalization.transforms[0].original, [100, 200, 600, 260])
 })
 
+test('MiniMax reasoning preambles and incomplete empty-list structure recover locally before strict validation', async () => {
+  const bytes = Buffer.from('minimax recovery image')
+  const hash = createHash('sha256').update(bytes).digest('hex')
+  const ctx = setupBridge({
+    bridgeConfig: { autoDetectVision: false },
+    visionHandler() {
+      return textStream([
+        'Analysis: {"schemaVersion":"example","note":"not the result"}',
+        JSON.stringify({
+          schemaVersion: 'deepseekeyes.evidence.v1',
+          summary: 'Game window and CatAssist panel are visible',
+          ocr: { text: 'CatAssist', bbox: { x: '0.1', y: '0.2', width: '0.3', height: '0.1' }, confidence: '0.98' },
+        }),
+      ].join('\n'))
+    },
+    upstreamHandler(options) {
+      const wire = JSON.stringify(options.messages)
+      assert.match(wire, /Game window and CatAssist panel are visible/)
+      assert.match(wire, /\\"confidence\\":0\.98/)
+      assert.equal(wire.includes('"type":"image"'), false)
+      return textStream('恢复后的视觉证据已到达 DeepSeek')
+    },
+  })
+  const ref = ctx.attachments.add(bytes, { width: 1920, height: 1080 })
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [userMessage([{ type: 'image', attachment: ref }])],
+  }))
+  assert.equal(result.text, '恢复后的视觉证据已到达 DeepSeek')
+  const record = ctx.deepseekEyesState.evidenceManager.knownBase(hash)
+  assert.ok(record.vision.structuralCanonicalization.repairedCount >= 7)
+  assert.deepEqual(record.evidence.regions, [])
+})
+
+test('one incomplete Anthropic SSE event retries on the same visual route and counts both usages', async () => {
+  let visionCalls = 0
+  const ctx = setupBridge({
+    bridgeConfig: { autoDetectVision: false, visionFailoverAttempts: 0 },
+    visionHandler() {
+      visionCalls += 1
+      if (visionCalls === 1) {
+        return (async function* () {
+          yield { type: 'usage', usage: { inputTokens: 11, outputTokens: 1 } }
+          const error = new Error('Could not parse Anthropic SSE event content_block_delta: Unexpected end of JSON input')
+          error.code = 'PI_AI_ERROR'
+          throw error
+        })()
+      }
+      return jsonStream(validBaseEvidence({ summary: 'SSE retry recovered the desktop' }), {
+        inputTokens: 13,
+        outputTokens: 2,
+      })
+    },
+    upstreamHandler: () => textStream('同路由重试成功'),
+  })
+  const ref = ctx.attachments.add(Buffer.from('transient SSE desktop'))
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'transport-retry-session',
+    messages: [userMessage([{ type: 'image', attachment: ref }])],
+  }))
+  assert.equal(result.text, '同路由重试成功')
+  assert.equal(visionCalls, 2)
+  assert.deepEqual(result.usage, { inputTokens: 25, outputTokens: 4 })
+  const attempts = await ctx.deepseekEyesState.visionAttempts.snapshot()
+  assert.deepEqual(attempts.attempts.map(attempt => [attempt.phase, attempt.status]), [
+    ['transport-retry', 'retry'],
+    ['operation', 'success'],
+  ])
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.deepEqual(usage.totals.usage.visionBase, {
+    inputTokens: 24,
+    outputTokens: 3,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+  })
+})
+
+test('desktop visual exhaustion forwards preserved semantic state while direct uploads stay strict', async () => {
+  let upstreamCalls = 0
+  let visionCalls = 0
+  const ctx = setupBridge({
+    bridgeConfig: { autoDetectVision: false, visionFailoverAttempts: 0 },
+    visionHandler() {
+      visionCalls += 1
+      return textStream('not valid visual JSON', { inputTokens: 7, outputTokens: 3 })
+    },
+    upstreamHandler(options) {
+      upstreamCalls += 1
+      const wire = JSON.stringify(options.messages)
+      assert.match(wire, /DeepSeekEyes desktop state/)
+      assert.match(wire, /DeepSeekEyes desktop visual fallback/)
+      assert.match(wire, /unavailable-after-bounded-recovery/)
+      assert.match(wire, /desktop-state:windows-fixture/)
+      assert.equal(wire.includes('"type":"image"'), false)
+      return textStream('视觉暂时失败，但桌面状态继续到达 DeepSeek')
+    },
+  })
+  const ref = ctx.attachments.add(Buffer.from('desktop fallback pixels'), { width: 1920, height: 1080 })
+  const secondRef = ctx.attachments.add(Buffer.from('desktop fallback second tile'), { width: 1920, height: 1080 })
+  const desktop = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'computer-fallback-1',
+    toolName: 'computer',
+    content: [
+      { type: 'text', text: '[DeepSeekEyes desktop state]\n{"stateId":"desktop-state:windows-fixture","actionResult":{"observed":true}}' },
+      { type: 'image', attachment: ref },
+      { type: 'image', attachment: secondRef },
+    ],
+  }])
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'desktop-fallback-session',
+    messages: [desktop],
+  }))
+  assert.equal(result.text, '视觉暂时失败，但桌面状态继续到达 DeepSeek')
+  assert.deepEqual(result.usage, { inputTokens: 8, outputTokens: 4 })
+  assert.equal(upstreamCalls, 1)
+  assert.equal(visionCalls, 1)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.usage.visionBase.inputTokens, 7)
+  assert.equal(usage.totals.usage.visionBase.outputTokens, 3)
+
+  await assert.rejects(
+    collectStream(ctx.llm.stream({
+      provider: 'deepseekeyes',
+      model: 'deepseek-v4-flash',
+      messages: [userMessage([{ type: 'image', attachment: ref }])],
+    })),
+    error => error.code === 'INVALID_MODEL_OUTPUT',
+  )
+  assert.equal(upstreamCalls, 1)
+  assert.equal(visionCalls, 2)
+})
+
 test('an explicit visual max-token rejection retries once with provider-managed output', async () => {
   let visionCalls = 0
   const ctx = setupBridge({

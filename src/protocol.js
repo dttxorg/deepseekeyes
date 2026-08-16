@@ -86,6 +86,19 @@ function wrappedJsonObjects(text) {
   return candidates
 }
 
+const EVIDENCE_SIGNATURE_FIELDS = Object.freeze({
+  base: Object.freeze([
+    'summary', 'ocr', 'regions', 'objects', 'relations', 'quantitativeFacts', 'uncertainties',
+  ]),
+  target: Object.freeze(['answer', 'observations', 'ocr', 'uncertainties']),
+})
+
+function evidenceSchemaVersion(kind) {
+  if (kind === 'base') return BASE_SCHEMA_VERSION
+  if (kind === 'target') return TARGET_SCHEMA_VERSION
+  throw new TypeError(`deepseekeyes: unknown evidence schema kind ${kind}`)
+}
+
 export function parseJsonObject(text, label = 'model output', options = {}) {
   if (typeof text !== 'string' || text.trim() === '') {
     throw new DeepSeekEyesError(`${label} was empty`, 'INVALID_MODEL_OUTPUT')
@@ -104,6 +117,49 @@ export function parseJsonObject(text, label = 'model output', options = {}) {
     }
     throw new DeepSeekEyesError(`${label} was not one valid JSON object`, 'INVALID_MODEL_OUTPUT', { cause: error })
   }
+}
+
+/**
+ * Recover the final evidence object from providers that expose a reasoning
+ * preamble or more than one balanced JSON value. Control messages deliberately
+ * keep using parseJsonObject so their whole-response contract remains strict.
+ */
+export function parseEvidenceObject(kind, text, label = `${kind} visual evidence`) {
+  const expectedVersion = evidenceSchemaVersion(kind)
+  try {
+    return parseJsonObject(text, label)
+  } catch (error) {
+    if (error?.code !== 'INVALID_MODEL_OUTPUT') throw error
+  }
+
+  if (typeof text !== 'string' || text.trim() === '') {
+    throw new DeepSeekEyesError(`${label} was empty`, 'INVALID_MODEL_OUTPUT')
+  }
+  const candidates = wrappedJsonObjects(text.trim())
+  if (candidates.length === 0) {
+    throw new DeepSeekEyesError(`${label} contained no valid JSON evidence object`, 'INVALID_MODEL_OUTPUT')
+  }
+
+  // A matching contract is the strongest signal. Providers normally put their
+  // final answer last, so the last matching object wins over examples emitted
+  // earlier in a visible reasoning preamble.
+  const versioned = candidates.filter(candidate => candidate.schemaVersion === expectedVersion)
+  if (versioned.length > 0) return versioned.at(-1)
+
+  const signature = EVIDENCE_SIGNATURE_FIELDS[kind]
+  let best
+  let bestFields = -1
+  for (const candidate of candidates) {
+    const fields = signature.reduce(
+      (count, field) => count + (Object.hasOwn(candidate, field) ? 1 : 0),
+      0,
+    )
+    if (fields >= bestFields) {
+      best = candidate
+      bestFields = fields
+    }
+  }
+  return best
 }
 
 export function validateBaseEvidence(value) {

@@ -3,13 +3,18 @@ import test from 'node:test'
 import {
   baseEvidencePrompt,
   parseClarificationRequest,
+  parseEvidenceObject,
   parseJsonObject,
   preservedImageReferences,
   renderPreservedImageReference,
   validateBaseEvidence,
   validateTargetEvidence,
 } from '../src/protocol.js'
-import { BASE_EVIDENCE_SCHEMA, normalizeEvidenceCoordinates } from '../src/evidence-schema.js'
+import {
+  BASE_EVIDENCE_SCHEMA,
+  canonicalizeEvidenceStructure,
+  normalizeEvidenceCoordinates,
+} from '../src/evidence-schema.js'
 import { userMessage } from './_helpers.js'
 import { validBaseEvidence, validTargetEvidence } from './_helpers.js'
 
@@ -87,6 +92,36 @@ test('visual evidence alone may unwrap one JSON object while control messages re
   )
   assert.throws(
     () => parseJsonObject(`Here is the requested object:\n${JSON.stringify(evidence)}`, 'control'),
+    /not one valid JSON object/,
+  )
+})
+
+test('evidence parser selects the final contract object and audits deterministic structural repairs', () => {
+  const output = [
+    'Reasoning example:',
+    JSON.stringify({ schemaVersion: 'not-evidence', note: 'ignore this object' }),
+    'Final:',
+    JSON.stringify({
+      schemaVersion: 'deepseekeyes.evidence.v1',
+      summary: 'Windows desktop state',
+      ocr: { text: 'CatAssist', bbox: { x: '0.1', y: '0.2', width: '0.3', height: '0.1' }, confidence: '97%' },
+    }),
+  ].join('\n')
+  const parsed = parseEvidenceObject('base', output)
+  const structure = canonicalizeEvidenceStructure('base', parsed)
+  const coordinates = normalizeEvidenceCoordinates('base', structure.value, { width: 1000, height: 500 })
+  const evidence = validateBaseEvidence(coordinates.value)
+  assert.equal(evidence.summary, 'Windows desktop state')
+  assert.equal(evidence.ocr[0].confidence, 0.97)
+  assert.deepEqual(evidence.ocr[0].bbox, [0.1, 0.2, 0.3, 0.1])
+  assert.deepEqual(evidence.regions, [])
+  assert.ok(structure.audit.repairedCount >= 7)
+  assert.deepEqual(
+    structure.audit.repairs.filter(repair => repair.action === 'empty-list').map(repair => repair.path),
+    ['/regions', '/objects', '/relations', '/quantitativeFacts', '/uncertainties'],
+  )
+  assert.throws(
+    () => parseJsonObject(output, 'control'),
     /not one valid JSON object/,
   )
 })

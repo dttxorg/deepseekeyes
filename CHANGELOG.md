@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.5 - 2026-08-16
+
+- Recover visual evidence from MiniMax-style reasoning preambles and multiple balanced JSON candidates by selecting the final contract object, while keeping private DeepSeek control messages whole-response strict.
+- Canonicalize missing empty-list structure plus common confidence/bbox scalar formats locally, retain a field-level repair audit, and keep strict Ajv validation as the final evidence gate without another model call or any source-image change.
+- Retry one same-route visual request after a recognizable incomplete Anthropic SSE stream, record the retry in route attempts, and include Provider-reported usage from both calls in DeepSeekEyes Token statistics.
+- Let Desktop Computer Use continue from its preserved semantic state when every bounded visual route fails; direct user-image turns remain strict and still stop rather than letting DeepSeek guess about unseen pixels.
+- Fix Windows PowerShell 5.1 coordinate actions by scalarizing the window/screen origin before addition, honoring the latest window-scoped origin, and forcing UTF-8 stdin/stdout so localized native errors remain readable.
+- Exercise the real Windows `move_cursor` and `click` coordinate path in cross-platform native CI in addition to PowerShell parsing, macOS helper compilation and existing desktop observation coverage.
+
 ## 0.5.4 - 2026-08-16
 
 - Show the installed DeepSeekEyes version beside the plugin name even while the settings card is collapsed.

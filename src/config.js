@@ -21,6 +21,8 @@ export const DEFAULT_BROWSER_VIEWPORT_HEIGHT = 900
 export const DEFAULT_BROWSER_MAX_ELEMENTS = 200
 export const DEFAULT_BROWSER_MAX_TEXT_CHARS = 20_000
 export const DEFAULT_DESKTOP_HISTORY_LIMIT = 8
+export const DESKTOP_VISUAL_MODES = Object.freeze(['auto', 'always', 'manual'])
+export const DEFAULT_DESKTOP_VISUAL_MODE = 'auto'
 export const DEFAULT_DESKTOP_TIMEOUT_MS = 30_000
 export const DEFAULT_DESKTOP_SETTLE_MS = 300
 export const DEFAULT_DESKTOP_MAX_WINDOWS = 50
@@ -43,6 +45,14 @@ function booleanValue(value, field, fallback) {
   if (value === undefined) return fallback
   if (typeof value !== 'boolean') throw new TypeError(`deepseekeyes: ${field} must be boolean`)
   return value
+}
+
+function choiceValue(value, field, fallback, choices) {
+  const resolved = optionalString(value ?? fallback, field)?.toLowerCase()
+  if (!choices.includes(resolved)) {
+    throw new TypeError(`deepseekeyes: ${field} must be one of ${choices.join(', ')}`)
+  }
+  return resolved
 }
 
 function environmentBoolean(value, field) {
@@ -372,6 +382,12 @@ export function resolveConfig(input = {}, environment = process.env, home = home
         ?? environmentBoolean(environment.DEEPSEEKEYES_DESKTOP_ENABLED, 'DEEPSEEKEYES_DESKTOP_ENABLED'),
       'desktopComputerUse',
       false,
+    ),
+    desktopVisualMode: choiceValue(
+      input.desktopVisualMode ?? environment.DEEPSEEKEYES_DESKTOP_VISUAL_MODE,
+      'desktopVisualMode',
+      DEFAULT_DESKTOP_VISUAL_MODE,
+      DESKTOP_VISUAL_MODES,
     ),
     desktopTimeoutMs: integerValue(
       input.desktopTimeoutMs,

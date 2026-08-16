@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
-import { DesktopSession, losslessDesktopPngTiles, parseDesktopArgs } from '../src/desktop/index.js'
+import {
+  DesktopSession,
+  losslessDesktopPngTiles,
+  parseDesktopArgs,
+  renderDesktopResult,
+} from '../src/desktop/index.js'
 import { PROBE_COLORS, createProbePng } from '../src/probe.js'
 import { mockContext } from './_helpers.js'
 
@@ -66,6 +71,11 @@ test('desktop session returns a fresh state and exact screenshot after every act
   assert.equal(observed.stateDelta.elements.added[0], observed.elements[0].ref)
   assert.match(observed.stateId, /^desktop-state:[a-f0-9]{64}$/)
   assert.equal(observed.screenshot.attachmentId, observed.image.attachmentId)
+  assert.equal(observed.visualDelivery.mode, 'auto')
+  assert.equal(observed.visualDelivery.delivered, false)
+  assert.equal(observed.visualDelivery.reason, 'semantic-state-sufficient')
+  assert.equal(renderDesktopResult(observed).some(block => block.type === 'image'), false)
+  assert.ok(observed.timings.toolTotalMs >= 0)
 
   const clicked = await session.execute(parseDesktopArgs({
     action: 'click', stateId: observed.stateId, x: 5, y: 5,
@@ -80,6 +90,57 @@ test('desktop session returns a fresh state and exact screenshot after every act
   }])
   assert.deepEqual(driver.calls[1].screen, observed.screen)
   assert.deepEqual(driver.calls.map(call => call.action), ['observe', 'click'])
+  assert.equal(clicked.visualDelivery.delivered, false)
+  assert.equal(clicked.visualDelivery.reason, 'action-result-fast-path')
+})
+
+test('desktop auto visual delivery falls back for sparse states and supports explicit overrides', async () => {
+  const sparseDriver = new FakeDesktopDriver()
+  sparseDriver.execute = async function execute(args) {
+    this.calls.push(structuredClone(args))
+    return { ...nativeResult(this.calls.length, args.action, args), elements: [], elementTotal: 0 }
+  }
+  const auto = new DesktopSession(mockContext(), resolveConfig({
+    desktopArtifactsDir: false,
+    desktopComputerUse: true,
+  }, {}, '/tmp'), { driver: sparseDriver })
+  const sparse = await auto.execute(parseDesktopArgs({ action: 'observe' }))
+  assert.equal(sparse.semanticStatus.quality, 'empty')
+  assert.equal(sparse.visualDelivery.delivered, true)
+  assert.equal(sparse.visualDelivery.reason, 'semantic-empty-fallback')
+  assert.equal(renderDesktopResult(sparse).filter(block => block.type === 'image').length, 1)
+
+  const forcedOmit = await auto.execute(parseDesktopArgs({
+    action: 'observe', includeScreenshot: false,
+  }))
+  assert.equal(forcedOmit.visualDelivery.delivered, false)
+  assert.equal(forcedOmit.visualDelivery.reason, 'explicit-omit')
+  assert.equal(renderDesktopResult(forcedOmit).some(block => block.type === 'image'), false)
+
+  const forcedInclude = await auto.execute(parseDesktopArgs({
+    action: 'observe', includeScreenshot: true,
+  }))
+  assert.equal(forcedInclude.visualDelivery.delivered, true)
+  assert.equal(forcedInclude.visualDelivery.reason, 'explicit-request')
+
+  const always = new DesktopSession(mockContext(), resolveConfig({
+    desktopArtifactsDir: false,
+    desktopComputerUse: true,
+    desktopVisualMode: 'always',
+  }, {}, '/tmp'), { driver: new FakeDesktopDriver() })
+  const audited = await always.execute(parseDesktopArgs({ action: 'observe' }))
+  assert.equal(audited.semanticStatus.quality, 'available')
+  assert.equal(audited.visualDelivery.delivered, true)
+  assert.equal(audited.visualDelivery.reason, 'configured-always')
+
+  const manual = new DesktopSession(mockContext(), resolveConfig({
+    desktopArtifactsDir: false,
+    desktopComputerUse: true,
+    desktopVisualMode: 'manual',
+  }, {}, '/tmp'), { driver: new FakeDesktopDriver() })
+  const manualState = await manual.execute(parseDesktopArgs({ action: 'observe' }))
+  assert.equal(manualState.visualDelivery.delivered, false)
+  assert.equal(manualState.visualDelivery.reason, 'configured-manual')
 })
 
 test('stale state is observed again without executing the requested mutation', async () => {

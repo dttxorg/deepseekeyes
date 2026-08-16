@@ -162,7 +162,7 @@ Historical images are compacted into bounded SHA-256 pointers. They cause no aut
 
 Both automation modes are **off by default** and are enabled independently from **Settings → Plugins → DeepSeekEyes**.
 
-The control cycle follows the same core shape as the [official OpenAI Computer use loop](https://developers.openai.com/api/docs/guides/tools-computer-use): observe the current UI, execute a typed action, return a fresh screenshot, and continue from the new state. DeepSeekEyes implements that cycle as auditable DSH tools and additionally exposes native accessibility elements when the operating system provides them.
+The control cycle follows the same core shape as the [official OpenAI Computer use loop](https://developers.openai.com/api/docs/guides/tools-computer-use): observe the current UI, execute a typed action, capture the resulting state, and continue. DeepSeekEyes implements that cycle as auditable DSH tools and additionally exposes native accessibility elements when the operating system provides them.
 
 ### Browser Computer Use
 
@@ -181,11 +181,14 @@ The native `computer` tool can:
 - scroll, wait, launch and focus applications;
 - move, resize and close windows;
 - return a screenshot/window/element `stateDelta` after every step;
+- preserve a fresh lossless PNG after every step while avoiding a visual-model call when semantic/action evidence is sufficient;
 - run native element/window/screen assertions, fall back to visual assertions for pixel-only facts, and save v2 evidence reports.
 
 `launch` is stateless: it can run before `observe`, and macOS accepts a display name, a renamed alias resolvable by Launch Services, a bundle ID, or a full `.app` path. Focus by application/title is also stateless. Mutations based on pixels or refs remain bound to the newest screenshot state; read-only `observe` may reuse the current `windowRef` without repeating `stateId`.
 
-Every action returns another lossless PNG through the same visual bridge. A known target remains window-scoped; an explicit application/title always overrides the previous capture. On macOS, the runtime prefers the focused/main usable window over tiny auxiliary dialogs and walks Accessibility children under both the configured element bound and a helper-time budget, avoiding an unbounded Electron tree scan. `semanticStatus` reports availability, truncation/limit reason and elapsed semantic time, allowing Electron/canvas surfaces to switch immediately to screenshot coordinates. Coordinates are relative to the returned image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
+Every action captures and preserves another lossless PNG. The default `desktopVisualMode: auto` routes complete semantic observations and successful mutations directly to the final text model, so those steps make **zero visual-model calls**. Sparse/disabled accessibility states still receive pixels automatically for `observe`, `launch` and `wait`; the model can request exact current pixels on any call with `includeScreenshot: true`. `always` retains full per-step visual auditing, while `manual` delivers pixels only on explicit requests. Omitting pixels from a model turn never deletes or recompresses the stored screenshot.
+
+A known target remains window-scoped; an explicit application/title always overrides the previous capture. On macOS, the runtime prefers the focused/main usable window over tiny auxiliary dialogs and walks Accessibility children under both the configured element bound and a helper-time budget, avoiding an unbounded Electron tree scan. `semanticStatus` reports availability, truncation/limit reason and elapsed semantic time. `timings` reports native round-trip, semantic collection, screenshot processing and total tool time; `visualDelivery` explains whether vision was invoked or bypassed. Coordinates are relative to a delivered image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
 
 ## Token accounting
 
@@ -230,7 +233,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | Visual budgets | `baseMaxTokens`, `targetMaxTokens` — `0` delegates the limit to the Provider |
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
-| Desktop | `desktopComputerUse`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |
+| Desktop | `desktopComputerUse`, `desktopVisualMode`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |
 | Usage | `usageStats`, `usageStatsPath` |
 
 See the [complete Chinese configuration reference](README.zh-CN.md#配置字段) for every field and default.

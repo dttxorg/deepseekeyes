@@ -23,6 +23,7 @@ The attempt log does not store API keys, prompt text, model output, OCR, image b
 - Set `persistentEvidence: false` to keep evidence memory-only.
 - Set `usageStats: false` to stop new Token statistics.
 - Set `visionAttemptLog: false` to stop new route-attempt records.
+- Set `desktopVisualMode: auto` to keep every native screenshot while omitting model image delivery when semantic/action evidence is sufficient. `manual` requires an explicit `includeScreenshot: true`; neither mode deletes captured artifacts.
 - Set `cacheDir`, `usageStatsPath`, `visionAttemptLogPath`, `browserArtifactsDir` or `desktopArtifactsDir` to explicit private paths.
 - Set an artifact directory to `false` in headless configuration where the field supports it.
 - Reduce `visionAttemptLimit`, `historyImageLimit`, `browserHistoryLimit` and `desktopHistoryLimit` for shorter retention.

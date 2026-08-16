@@ -41,7 +41,9 @@ const ctx = {
   },
 }
 const session = new DesktopSession(ctx, config, { sessionId: 'native-acceptance' })
-const result = await session.execute(parseDesktopArgs({ action: 'observe', scope: 'desktop' }))
+const result = await session.execute(parseDesktopArgs({
+  action: 'observe', scope: 'desktop', includeScreenshot: true,
+}))
 assert.equal(result.platform, process.platform)
 assert.ok(result.screenshot.bytes > 0)
 assert.equal(result.capabilities?.screenshot, true)
@@ -54,25 +56,46 @@ assert.equal(result.observationScope.type, 'desktop')
 assert.equal(result.stateDelta.initial, true)
 assert.ok(Array.isArray(result.elements))
 
-const target = result.windows.find(window =>
-  window.active
-  && window.width > 0
-  && window.height > 0)
-  ?? result.windows.find(window =>
-  window.width > 0
-  && window.height > 0
-  && window.width * window.height < result.screen.width * result.screen.height)
-  ?? result.windows.find(window => window.width > 0 && window.height > 0)
+function usableTarget(state) {
+  return state.windows.find(window =>
+    window.active
+    && window.width > 0
+    && window.height > 0)
+    ?? state.windows.find(window =>
+      window.width > 0
+      && window.height > 0
+      && window.width * window.height < state.screen.width * state.screen.height)
+    ?? state.windows.find(window => window.width > 0 && window.height > 0)
+}
+
+const target = usableTarget(result)
 let windowResult
+let windowSource = result
+let windowRefreshes = 0
 if (target !== undefined) {
-  windowResult = await session.execute(parseDesktopArgs({
+  const observeTarget = state => session.execute(parseDesktopArgs({
     action: 'observe',
-    stateId: result.stateId,
+    stateId: state.stateId,
     scope: 'window',
-    windowRef: target.ref,
+    windowRef: usableTarget(state).ref,
+    includeScreenshot: true,
   }))
+  try {
+    windowResult = await observeTarget(windowSource)
+  } catch (error) {
+    if (!['MACOS_DESKTOP_ACTION_FAILED', 'WINDOWS_DESKTOP_ACTION_FAILED'].includes(error?.code)) throw error
+    windowRefreshes += 1
+    windowSource = await session.execute(parseDesktopArgs({
+      action: 'observe', scope: 'desktop', includeScreenshot: false,
+    }))
+    if (usableTarget(windowSource) === undefined) throw error
+    windowResult = await observeTarget(windowSource)
+  }
   assert.equal(windowResult.observationScope.type, 'window')
-  assert.equal(windowResult.observationScope.window.ref, target.ref)
+  assert.equal(
+    windowResult.observationScope.window.ref,
+    usableTarget(windowSource).ref,
+  )
   assert.equal(windowResult.screen.width, windowResult.screenshot.width)
   assert.equal(windowResult.screen.height, windowResult.screenshot.height)
   assert.equal(
@@ -86,7 +109,7 @@ if (target !== undefined) {
   assert.ok(windowResult.screen.width > 0)
   assert.ok(windowResult.screen.height > 0)
   assert.ok(Array.isArray(windowResult.elements))
-  assert.equal(windowResult.stateDelta.fromStateId, result.stateId)
+  assert.equal(windowResult.stateDelta.fromStateId, windowSource.stateId)
   assert.equal(renderDesktopResult(windowResult).filter(block => block.type === 'image').length, windowResult.screenshot.tileCount)
 }
 let applicationRouting = 'skipped-no-application'
@@ -101,6 +124,7 @@ if (process.platform === 'darwin' && acceptanceApplication) {
   assert.ok(String(launched.actionResult?.bundleIdentifier || '').includes('.'))
   const byApplication = await session.execute(parseDesktopArgs({
     action: 'observe', scope: 'window', application: acceptanceApplication,
+    includeScreenshot: true,
   }))
   assert.equal(byApplication.ok, true)
   assert.equal(byApplication.observationScope.type, 'window')
@@ -122,6 +146,7 @@ if (process.platform === 'darwin' && acceptanceApplication) {
   }
   const byRef = await session.execute(parseDesktopArgs({
     action: 'observe', scope: 'window', windowRef: byApplication.observationScope.window.ref,
+    includeScreenshot: true,
   }))
   assert.equal(byRef.ok, true)
   assert.equal(byRef.observationScope.type, 'window')
@@ -154,6 +179,7 @@ console.log(JSON.stringify({
     elementCount: windowResult.elements.length,
     elementTotal: windowResult.elementTotal,
     elementsTruncated: windowResult.elementsTruncated,
+    discoveryRefreshes: windowRefreshes,
   },
   applicationRouting,
   capabilities: result.capabilities,

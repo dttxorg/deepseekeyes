@@ -186,6 +186,55 @@ function semanticStatus(elements, enabled, options = {}) {
   }
 }
 
+function visualDeliveryFor(config, args, result, attachmentCount) {
+  const requested = args.includeScreenshot === true
+    ? 'include'
+    : args.includeScreenshot === false ? 'omit' : 'auto'
+  const mode = config.desktopVisualMode ?? 'always'
+  let delivered
+  let reason
+  if (attachmentCount === 0) {
+    delivered = false
+    reason = 'screenshot-unavailable'
+  } else if (requested === 'include') {
+    delivered = true
+    reason = 'explicit-request'
+  } else if (requested === 'omit') {
+    delivered = false
+    reason = 'explicit-omit'
+  } else if (mode === 'always') {
+    delivered = true
+    reason = 'configured-always'
+  } else if (mode === 'manual') {
+    delivered = false
+    reason = 'configured-manual'
+  } else if (args.action === 'assert' && args.assertion === 'visual') {
+    delivered = true
+    reason = 'visual-assertion'
+  } else if (['observe', 'launch', 'wait'].includes(args.action)) {
+    const semantic = result.semanticStatus
+    const semanticSufficient = semantic?.quality === 'available' && semantic.truncated !== true
+    delivered = !semanticSufficient
+    reason = semanticSufficient
+      ? 'semantic-state-sufficient'
+      : `semantic-${semantic?.quality ?? 'unavailable'}-fallback`
+  } else {
+    delivered = false
+    reason = 'action-result-fast-path'
+  }
+  return {
+    mode,
+    requested,
+    delivered,
+    reason,
+    fullScreenshotPreserved: result.screenshot?.artifactPath !== undefined || attachmentCount > 0,
+    attachmentCount,
+    ...(delivered ? {} : {
+      next: 'Use includeScreenshot=true on observe or the next action only when current pixels are required.',
+    }),
+  }
+}
+
 const ELEMENT_DIFF_FIELDS = [
   'role', 'subrole', 'name', 'description', 'value', 'enabled', 'visible', 'focused',
   'editable', 'selected', 'checked', 'bbox', 'actions',
@@ -249,7 +298,20 @@ function observationText(result) {
   const copy = structuredClone(result)
   delete copy.image
   delete copy.images
-  return `${DESKTOP_STATE_PREFIX}${JSON.stringify(copy, null, 2)}`
+  if (copy.visualDelivery?.delivered === false && copy.screenshot !== undefined) {
+    const screenshot = copy.screenshot
+    copy.screenshot = Object.fromEntries(Object.entries({
+      sha256: screenshot.sha256,
+      pixelSha256: screenshot.pixelSha256,
+      bytes: screenshot.bytes,
+      width: screenshot.width,
+      height: screenshot.height,
+      delivery: screenshot.delivery,
+      tileCount: screenshot.tileCount,
+      artifactPath: screenshot.artifactPath,
+    }).filter(([, value]) => value !== undefined))
+  }
+  return `${DESKTOP_STATE_PREFIX}${JSON.stringify(copy)}`
 }
 
 async function writeJsonAtomic(path, value) {
@@ -261,6 +323,7 @@ async function writeJsonAtomic(path, value) {
 /** Render one state as compact JSON evidence plus the exact native screenshot. */
 export function renderDesktopResult(value) {
   const content = [{ type: 'text', text: observationText(value) }]
+  if (value.visualDelivery?.delivered === false) return content
   const images = Array.isArray(value.images)
     ? value.images
     : value.image === undefined ? [] : [value.image]
@@ -273,6 +336,7 @@ export class DesktopSession {
     this.ctx = ctx
     this.config = config
     this.now = options.now ?? (() => new Date())
+    this.monotonicNow = options.monotonicNow ?? (() => Number(process.hrtime.bigint() / 1_000_000n))
     this.runId = options.runId ?? randomUUID()
     this.sessionId = String(options.sessionId ?? 'default')
     this.driver = options.driver ?? createDesktopDriver(config, options.driverOptions)
@@ -381,7 +445,17 @@ export class DesktopSession {
     return path
   }
 
-  async observe(action, args, native, event) {
+  async runNative(input, signal) {
+    const startedAt = this.monotonicNow()
+    const native = await this.driver.execute(input, signal)
+    return {
+      native,
+      nativeRoundTripMs: Math.max(0, this.monotonicNow() - startedAt),
+    }
+  }
+
+  async observe(action, args, native, event, timings = {}) {
+    const processingStartedAt = this.monotonicNow()
     const screenshot = native.screenshot
     const dimensions = pngSize(screenshot)
     const digest = sha256(screenshot)
@@ -506,19 +580,34 @@ export class DesktopSession {
       ...(images.length === 1 ? { image: images[0] } : { images }),
     }
     result.stateDelta = stateDelta(previous, result)
+    const screenshotProcessingMs = Math.max(0, this.monotonicNow() - processingStartedAt)
+    result.timings = {
+      nativeRoundTripMs: Number(timings.nativeRoundTripMs ?? 0),
+      semanticMs: Number(native.semanticElapsedMs ?? 0),
+      screenshotProcessingMs,
+      settleConfiguredMs: this.config.desktopSettleMs,
+      toolTotalMs: Number(timings.nativeRoundTripMs ?? 0) + screenshotProcessingMs,
+    }
+    result.visualDelivery = visualDeliveryFor(this.config, { ...args, action }, result, images.length)
     this.latest = result
     this.observations.push(reportableObservation(result))
-    event.result = { ok: true, stateId, screenshotSha256: digest }
+    event.result = {
+      ok: true,
+      stateId,
+      screenshotSha256: digest,
+      visualDelivered: result.visualDelivery.delivered,
+      toolTotalMs: result.timings.toolTotalMs,
+    }
     return result
   }
 
   async stale(args, event, signal) {
-    const native = await this.driver.execute({
+    const { native, nativeRoundTripMs } = await this.runNative({
       action: 'observe',
       captureScope: this.captureWindow === undefined ? 'desktop' : 'window',
       captureWindow: this.captureWindow,
     }, signal)
-    const result = await this.observe('observe', args, native, event)
+    const result = await this.observe('observe', args, native, event, { nativeRoundTripMs })
     event.result = { ok: false, code: 'STALE_DESKTOP_STATE', stateId: result.stateId }
     return {
       ...result,
@@ -678,14 +767,14 @@ export class DesktopSession {
       const element = this.resolveNativeElement(args)
       const capture = this.captureFor(args, window, element)
       const previous = this.latest
-      const native = await this.driver.execute({
+      const { native, nativeRoundTripMs } = await this.runNative({
         ...args,
         ...capture,
         ...(this.latest?.screen === undefined ? {} : { screen: this.latest.screen }),
         ...(window === undefined ? {} : { window }),
         ...(element === undefined ? {} : { element }),
       }, signal)
-      const result = await this.observe(args.action, args, native, event)
+      const result = await this.observe(args.action, args, native, event, { nativeRoundTripMs })
       if (args.action === 'assert') {
         const assertion = this.performAssertion(args, result, previous)
         this.assertions.push(assertion)

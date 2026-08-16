@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 - 2026-08-16
+
+- Add a default `desktopVisualMode: auto` semantic/action fast path so complete Accessibility/UIA states and successful mutations continue without a visual-model call.
+- Keep capturing, hashing, attaching and optionally persisting the full lossless PNG on every native step; conditional model delivery changes no source pixels or audit artifacts.
+- Add per-call `includeScreenshot` overrides plus `always` full-audit and `manual` explicit-read modes in the native bilingual settings card.
+- Return `visualDelivery` reasons and native/semantic/screenshot/tool timing fields, and compact non-visual desktop state text without tile attachment metadata.
+- Update the Computer Use prompt to continue deterministic action sequences immediately and request pixels only when the current screen is needed.
+- Add policy, override, compact-render, settings and cross-platform acceptance coverage for the new fast path.
+
 ## 0.5.2 - 2026-08-16
 
 - Match the native Harness plugin-card disclosure pattern with a full-width accessible header button and rotating chevron.

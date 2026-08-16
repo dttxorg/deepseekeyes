@@ -72,7 +72,19 @@ Pasted user images remain original DSH attachments. Desktop Computer Use screens
 - Disable Browser/Desktop Computer Use when not needed; both are off by default.
 - Review **Token usage statistics** in the settings card. Normal final-answer usage is displayed separately from plugin overhead.
 
-For Desktop 0.5, start with `observe` using `scope: "window"` plus the target application/title once it is known. This avoids repeatedly sending unrelated displays and windows. Reduce **Maximum semantic controls per step** when a large accessibility tree adds unnecessary tool text; disabling semantic controls returns to screenshot-only coordinate mode. Both settings affect only explicitly enabled Desktop Computer Use sessions.
+For Desktop 0.5, keep **Desktop screenshot delivery** on **Auto · semantic fast path** and start with `observe` using `scope: "window"` plus the target application/title once it is known. Complete semantic states and successful mutations then bypass the visual Provider while the full PNG remains preserved. Use `includeScreenshot: true` only for a step whose current pixels are required. **Full audit** intentionally reads every step; **Manual** reads only explicit requests.
+
+Reduce **Maximum semantic controls per step** when a large accessibility tree adds unnecessary tool text. Disabling semantic controls returns to screenshot-only coordinate control and therefore increases the likelihood that visual reads are needed.
+
+## Every Computer Use step stays on `Deep diving` for minutes
+
+Check the returned `visualDelivery` and `timings` objects:
+
+- `visualDelivery.delivered: false` means the step used the semantic/action fast path and created no visual-model request;
+- `delivered: true` means current pixels were required, explicitly requested, or forced by `desktopVisualMode: always`;
+- `timings.toolTotalMs` measures native action, capture and local screenshot processing, while Provider/model generation happens after the tool returns.
+
+Upgrade from 0.5.2 or earlier, select **Auto · semantic fast path**, and avoid `includeScreenshot: true` on deterministic `click → type` sequences. The complete screenshot remains under its SHA-256/artifact path even when the model image block is omitted.
 
 ## DSH restart fails while parsing `package.json`
 

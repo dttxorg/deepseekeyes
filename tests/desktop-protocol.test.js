@@ -50,6 +50,11 @@ test('desktop protocol binds mutations to state, coordinates, current windows, a
   }).passed, true)
   assert.equal(parseDesktopArgs({ action: 'focus', application: 'ChatGPT' }).stateId, undefined)
   assert.equal(parseDesktopArgs({ action: 'observe', windowRef: 'win_fixture' }).stateId, undefined)
+  assert.equal(parseDesktopArgs({ action: 'observe', includeScreenshot: true }).includeScreenshot, true)
+  assert.throws(
+    () => parseDesktopArgs({ action: 'observe', includeScreenshot: 'yes' }),
+    /includeScreenshot must be boolean/,
+  )
   assert.throws(() => parseDesktopArgs({ action: 'focus', windowRef: 'win_fixture' }), /same latest computer result/)
 })
 
@@ -90,6 +95,7 @@ test('desktop action reports hash typed text and launch arguments', () => {
 test('desktop 0.5 configuration is opt-in with Windows and macOS semantic controls', () => {
   const defaults = resolveConfig({}, {}, '/home')
   assert.equal(defaults.desktopComputerUse, false)
+  assert.equal(defaults.desktopVisualMode, 'auto')
   assert.equal(defaults.desktopHistoryLimit, 8)
   assert.equal(defaults.desktopTimeoutMs, 30_000)
   assert.equal(defaults.desktopSettleMs, 300)
@@ -103,13 +109,19 @@ test('desktop 0.5 configuration is opt-in with Windows and macOS semantic contro
   const configured = resolveConfig({ desktopArtifactsDir: false, desktopMaxElements: 320 }, {
     DEEPSEEKEYES_DESKTOP_ENABLED: 'true',
     DEEPSEEKEYES_DESKTOP_SEMANTIC: 'false',
+    DEEPSEEKEYES_DESKTOP_VISUAL_MODE: 'manual',
     DEEPSEEKEYES_DESKTOP_WINDOWS_POWERSHELL: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   }, '/home')
   assert.equal(configured.desktopComputerUse, true)
   assert.equal(configured.desktopSemantic, false)
+  assert.equal(configured.desktopVisualMode, 'manual')
   assert.equal(configured.desktopMaxElements, 320)
   assert.match(configured.desktopWindowsPowerShell, /powershell\.exe$/)
   assert.equal(configured.desktopArtifactsDir, undefined)
+  assert.throws(
+    () => resolveConfig({ desktopVisualMode: 'sometimes' }, {}, '/home'),
+    /desktopVisualMode must be one of auto, always, manual/,
+  )
 })
 
 test('desktop manager applies live enablement without adding overhead to ordinary sessions', async () => {
@@ -152,7 +164,17 @@ test('desktop tool renders the current screenshot and rejects non-Eyes routes be
   })
   assert.equal(content[0].type, 'text')
   assert.equal(content[1].type, 'image')
-  assert.match(DESKTOP_SYSTEM_PROMPT, /Windows or macOS/)
+  const fastContent = renderDesktopResult({
+    ok: true,
+    action: 'observe',
+    stateId: 'desktop-state:fast',
+    visualDelivery: { delivered: false, reason: 'semantic-state-sufficient' },
+    screenshot: { sha256: 'a'.repeat(64), tiles: [{ attachmentId: 'sha256:test' }] },
+    image: { attachmentId: 'sha256:test', mediaType: 'image/png', bytes: 1, width: 1, height: 1 },
+  })
+  assert.equal(fastContent.length, 1)
+  assert.equal(fastContent[0].text.includes('"tiles"'), false)
+  assert.match(DESKTOP_SYSTEM_PROMPT, /includeScreenshot=true/)
   await assert.rejects(
     tool.execute({ action: 'observe' }, {
       signal: new AbortController().signal,

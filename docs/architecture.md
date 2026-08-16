@@ -4,7 +4,7 @@ DeepSeekEyes is a **DSH auditable vision and Computer Use runtime**, not a stand
 
 ```mermaid
 flowchart LR
-    A["Original DSH attachment or fresh Computer Use screenshot"] --> B["Content-addressed source reader"]
+    A["Original DSH attachment or visually delivered Computer Use screenshot"] --> B["Content-addressed source reader"]
     B --> C["Ordered VisionRouter"]
     C --> D["Capability health check + circuit state"]
     D --> E["Randomized pixel probe"]
@@ -16,7 +16,9 @@ flowchart LR
     J --> C
     C --> K["Bounded failover attempt audit"]
     B --> L["Append-only DSH event + original attachment"]
-    M["Browser/Desktop state machine"] --> B
+    M["Browser/Desktop state machine"] --> O["Desktop visualDelivery policy"]
+    O -->|"pixels required"| B
+    O -->|"semantic/action fast path"| I
     N["Usage tracker"] --- E
     N --- F
     N --- I
@@ -36,7 +38,7 @@ flowchart LR
 | `src/cache.js` | Stores immutable SHA-256-bound evidence records in memory and optionally on disk. |
 | `src/look.js` | Gives only image-bearing sessions an on-demand original-image reread tool. |
 | `src/browser/*` | Playwright browser state, semantic refs, stale-state rejection, assertions and reports. |
-| `src/desktop/*` | Native Windows/macOS desktop/window observation, accessibility elements/actions, state deltas and lossless screenshot evidence. |
+| `src/desktop/*` | Native Windows/macOS desktop/window observation, accessibility elements/actions, state deltas, lossless screenshot evidence and conditional visual delivery. |
 | `src/usage.js` | Separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
 ## Route ordering and failover
@@ -66,7 +68,8 @@ stateDiagram-v2
     [*] --> DesktopDiscovery: observe scope=desktop
     DesktopDiscovery --> WindowState: observe scope=window + target
     WindowState --> WindowState: elementRef or pixel action
-    WindowState --> WindowState: fresh screenshot + semantic tree + stateDelta
+    WindowState --> WindowState: preserve screenshot + semantic tree + stateDelta
+    WindowState --> WindowState: auto fast path or explicit visual delivery
     WindowState --> Verified: runtime or visual assertion
     Verified --> Reported: report v2
     Reported --> [*]: close
@@ -77,6 +80,8 @@ Windows uses UI Automation runtime IDs and native window handles. macOS uses Acc
 The screenshot origin and scale are returned with every state. Desktop discovery uses display coordinates. Window capture moves the origin to the target window, so model coordinates stay relative to the exact returned PNG and the native helper translates them back to global coordinates. A requested target that disappears fails explicitly instead of falling back to an unrelated full desktop image.
 
 `stateDelta.screenshotChanged` compares decoded pixel identity rather than PNG encoding bytes. Window and element deltas separately report added, removed and field-level changed refs. Semantic collection is bounded by `desktopMaxElements`; macOS also caps the walk to 40% of the native helper timeout (maximum 8 seconds) instead of materializing an unbounded `entireContents()` tree. `semanticStatus` exposes truncation, the limit reason and measured semantic time. Pixel actions remain available for games, canvases and controls absent from the accessibility tree.
+
+`desktopVisualMode` controls only model delivery, never acquisition or evidence retention. `auto` omits image blocks when a complete semantic state or successful mutation already gives the final model enough evidence; `always` sends each captured screenshot through the visual bridge; `manual` requires `includeScreenshot: true`. Every state still retains the exact encoded/pixel hashes, attachments and configured artifact. The no-image fast path therefore enters the adapter's existing text-only branch and makes no visual Provider request.
 
 On macOS, launch resolution uses Launch Services/`NSWorkspace` plus `/usr/bin/open` and accepts display names, renamed aliases, bundle IDs and full `.app` paths. Exact app identity is resolved to its PID before any fallback process scan, wins over substring matches, and a newly supplied application/title replaces any prior capture target. With no explicit title/ref, focused and main usable windows outrank tiny auxiliary dialogs. The runtime binds each controllable window to its CoreGraphics window number and re-resolves the corresponding Accessibility window for every action. A z-order change therefore keeps the same `windowRef` instead of reusing a mutable per-application window index. Accessibility elements use a semantic fingerprint plus duplicate ordinal; a cached traversal index is accepted only when its identity and bounds still match. Explicit window and element targets fail closed when that native identity disappears. `semanticStatus` marks sparse trees and directs the control loop to lossless screenshot coordinates.
 

@@ -38,9 +38,11 @@ test('GUI draft emits minimal live settings mutations and validates routing cons
   assert.equal(settingsDraftFailure({ ...current, desktopMaxWindows: 201 }), 'desktopMaxWindowsRange')
   assert.equal(settingsDraftFailure({ ...current, desktopMaxElements: 19 }), 'desktopMaxElementsRange')
   assert.equal(settingsDraftFailure({ ...current, desktopMacDisplay: 0 }), 'desktopMacDisplayRange')
+  assert.equal(settingsDraftFailure({ ...current, desktopVisualMode: 'sometimes' }), 'desktopVisualModeInvalid')
   assert.equal(settingsDraftFailure(current), undefined)
   assert.equal(current.desktopTimeoutMs, 30_000)
   assert.equal(current.desktopSemantic, true)
+  assert.equal(current.desktopVisualMode, 'auto')
   assert.equal(current.desktopMaxElements, 200)
 })
 

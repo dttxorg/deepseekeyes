@@ -112,7 +112,12 @@ const zh = {
   browserMaxElements: '每步最多控件数',
   browserMaxTextChars: '每步最多页面字符',
   desktopComputerUse: '启用 Windows / macOS 桌面 Computer Use',
-  desktopComputerUseHint: '在当前对话中注册 computer 工具；优先返回目标窗口截图、无障碍语义控件、状态变化和状态 ID，像游戏/画布等像素界面仍可使用坐标。',
+  desktopComputerUseHint: '在当前对话中注册 computer 工具；每步仍无损保存截图，但默认优先用语义控件和状态变化直达最终模型，只有确实需要像素时才调用视觉模型。',
+  desktopVisualMode: '桌面截图交付策略',
+  desktopVisualModeAuto: '自动 · 语义快路径（推荐）',
+  desktopVisualModeAlways: '完整审计 · 每步读图',
+  desktopVisualModeManual: '手动 · 仅显式读图',
+  desktopVisualModeHint: '自动模式会为完整语义状态和成功动作跳过视觉调用；游戏、画布或显式 includeScreenshot 请求仍读取原始像素。三种模式都会保存完整无损截图。',
   desktopSemantic: '读取系统无障碍语义控件',
   desktopSemanticHint: '启用后可使用稳定的 elementRef 执行点击、赋值、调用和断言；关闭后保持纯截图坐标控制。',
   desktopPermissionHint: 'macOS 首次使用时，请在「系统设置 → 隐私与安全性」为运行 DSH 的终端授予“屏幕录制”和“辅助功能”；Windows 使用系统原生 user32 与桌面截图。',
@@ -166,6 +171,7 @@ const zh = {
   desktopMaxWindowsRange: '窗口数量必须是 1–200 的整数。',
   desktopMaxElementsRange: '语义控件数量必须是 20–500 的整数。',
   desktopMacDisplayRange: 'macOS 显示器编号必须是 1–32 的整数。',
+  desktopVisualModeInvalid: '桌面截图交付策略无效。',
   noProviders: 'Harness 中还没有可用 Provider，请先在「设置 → 模型」添加。',
   inactive: '（未激活）',
 }
@@ -265,7 +271,12 @@ const en = {
   browserMaxElements: 'Maximum controls per step',
   browserMaxTextChars: 'Maximum page characters per step',
   desktopComputerUse: 'Enable Windows / macOS desktop computer use',
-  desktopComputerUseHint: 'Registers the computer tool in this conversation. It prefers a target-window screenshot, accessibility controls, a state delta, and a state ID; pixel-only games and canvases still support coordinates.',
+  desktopComputerUseHint: 'Registers the computer tool in this conversation. Every step still preserves a lossless screenshot, while the default fast path sends semantic controls and state changes directly to the final model and invokes vision only when pixels are needed.',
+  desktopVisualMode: 'Desktop screenshot delivery',
+  desktopVisualModeAuto: 'Auto · semantic fast path (recommended)',
+  desktopVisualModeAlways: 'Full audit · read every step',
+  desktopVisualModeManual: 'Manual · explicit reads only',
+  desktopVisualModeHint: 'Auto skips visual calls for complete semantic states and successful actions. Games, canvases, and explicit includeScreenshot requests still read original pixels. Every mode preserves the full lossless screenshot.',
   desktopSemantic: 'Read accessibility controls',
   desktopSemanticHint: 'Enables stable elementRef click, value, invoke, action, and assertion operations. Disable it for screenshot-only coordinate control.',
   desktopPermissionHint: 'On first use, grant Screen Recording and Accessibility to the terminal running DSH under macOS System Settings → Privacy & Security. Windows uses native user32 input and desktop capture.',
@@ -319,6 +330,7 @@ const en = {
   desktopMaxWindowsRange: 'Maximum windows must be an integer from 1 through 200.',
   desktopMaxElementsRange: 'Maximum semantic controls must be an integer from 20 through 500.',
   desktopMacDisplayRange: 'The macOS display number must be an integer from 1 through 32.',
+  desktopVisualModeInvalid: 'The desktop screenshot delivery mode is invalid.',
   noProviders: 'No provider is available in Harness. Add one under Settings → Models first.',
   inactive: ' (inactive)',
 }
@@ -874,6 +886,15 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
               />
               <span>{t('desktopSemantic')}<br /><small style={styles.hint}>{t('desktopSemanticHint')}</small></span>
             </label>
+            <div style={{ ...styles.field, marginTop: 14 }}>
+              <label style={styles.label} htmlFor="deepseekeyes-desktop-visual-mode">{t('desktopVisualMode')}</label>
+              <select id="deepseekeyes-desktop-visual-mode" style={styles.input} value={draft.desktopVisualMode} disabled={saving || !snapshot.writable || !draft.desktopComputerUse} onChange={event => update('desktopVisualMode', event.target.value)}>
+                <option value="auto">{t('desktopVisualModeAuto')}</option>
+                <option value="always">{t('desktopVisualModeAlways')}</option>
+                <option value="manual">{t('desktopVisualModeManual')}</option>
+              </select>
+              <small style={styles.hint}>{t('desktopVisualModeHint')}</small>
+            </div>
             <div style={{ ...styles.grid, marginTop: 14 }}>
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-desktop-timeout">{t('desktopTimeoutMs')}</label>

@@ -9,6 +9,9 @@
     visionHealthCheck: true
     visionFailoverAttempts: 2
     desktopComputerUse: true
+    # auto skips visual-model calls when semantic/action results are sufficient.
+    # always reads every screenshot; manual only reads includeScreenshot=true calls.
+    desktopVisualMode: auto
     desktopHistoryLimit: 8
     desktopTimeoutMs: 30000
     desktopSettleMs: 300

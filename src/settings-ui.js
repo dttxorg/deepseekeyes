@@ -33,6 +33,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'browserMaxTextChars',
   'desktopHistoryLimit',
   'desktopComputerUse',
+  'desktopVisualMode',
   'desktopTimeoutMs',
   'desktopSettleMs',
   'desktopMaxWindows',
@@ -99,6 +100,9 @@ export function normalizeSettingsDraft(value = {}) {
     browserMaxTextChars: Number.isInteger(value.browserMaxTextChars) ? value.browserMaxTextChars : 20_000,
     desktopHistoryLimit: Number.isInteger(value.desktopHistoryLimit) ? value.desktopHistoryLimit : 8,
     desktopComputerUse: value.desktopComputerUse === true,
+    desktopVisualMode: ['auto', 'always', 'manual'].includes(value.desktopVisualMode)
+      ? value.desktopVisualMode
+      : 'auto',
     desktopTimeoutMs: Number.isInteger(value.desktopTimeoutMs) ? value.desktopTimeoutMs : 30_000,
     desktopSettleMs: Number.isInteger(value.desktopSettleMs) ? value.desktopSettleMs : 300,
     desktopMaxWindows: Number.isInteger(value.desktopMaxWindows) ? value.desktopMaxWindows : 50,
@@ -142,6 +146,7 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
     if (entries.some(entry => entry.indexOf('/') <= 0 || entry.endsWith('/'))) return 'visionRoutePriorityFormat'
   }
   if (typeof draft.browserLocale !== 'string' || draft.browserLocale.trim() === '') return 'browserLocaleRequired'
+  if (!['auto', 'always', 'manual'].includes(draft.desktopVisualMode)) return 'desktopVisualModeInvalid'
   const tokenRanges = [
     ['baseMaxTokens', 512],
     ['targetMaxTokens', 256],

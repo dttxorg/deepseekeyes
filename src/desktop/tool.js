@@ -25,7 +25,7 @@ function assertDeepSeekEyesRoute(config, exec) {
 }
 
 function toolDescription() {
-  return `Control native Windows or macOS applications with window-scoped screenshots and accessibility elements. Launch an application directly with action="launch" and no stateId; application accepts a display name, macOS bundle ID, or full .app path. For an already-running app, begin with action="observe", scope="window", and application/title. Every result returns a fresh lossless PNG, semantic element refs, a state delta and stateId. Copy that newest stateId into state-changing actions and ref-based mutations; a read-only observe may reuse the current windowRef without stateId. Prefer elementRef actions; use screenshot coordinates when semanticStatus reports sparse accessibility. Actions: observe, click, double_click, right_click, move_cursor, drag, type, key, scroll, invoke, set_value, perform_action, launch, focus, move_window, resize_window, close_window, wait, assert, report, close.`
+  return `Control native Windows or macOS applications with window-scoped captures and accessibility elements. Launch directly with action="launch" and no stateId. Every result captures and preserves a fresh lossless PNG, then desktopVisualMode decides whether pixels enter the model. In auto mode, semantic states and successful mutations use a fast text path; set includeScreenshot=true only when current pixels are required. Copy the newest stateId into state-changing actions and ref-based mutations. Prefer elementRef actions; use screenshot coordinates when semanticStatus reports sparse accessibility. Actions: observe, click, double_click, right_click, move_cursor, drag, type, key, scroll, invoke, set_value, perform_action, launch, focus, move_window, resize_window, close_window, wait, assert, report, close.`
 }
 
 export class DesktopSessionManager {
@@ -99,6 +99,11 @@ export function createDesktopTool(manager, config) {
         ok: value.ok,
         platform: value.platform,
         ...(value.stateId === undefined ? {} : { stateId: value.stateId }),
+        ...(value.visualDelivery === undefined ? {} : {
+          visualDelivered: value.visualDelivery.delivered,
+          visualReason: value.visualDelivery.reason,
+        }),
+        ...(value.timings?.toolTotalMs === undefined ? {} : { toolTotalMs: value.timings.toolTotalMs }),
       }),
     },
     timeoutMs: Math.max(135_000, config.desktopTimeoutMs + 15_000),
@@ -119,7 +124,11 @@ export function createDesktopTool(manager, config) {
 
 export const DESKTOP_SYSTEM_PROMPT = `## DeepSeekEyes Desktop Computer Use 0.5
 
-Use the computer tool for native Windows or macOS applications. Use action="launch" directly without observe or stateId; application may be a display name and, on macOS, a bundle ID or full .app path. Focus by application/title also works without stateId. To inspect an already-running app, begin with action="observe", scope="window", and application/title; use a full desktop observation only for discovery. Every result contains a fresh lossless screenshot, stateId, window refs, accessibility element refs, semanticStatus, and a stateDelta. Copy the newest stateId into later state-changing actions and ref-based mutations; a read-only observe may reuse the current windowRef without stateId. Prefer elementRef with click, invoke, set_value, type, scroll, or perform_action; when semanticStatus is sparse, empty, or disabled, immediately use the screenshot and pixel coordinates instead of repeatedly probing accessibility. Window-scoped coordinates are relative to the returned screenshot and the runtime maps them back to the desktop. After every action, inspect semantic changes and the screenshot. Prefer runtime assertions such as element_visible, element_value_equals, window_exists, or screen_changed; use visual only for pixel-only facts. Finish with report. Historical screenshots are compacted, typed/assigned values are hashed in reports, and oversized PNGs are delivered as coordinate-labelled lossless tiles.`
+Use the computer tool for native Windows or macOS applications. Use action="launch" directly without observe or stateId; application may be a display name and, on macOS, a bundle ID or full .app path. Focus by application/title also works without stateId. To inspect an already-running app, begin with action="observe", scope="window", and application/title; use a full desktop observation only for discovery. Every result captures and preserves a fresh lossless screenshot and returns stateId, window refs, accessibility element refs, semanticStatus, stateDelta, timings, and visualDelivery. Copy the newest stateId into later state-changing actions and ref-based mutations; a read-only observe may reuse the current windowRef without stateId.
+
+Treat visualDelivery as the routing contract. In the default auto mode, a complete semantic observation and successful mutations use the fast text path, so no visual model call occurs. First inspect actionResult, semantic elements and stateDelta. If they confirm the action and the next planned step is deterministic, issue that next tool call immediately without a visual reread or a long narration. Set includeScreenshot=true on the current action only when its resulting pixels are needed, or call observe with includeScreenshot=true for an explicit visual reread. Do not request pixels merely to reconfirm a successful semantic action. When visualDelivery.delivered=false, do not claim that pixels were inspected; the exact full screenshot is still preserved under its hash/artifact metadata. In always mode every result includes pixels; in manual mode only includeScreenshot=true does.
+
+Prefer elementRef with click, invoke, set_value, type, scroll, or perform_action. When semanticStatus is sparse, empty, or disabled, use a delivered screenshot and pixel coordinates instead of repeatedly probing accessibility. Window-scoped coordinates are relative to the returned screenshot and the runtime maps them back to the desktop. Prefer runtime assertions such as element_visible, element_value_equals, window_exists, or screen_changed; use visual only for pixel-only facts. Finish with report. Historical screenshots are compacted, typed/assigned values are hashed in reports, and oversized PNGs are delivered as coordinate-labelled lossless tiles.`
 
 /** Register native desktop computer use only when explicitly enabled. */
 export function applyDesktopComputerUse(ctx, config, options = {}) {

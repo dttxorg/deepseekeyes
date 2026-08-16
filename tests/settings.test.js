@@ -67,6 +67,7 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /desktopComputerUse/)
   assert.match(JSON.stringify(json), /desktopWindowsPowerShell/)
   assert.match(JSON.stringify(json), /desktopSemantic/)
+  assert.match(JSON.stringify(json), /desktopVisualMode/)
   assert.match(JSON.stringify(json), /desktopMaxElements/)
   assert.match(JSON.stringify(json), /usageStats/)
 
@@ -83,6 +84,7 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal(base.browserComputerUse, false)
   assert.equal(base.desktopHistoryLimit, 8)
   assert.equal(base.desktopComputerUse, false)
+  assert.equal(base.desktopVisualMode, 'auto')
   assert.equal(base.desktopTimeoutMs, 30_000)
   assert.equal(base.desktopSemantic, true)
   assert.equal(base.desktopMaxElements, 200)
@@ -152,6 +154,7 @@ test('native settings registration exposes the namespace and reconfigures routin
     browserHistoryLimit: 3,
     browserHeadless: true,
     desktopComputerUse: true,
+    desktopVisualMode: 'manual',
     desktopHistoryLimit: 2,
     desktopTimeoutMs: 20_000,
     desktopSettleMs: 450,
@@ -176,6 +179,7 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.browserHistoryLimit, 3)
   assert.equal(state.config.browserHeadless, true)
   assert.equal(state.config.desktopComputerUse, true)
+  assert.equal(state.config.desktopVisualMode, 'manual')
   assert.equal(state.config.desktopHistoryLimit, 2)
   assert.equal(state.config.desktopTimeoutMs, 20_000)
   assert.equal(state.config.desktopSettleMs, 450)

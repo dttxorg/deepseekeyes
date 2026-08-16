@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 import { apply } from '../dsh/index.js'
+import { renderDesktopResult } from '../src/desktop/index.js'
 import { collectStream, textStream } from '../src/stream.js'
 import {
   jsonStream,
@@ -213,6 +214,70 @@ test('desktop screenshot inside computer output is reread by Eyes in the same co
   assert.equal(result.text, '桌面状态已验证')
   assert.equal(visionCalls, 1)
   assert.equal(toolResult.content[0].content[1].type, 'image')
+})
+
+test('desktop semantic fast path reaches DeepSeek with zero visual-model calls', async () => {
+  let visionCalls = 0
+  let upstreamCalls = 0
+  const ctx = setupBridge({
+    visionHandler() {
+      visionCalls += 1
+      return jsonStream(validBaseEvidence())
+    },
+    upstreamHandler(options) {
+      upstreamCalls += 1
+      const wire = JSON.stringify(options.messages)
+      assert.match(wire, /semantic-state-sufficient/)
+      assert.equal(wire.includes('"type":"image"'), false)
+      return textStream('语义快路径继续')
+    },
+  })
+  const content = renderDesktopResult({
+    ok: true,
+    action: 'observe',
+    stateId: `desktop-state:${'a'.repeat(64)}`,
+    semanticStatus: { quality: 'available', truncated: false },
+    visualDelivery: {
+      mode: 'auto',
+      requested: 'auto',
+      delivered: false,
+      reason: 'semantic-state-sufficient',
+      fullScreenshotPreserved: true,
+      attachmentCount: 1,
+    },
+    screenshot: {
+      sha256: 'b'.repeat(64),
+      pixelSha256: 'c'.repeat(64),
+      width: 1220,
+      height: 1069,
+      tileCount: 1,
+      tiles: [{ attachmentId: `sha256:${'d'.repeat(64)}` }],
+    },
+    image: {
+      attachmentId: `sha256:${'d'.repeat(64)}`,
+      mediaType: 'image/png',
+      width: 1220,
+      height: 1069,
+      bytes: 100,
+    },
+  })
+  assert.deepEqual(content.map(block => block.type), ['text'])
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [userMessage([{
+      type: 'tool-result',
+      toolCallId: 'computer-fast-path-1',
+      toolName: 'computer',
+      content,
+    }])],
+  }))
+  assert.equal(result.text, '语义快路径继续')
+  assert.equal(visionCalls, 0)
+  assert.equal(upstreamCalls, 1)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.visualTurns, 0)
+  assert.equal(usage.totals.calls.visionBase, 0)
 })
 
 test('explicit final model locks catalog, text turns, image turns, and exposes both model roles', async () => {

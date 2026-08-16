@@ -77,6 +77,7 @@ await mutate([
   { op: 'set', path: ['visionModel'], value: 'mock-vision-model' },
   { op: 'set', path: ['activeProbe'], value: false },
   { op: 'set', path: ['desktopComputerUse'], value: true },
+  { op: 'set', path: ['desktopVisualMode'], value: 'always' },
   { op: 'set', path: ['desktopHistoryLimit'], value: 2 },
   { op: 'set', path: ['desktopSettleMs'], value: 0 },
   { op: 'set', path: ['desktopMaxWindows'], value: 10 },

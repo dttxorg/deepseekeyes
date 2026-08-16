@@ -55,6 +55,10 @@ assert.equal(result.stateDelta.initial, true)
 assert.ok(Array.isArray(result.elements))
 
 const target = result.windows.find(window =>
+  window.active
+  && window.width > 0
+  && window.height > 0)
+  ?? result.windows.find(window =>
   window.width > 0
   && window.height > 0
   && window.width * window.height < result.screen.width * result.screen.height)
@@ -71,11 +75,64 @@ if (target !== undefined) {
   assert.equal(windowResult.observationScope.window.ref, target.ref)
   assert.equal(windowResult.screen.width, windowResult.screenshot.width)
   assert.equal(windowResult.screen.height, windowResult.screenshot.height)
+  assert.equal(
+    Math.round(windowResult.observationScope.window.width * windowResult.screen.scaleFactor),
+    windowResult.screenshot.width,
+  )
+  assert.equal(
+    Math.round(windowResult.observationScope.window.height * windowResult.screen.scaleFactor),
+    windowResult.screenshot.height,
+  )
   assert.ok(windowResult.screen.width > 0)
   assert.ok(windowResult.screen.height > 0)
   assert.ok(Array.isArray(windowResult.elements))
   assert.equal(windowResult.stateDelta.fromStateId, result.stateId)
   assert.equal(renderDesktopResult(windowResult).filter(block => block.type === 'image').length, windowResult.screenshot.tileCount)
+}
+let applicationRouting = 'skipped-no-application'
+const acceptanceApplication = process.env.DEEPSEEKEYES_ACCEPTANCE_APPLICATION?.trim()
+if (process.platform === 'darwin' && acceptanceApplication) {
+  const launched = await session.execute(parseDesktopArgs({
+    action: 'launch', application: acceptanceApplication,
+  }))
+  assert.equal(launched.ok, true)
+  assert.equal(launched.actionResult?.performed, 'launch')
+  assert.ok(Number(launched.actionResult?.pid) > 0)
+  assert.ok(String(launched.actionResult?.bundleIdentifier || '').includes('.'))
+  const byApplication = await session.execute(parseDesktopArgs({
+    action: 'observe', scope: 'window', application: acceptanceApplication,
+  }))
+  assert.equal(byApplication.ok, true)
+  assert.equal(byApplication.observationScope.type, 'window')
+  assert.equal(
+    byApplication.observationScope.window.application.toLowerCase(),
+    String(launched.actionResult.application).toLowerCase(),
+  )
+  assert.equal(
+    Math.round(byApplication.observationScope.window.width * byApplication.screen.scaleFactor),
+    byApplication.screenshot.width,
+  )
+  assert.equal(
+    Math.round(byApplication.observationScope.window.height * byApplication.screen.scaleFactor),
+    byApplication.screenshot.height,
+  )
+  if (acceptanceApplication.toLowerCase() === 'chatgpt') {
+    assert.ok(byApplication.observationScope.window.width >= 320)
+    assert.ok(byApplication.observationScope.window.height >= 200)
+  }
+  const byRef = await session.execute(parseDesktopArgs({
+    action: 'observe', scope: 'window', windowRef: byApplication.observationScope.window.ref,
+  }))
+  assert.equal(byRef.ok, true)
+  assert.equal(byRef.observationScope.type, 'window')
+  assert.equal(byRef.observationScope.window.ref, byApplication.observationScope.window.ref)
+  applicationRouting = {
+    requested: acceptanceApplication,
+    launched: launched.actionResult,
+    capturedApplication: byApplication.observationScope.window.application,
+    refWithoutStateId: true,
+    semanticStatus: byApplication.semanticStatus,
+  }
 }
 console.log(JSON.stringify({
   result: 'DESKTOP_NATIVE_OBSERVE_OK',
@@ -98,5 +155,6 @@ console.log(JSON.stringify({
     elementTotal: windowResult.elementTotal,
     elementsTruncated: windowResult.elementsTruncated,
   },
+  applicationRouting,
   capabilities: result.capabilities,
 }))

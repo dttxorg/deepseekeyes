@@ -159,6 +159,33 @@ function modelElement(value, screen, ref = elementRef(value)) {
   }).filter(([, field]) => field !== undefined))
 }
 
+function semanticStatus(elements, enabled, options = {}) {
+  const titlebarSubroles = new Set(['close_button', 'minimize_button', 'full_screen_button', 'zoom_button'])
+  const actionableCount = elements.filter(element => element.editable || element.actions.length > 0).length
+  const contentElementCount = elements.filter(element => !['window', 'group'].includes(element.role)
+    && !titlebarSubroles.has(element.subrole)).length
+  const quality = !enabled
+    ? 'disabled'
+    : elements.length === 0
+      ? 'empty'
+      : contentElementCount === 0
+        ? 'sparse'
+        : 'available'
+  return {
+    enabled: Boolean(enabled),
+    quality,
+    elementCount: elements.length,
+    actionableCount,
+    contentElementCount,
+    truncated: Boolean(options.truncated),
+    ...(options.limitReason === undefined ? {} : { limitReason: options.limitReason }),
+    ...(Number.isFinite(Number(options.elapsedMs)) ? { elapsedMs: Number(options.elapsedMs) } : {}),
+    preferredTargeting: ['disabled', 'empty', 'sparse'].includes(quality)
+      ? 'screenshot-coordinates'
+      : 'element-ref',
+  }
+}
+
 const ELEMENT_DIFF_FIELDS = [
   'role', 'subrole', 'name', 'description', 'value', 'enabled', 'visible', 'focused',
   'editable', 'selected', 'checked', 'bbox', 'actions',
@@ -330,6 +357,7 @@ export class DesktopSession {
     }
     const elementWindow = this.windowForElement(element)
     const explicitWindow = window ?? elementWindow
+    const hasNamedTarget = args.application !== undefined || args.title !== undefined
     const wantsWindow = args.scope === 'window'
       || explicitWindow !== undefined
       || args.application !== undefined
@@ -338,7 +366,7 @@ export class DesktopSession {
     if (!wantsWindow) return { captureScope: 'desktop' }
     return {
       captureScope: 'window',
-      captureWindow: explicitWindow ?? this.captureWindow,
+      captureWindow: explicitWindow ?? (hasNamedTarget ? undefined : this.captureWindow),
       captureApplication: args.application,
       captureTitle: args.title,
     }
@@ -455,6 +483,12 @@ export class DesktopSession {
       elementTotal: finite(native.elementTotal) ?? modelElements.length,
       elementsTruncated: Boolean(native.elementsTruncated)
         || Number(native.elementTotal ?? modelElements.length) > modelElements.length,
+      semanticStatus: semanticStatus(elements, native.capabilities?.accessibility, {
+        truncated: Boolean(native.elementsTruncated)
+          || Number(native.elementTotal ?? modelElements.length) > modelElements.length,
+        limitReason: native.semanticLimitReason,
+        elapsedMs: native.semanticElapsedMs,
+      }),
       capabilities: { ...native.capabilities, stateDiff: true },
       actionResult: native.actionResult,
       screenshot: {
@@ -635,7 +669,8 @@ export class DesktopSession {
     this.events.push(event)
     try {
       const usesLatestRef = args.windowRef !== undefined || args.elementRef !== undefined
-      if ((desktopActionNeedsState(args.action) || usesLatestRef) && !this.requireCurrentState(args.stateId)) {
+      const refNeedsState = usesLatestRef && args.action !== 'observe'
+      if ((desktopActionNeedsState(args.action) || refNeedsState) && !this.requireCurrentState(args.stateId)) {
         return await this.stale(args, event, signal)
       }
       this.requireCoordinateInLatestScreen(args)

@@ -17,7 +17,7 @@ test('desktop protocol binds mutations to state, coordinates, current windows, a
   assert.equal(parseDesktopArgs({ action: 'OBSERVE' }).action, 'observe')
   assert.equal(parseDesktopArgs({ action: 'observe', scope: 'WINDOW', application: 'Fixture' }).scope, 'window')
   assert.throws(() => parseDesktopArgs({ action: 'observe', scope: 'display' }), /scope must be one of/)
-  assert.throws(() => parseDesktopArgs({ action: 'click', x: 1, y: 2 }), /latest stateId/)
+  assert.throws(() => parseDesktopArgs({ action: 'click', x: 1, y: 2 }), /latest computer result/)
   assert.throws(
     () => parseDesktopArgs({ action: 'click', stateId: 'desktop-state:x', elementRef: 'el_1', x: 1, y: 2 }),
     /elementRef or x\/y, not both/,
@@ -48,6 +48,9 @@ test('desktop protocol binds mutations to state, coordinates, current windows, a
   assert.equal(parseDesktopArgs({
     action: 'assert', stateId: 'desktop-state:x', assertion: 'visual', passed: true,
   }).passed, true)
+  assert.equal(parseDesktopArgs({ action: 'focus', application: 'ChatGPT' }).stateId, undefined)
+  assert.equal(parseDesktopArgs({ action: 'observe', windowRef: 'win_fixture' }).stateId, undefined)
+  assert.throws(() => parseDesktopArgs({ action: 'focus', windowRef: 'win_fixture' }), /same latest computer result/)
 })
 
 test('desktop action reports hash typed text and launch arguments', () => {
@@ -75,13 +78,13 @@ test('desktop action reports hash typed text and launch arguments', () => {
 
   const launched = reportableDesktopArgs(parseDesktopArgs({
     action: 'launch',
-    stateId: 'desktop-state:x',
     application: 'sample-app',
     arguments: ['--fixture', 'value'],
   }))
   assert.equal(launched.arguments, undefined)
   assert.equal(launched.argumentCount, 2)
   assert.match(launched.argumentsSha256, /^[a-f0-9]{64}$/)
+  assert.equal(parseDesktopArgs({ action: 'launch', application: 'ChatGPT' }).stateId, undefined)
 })
 
 test('desktop 0.5 configuration is opt-in with Windows and macOS semantic controls', () => {

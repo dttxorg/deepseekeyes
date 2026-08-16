@@ -37,6 +37,10 @@ export class NativeDesktopDriver {
     const helper = helperCommand(this.platform, this.config)
     const folder = await mkdtemp(join(this.temporaryRoot, 'deepseekeyes-desktop-'))
     const screenshotPath = join(folder, 'screen.png')
+    const helperTimeoutMs = Math.max(
+      args.timeoutMs ?? this.config.desktopTimeoutMs,
+      Number(args.durationMs ?? 0) + this.config.desktopSettleMs + 5_000,
+    )
     try {
       const value = await this.runJson(helper.command, helper.args, {
         ...args,
@@ -47,12 +51,10 @@ export class NativeDesktopDriver {
         semantic: this.config.desktopSemantic,
         maxElements: this.config.desktopMaxElements,
         macDisplay: this.config.desktopMacDisplay,
+        helperTimeoutMs,
       }, {
         signal,
-        timeoutMs: Math.max(
-          args.timeoutMs ?? this.config.desktopTimeoutMs,
-          Number(args.durationMs ?? 0) + this.config.desktopSettleMs + 5_000,
-        ),
+        timeoutMs: helperTimeoutMs,
       })
       const screenshot = await readFile(screenshotPath).catch(() => undefined)
       if (!Buffer.isBuffer(screenshot) || screenshot.length < 24) {

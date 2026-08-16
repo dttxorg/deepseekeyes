@@ -2,11 +2,10 @@ ObjC.import('Foundation')
 ObjC.import('AppKit')
 ObjC.import('CoreGraphics')
 
-const currentApplication = Application.currentApplication()
-currentApplication.includeStandardAdditions = true
+let actionDetail = 'none'
 
 function pause(seconds) {
-  currentApplication.delay(seconds)
+  $.NSThread.sleepForTimeInterval(Math.max(0, Number(seconds) || 0))
 }
 
 function readInput() {
@@ -33,6 +32,156 @@ function runTask(path, args) {
     const text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
     throw new Error(`${path} exited ${status}: ${text}`)
   }
+}
+
+function objcText(value) {
+  if (value === undefined || value === null) return undefined
+  try {
+    const unwrapped = ObjC.unwrap(value)
+    if (unwrapped === undefined || unwrapped === null) return undefined
+    return String(unwrapped)
+  } catch {
+    try { return String(value) } catch { return undefined }
+  }
+}
+
+function normalizedApplicationPath(value) {
+  const rendered = String(value || '').trim()
+  if (rendered === '') return undefined
+  try {
+    return objcText($(rendered).stringByStandardizingPath)?.replace(/\/+$/, '')
+  } catch { return rendered.replace(/\/+$/, '') }
+}
+
+function applicationBasename(value) {
+  const path = normalizedApplicationPath(value)
+  if (path === undefined) return undefined
+  const name = path.split('/').filter(Boolean).pop() || path
+  return name.replace(/\.app$/i, '')
+}
+
+function looksLikeBundleIdentifier(value) {
+  const rendered = String(value || '').trim()
+  return !rendered.includes('/') && !/\.app$/i.test(rendered)
+    && /^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/.test(rendered)
+}
+
+function applicationTarget(value) {
+  const requested = String(value || '').trim()
+  const workspace = $.NSWorkspace.sharedWorkspace
+  const pathLike = requested.includes('/') || /\.app$/i.test(requested)
+  let path
+  let bundleIdentifier
+  if (pathLike) {
+    path = normalizedApplicationPath(requested)
+  } else if (looksLikeBundleIdentifier(requested)) {
+    bundleIdentifier = requested
+    try {
+      const url = workspace.URLForApplicationWithBundleIdentifier(requested)
+      path = url === undefined || url === null ? undefined : objcText(url.path)
+    } catch {}
+  } else {
+    try { path = objcText(workspace.fullPathForApplication(requested)) } catch {}
+  }
+  let displayName
+  if (path !== undefined) {
+    try {
+      const bundle = $.NSBundle.bundleWithPath(path)
+      if (bundle !== undefined && bundle !== null) {
+        bundleIdentifier = objcText(bundle.bundleIdentifier) || bundleIdentifier
+        displayName = objcText(bundle.objectForInfoDictionaryKey('CFBundleDisplayName'))
+          || objcText(bundle.objectForInfoDictionaryKey('CFBundleName'))
+      }
+    } catch {}
+  }
+  return {
+    requested,
+    path,
+    bundleIdentifier,
+    displayName: displayName || applicationBasename(path),
+  }
+}
+
+function runningApplicationRecord(application) {
+  return {
+    application: objcText(application.localizedName),
+    bundleIdentifier: objcText(application.bundleIdentifier),
+    path: application.bundleURL === undefined || application.bundleURL === null
+      ? undefined
+      : objcText(application.bundleURL.path),
+    pid: Number(application.processIdentifier),
+    finishedLaunching: Boolean(application.finishedLaunching),
+  }
+}
+
+function runningApplicationMatches(record, target) {
+  const equal = (first, second) => first !== undefined && second !== undefined
+    && String(first).toLowerCase() === String(second).toLowerCase()
+  return equal(record.bundleIdentifier, target.bundleIdentifier)
+    || equal(normalizedApplicationPath(record.path), normalizedApplicationPath(target.path))
+    || equal(record.application, target.displayName)
+    || equal(record.application, target.requested)
+    || equal(applicationBasename(record.path), applicationBasename(target.requested))
+}
+
+function findRunningApplication(target) {
+  const applications = $.NSWorkspace.sharedWorkspace.runningApplications
+  for (let index = 0; index < Number(applications.count); index += 1) {
+    const application = applications.objectAtIndex(index)
+    const record = runningApplicationRecord(application)
+    if (runningApplicationMatches(record, target)) return record
+  }
+  return undefined
+}
+
+function focusProcessByPid(pid) {
+  try {
+    const application = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(pid))
+    return application === undefined || application === null
+      ? false
+      : Boolean(application.activateWithOptions(3))
+  } catch { return false }
+}
+
+function launchApplication(input) {
+  actionDetail = 'resolve-application'
+  const target = applicationTarget(input.application)
+  actionDetail = `resolved:${JSON.stringify(target)}`
+  const openArguments = target.path !== undefined
+    ? ['-a', target.path]
+    : target.bundleIdentifier !== undefined
+      ? ['-b', target.bundleIdentifier]
+      : ['-a', target.requested]
+  if (Array.isArray(input.arguments) && input.arguments.length > 0) {
+    openArguments.push('--args', ...input.arguments.map(String))
+  }
+  actionDetail = `open:${JSON.stringify({
+    target: target.bundleIdentifier || target.path || target.requested,
+    argumentCount: Array.isArray(input.arguments) ? input.arguments.length : 0,
+  })}`
+  runTask('/usr/bin/open', openArguments)
+  actionDetail = 'resolve-running-application'
+  let running
+  for (let attempt = 0; attempt < 50 && running === undefined; attempt += 1) {
+    running = findRunningApplication(target)
+    if (running === undefined) pause(0.1)
+  }
+  if (running === undefined) {
+    throw new Error(`macOS opened ${target.requested} but could not resolve its running application`)
+  }
+  actionDetail = `activate:${JSON.stringify({ pid: running.pid, application: running.application })}`
+  const focused = focusProcessByPid(running.pid)
+  actionDetail = 'build-launch-result'
+  const result = {
+    performed: 'launch',
+    pid: running.pid,
+    application: running.application || target.displayName || target.requested,
+    bundleIdentifier: running.bundleIdentifier || target.bundleIdentifier,
+    path: running.path || target.path,
+    focused,
+  }
+  actionDetail = `launch-result:${JSON.stringify(result)}`
+  return result
 }
 
 function screenInfo(display) {
@@ -295,24 +444,98 @@ function visibleProcesses(maximum) {
 
 function resolveProcess(input) {
   const systemEvents = Application('System Events')
-  const processes = systemEvents.applicationProcesses()
   const wantedPid = Number(input.window && input.window.pid)
-  const wantedApplication = String((input.window && input.window.application) || input.application || '').toLowerCase()
+  const requestedApplication = String((input.window && input.window.application) || input.application || '')
+  const target = requestedApplication === '' ? undefined : applicationTarget(requestedApplication)
+  const wantedApplication = requestedApplication.toLowerCase()
   const wantedTitle = String(input.title || '').toLowerCase()
+
+  // Avoid walking every accessibility process for an exact target. Electron
+  // helper processes can make a full System Events enumeration take several
+  // seconds; launch capture used to repeat that scan until the 30 s helper
+  // timeout. NSWorkspace gives us the real application PID without touching
+  // the accessibility tree, then System Events can address that PID directly.
+  const directPid = Number.isFinite(wantedPid) && wantedPid > 0
+    ? wantedPid
+    : target === undefined
+      ? undefined
+      : findRunningApplication(target)?.pid
+  if (Number.isFinite(directPid) && directPid > 0) {
+    try {
+      const exact = systemEvents.applicationProcesses.whose({ unixId: directPid })()
+      if (exact.length > 0) return exact[0]
+    } catch {}
+  }
+
+  const processes = systemEvents.applicationProcesses()
+  const candidates = []
   for (const process of processes) {
     try {
       const name = String(process.name())
       const pid = Number(process.unixId())
       if (Number.isFinite(wantedPid) && wantedPid > 0 && pid === wantedPid) return process
       if (Number.isFinite(wantedPid) && wantedPid > 0) continue
-      if (wantedApplication && name.toLowerCase().includes(wantedApplication)) return process
-      if (wantedTitle) {
-        const matches = process.windows().some(window => String(window.name()).toLowerCase().includes(wantedTitle))
-        if (matches) return process
-      }
+      candidates.push({
+        process,
+        pid,
+        name,
+        normalizedName: name.toLowerCase(),
+      })
     } catch {}
   }
-  throw new Error('target macOS application/window was not found')
+  const exactName = candidates.filter(candidate => target !== undefined && (
+    candidate.normalizedName === wantedApplication
+    || candidate.normalizedName === String(target.displayName || '').toLowerCase()
+  ))
+  if (exactName.length > 0) {
+    const frontmost = exactName.find(candidate => {
+      try { return Boolean(candidate.process.frontmost()) } catch { return false }
+    })
+    return (frontmost || exactName[0]).process
+  }
+  if (target?.bundleIdentifier !== undefined) {
+    for (const candidate of candidates) {
+      try {
+        if (String(candidate.process.bundleIdentifier()).toLowerCase()
+          === String(target.bundleIdentifier).toLowerCase()) return candidate.process
+      } catch {}
+    }
+  }
+  if (wantedTitle !== '') {
+    const matchedWindow = cgWindows().find(window => String(window.title || '').toLowerCase().includes(wantedTitle))
+    if (matchedWindow !== undefined) {
+      const matchedProcess = candidates.find(candidate => candidate.pid === matchedWindow.pid)
+      if (matchedProcess !== undefined) return matchedProcess.process
+    }
+    for (const candidate of candidates) {
+      try {
+        if (candidate.process.windows().some(window => String(window.name()).toLowerCase().includes(wantedTitle))) {
+          return candidate.process
+        }
+      } catch {}
+    }
+  }
+  const fuzzy = candidates.filter(candidate => wantedApplication !== ''
+    && candidate.normalizedName.includes(wantedApplication))
+    .map(candidate => {
+      let windowCount = 0
+      try { windowCount = candidate.process.windows().length } catch {}
+      let frontmost = false
+      try { frontmost = Boolean(candidate.process.frontmost()) } catch {}
+      return { ...candidate, windowCount, frontmost }
+    })
+    .filter(candidate => candidate.windowCount > 0)
+    .sort((first, second) => Number(second.frontmost) - Number(first.frontmost)
+      || Number(second.normalizedName.startsWith(wantedApplication))
+        - Number(first.normalizedName.startsWith(wantedApplication))
+      || first.normalizedName.length - second.normalizedName.length)
+  if (fuzzy.length > 0) return fuzzy[0].process
+  const available = [...new Set(candidates.map(candidate => candidate.name))].sort().slice(0, 20)
+  const wanted = requestedApplication || input.title || `pid ${wantedPid}`
+  throw new Error(
+    `target macOS application/window was not found for ${JSON.stringify(wanted)}; `
+    + `available running applications: ${available.join(', ') || 'none'}`,
+  )
 }
 
 function resolveWindow(input) {
@@ -327,7 +550,16 @@ function resolveWindow(input) {
       const info = describeWindow(process, windows[index], index)
       if (info.nativeId === wantedNativeId) return { process, window: windows[index], index, info }
     }
-    throw new Error('target macOS window was not found')
+    const available = windows.map((window, index) => {
+      try {
+        const described = describeWindow(process, window, index)
+        return `${described.nativeId}:${described.title}`
+      } catch { return undefined }
+    }).filter(Boolean).slice(0, 20)
+    throw new Error(
+      `target macOS window was not found for nativeId ${JSON.stringify(wantedNativeId)}; `
+      + `available windows: ${available.join(', ') || 'none'}`,
+    )
   }
   if (Number.isInteger(wantedIndex) && wantedIndex >= 0 && wantedIndex < windows.length) {
     return { process, window: windows[wantedIndex], index: wantedIndex, info: describeWindow(process, windows[wantedIndex], wantedIndex) }
@@ -341,9 +573,63 @@ function resolveWindow(input) {
         }
       } catch {}
     }
+    const availableTitles = windows.map(window => {
+      try { return String(window.name()) } catch { return '' }
+    }).filter(Boolean).slice(0, 20)
+    throw new Error(
+      `target macOS window title was not found for ${JSON.stringify(input.title || (input.window && input.window.title))}; `
+      + `available titles: ${availableTitles.join(', ') || 'none'}`,
+    )
   }
-  if (windows.length > 0) return { process, window: windows[0], index: 0, info: describeWindow(process, windows[0], 0) }
+  if (windows.length > 0) return preferredWindow(process, windows)
   throw new Error('target macOS window was not found')
+}
+
+function windowAxBoolean(window, attributeName) {
+  try { return Boolean(window.attributes.byName(attributeName).value()) } catch { return false }
+}
+
+function windowAxSubrole(window) {
+  try { return String(window.subrole() || '') } catch { return '' }
+}
+
+function preferredWindow(process, windows) {
+  const candidates = windows.map((window, index) => {
+    const info = describeWindow(process, window, index)
+    const width = Number(info.width || 0)
+    const height = Number(info.height || 0)
+    const area = Math.max(0, width) * Math.max(0, height)
+    const cgNumber = Number(/^cg:(\d+)$/.exec(String(info.nativeId || ''))?.[1])
+    const cgIndex = Number.isFinite(cgNumber)
+      ? cgWindows().findIndex(candidate => candidate.number === cgNumber)
+      : -1
+    const subrole = windowAxSubrole(window).toLowerCase()
+    return {
+      process,
+      window,
+      index,
+      info,
+      focused: windowAxBoolean(window, 'AXFocused'),
+      main: windowAxBoolean(window, 'AXMain'),
+      usable: width >= 160 && height >= 100,
+      standard: subrole.includes('standardwindow'),
+      onscreen: cgIndex >= 0 && Boolean(cgWindows()[cgIndex]?.onscreen),
+      titled: String(info.title || '').trim() !== '' && info.title !== info.application,
+      area,
+      cgIndex: cgIndex < 0 ? Number.MAX_SAFE_INTEGER : cgIndex,
+    }
+  })
+  candidates.sort((first, second) => Number(second.focused) - Number(first.focused)
+    || Number(second.main) - Number(first.main)
+    || Number(second.usable) - Number(first.usable)
+    || Number(second.standard) - Number(first.standard)
+    || Number(second.onscreen) - Number(first.onscreen)
+    || Number(second.titled) - Number(first.titled)
+    || second.area - first.area
+    || first.cgIndex - second.cgIndex
+    || first.index - second.index)
+  const selected = candidates[0]
+  return { process: selected.process, window: selected.window, index: selected.index, info: selected.info }
 }
 
 function describeWindow(process, window, index) {
@@ -356,6 +642,15 @@ function describeWindow(process, window, index) {
   try { position = window.position().map(Number) } catch {}
   try { size = window.size().map(Number) } catch {}
   const matched = matchCgWindow(pid, title, position, size)
+  const frontmost = cgWindows().find(candidate => candidate.pid === pid
+    && candidate.layer === 0 && candidate.onscreen)
+  let applicationActive = false
+  try { applicationActive = Boolean(process.frontmost()) } catch {}
+  const active = applicationActive && (
+    windowAxBoolean(window, 'AXFocused')
+    || windowAxBoolean(window, 'AXMain')
+    || (matched !== undefined && matched.number === frontmost?.number)
+  )
   const fallbackIdentity = stableTextHash(JSON.stringify({ pid, title, position, size }))
   return {
     nativeId: matched === undefined ? `ax:${pid}:${fallbackIdentity}` : `cg:${matched.number}`,
@@ -363,7 +658,7 @@ function describeWindow(process, window, index) {
     index,
     application,
     title,
-    active: Boolean(process.frontmost()),
+    active,
     ...(position === undefined ? {} : { x: position[0], y: position[1] }),
     ...(size === undefined ? {} : { width: size[0], height: size[1] }),
   }
@@ -379,8 +674,14 @@ function resolveCaptureWindow(input) {
     application: input.captureApplication || (capture && capture.application) || input.application,
     title: input.captureTitle || (capture && capture.title) || input.title,
   }
-  try { return resolveWindow(proxy) } catch (error) {
-    if (explicit) throw error
+  let lastError
+  const attempts = explicit && input.action === 'launch' ? 5 : 1
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return resolveWindow(proxy) } catch (error) { lastError = error }
+    if (attempt + 1 < attempts) pause(0.1)
+  }
+  if (explicit) {
+    throw lastError
   }
   try {
     const active = frontmostApplication()
@@ -484,16 +785,46 @@ function convertAxElement(element, target, flatIndex) {
   } catch { return undefined }
 }
 
-function collectAxElements(target, maximum) {
-  let flattened = []
-  try { flattened = target.window.entireContents() } catch {}
+function boundedAxContents(root, maximum) {
+  const limit = Math.max(0, Math.floor(Number(maximum) || 0))
+  const items = []
+  const queue = [root]
+  let truncated = false
+  while (queue.length > 0 && items.length < limit) {
+    const parent = queue.shift()
+    let children = []
+    try { children = parent.uiElements() } catch {}
+    for (let index = 0; index < children.length; index += 1) {
+      if (items.length >= limit) {
+        truncated = true
+        break
+      }
+      items.push(children[index])
+      queue.push(children[index])
+    }
+  }
+  if (queue.length > 0) truncated = true
+  return { items, truncated }
+}
+
+function collectAxElements(target, maximum, timeBudgetMs) {
+  const startedAt = Date.now()
+  const bounded = boundedAxContents(target.window, Math.max(0, maximum - 1))
+  const flattened = bounded.items
   const candidates = [{ element: target.window, flatIndex: -1 }]
-  for (let index = 0; index < flattened.length && candidates.length < maximum; index += 1) {
+  for (let index = 0; index < flattened.length; index += 1) {
     candidates.push({ element: flattened[index], flatIndex: index })
   }
   const counts = new Map()
   const elements = []
+  let processedCandidates = 0
+  let timeLimited = false
   for (const candidate of candidates) {
+    if (processedCandidates > 0 && Date.now() - startedAt >= timeBudgetMs) {
+      timeLimited = true
+      break
+    }
+    processedCandidates += 1
     const record = convertAxElement(candidate.element, target, candidate.flatIndex)
     if (record === undefined) continue
     const ordinal = counts.get(record.identityBase) || 0
@@ -502,7 +833,13 @@ function collectAxElements(target, maximum) {
     delete record.identityBase
     elements.push(record)
   }
-  return { elements, total: 1 + flattened.length }
+  return {
+    elements,
+    total: candidates.length + Number(bounded.truncated),
+    truncated: bounded.truncated || timeLimited || processedCandidates < candidates.length,
+    limitReason: timeLimited ? 'time-budget' : bounded.truncated ? 'element-limit' : undefined,
+    elapsedMs: Date.now() - startedAt,
+  }
 }
 
 function resolveAxElement(input) {
@@ -515,7 +852,8 @@ function resolveAxElement(input) {
     },
   })
   const flatIndex = Number(input.element.flatIndex)
-  const flattened = target.window.entireContents()
+  const searchLimit = Math.max(Number(input.maxElements || 200) - 1, flatIndex + 1)
+  const flattened = boundedAxContents(target.window, searchLimit).items
   const candidate = !Number.isInteger(flatIndex) || flatIndex < 0
     ? target.window
     : flatIndex < flattened.length ? flattened[flatIndex] : undefined
@@ -590,7 +928,7 @@ function captureScreen(input, target, displayScreen) {
     const windowNumber = /^cg:(\d+)$/.exec(String(target.info.nativeId || ''))
     runTask('/usr/sbin/screencapture', windowNumber === null
       ? ['-x', '-t', 'png', `-R${x},${y},${width},${height}`, String(input.screenshotPath)]
-      : ['-x', '-t', 'png', '-o', '-l', windowNumber[1], String(input.screenshotPath)])
+      : ['-x', '-t', 'png', '-o', '-a', '-l', windowNumber[1], String(input.screenshotPath)])
     return {
       x,
       y,
@@ -663,10 +1001,8 @@ function perform(input) {
     typeUnicode(input.text)
   }
   else if (action === 'key') sendKey(input.key)
-  else if (action === 'launch') {
-    const app = Application(input.application)
-    app.activate()
-  } else if (action === 'focus') {
+  else if (action === 'launch') return launchApplication(input)
+  else if (action === 'focus') {
     const process = resolveProcess(input)
     process.frontmost = true
   } else if (action === 'move_window') {
@@ -718,14 +1054,28 @@ function accessibilityAvailable() {
 }
 
 function run() {
+  let stage = 'read-input'
   try {
     const input = readInput()
+    stage = 'screen-info'
     const displayScreen = screenInfo(input.macDisplay)
     input.screen = input.screen || displayScreen
-    const actionResult = perform(input)
+    stage = 'perform-action'
+    let actionResult
+    try { actionResult = perform(input) }
+    catch (error) { throw new Error(`macOS ${input.action} action failed: ${messageOf(error)}`) }
     if (input.settleMs > 0 && !['wait', 'observe'].includes(input.action)) pause(input.settleMs / 1000)
-    const captureTarget = resolveCaptureWindow(input)
-    const screen = captureScreen(input, captureTarget, displayScreen)
+    stage = 'resolve-capture-target'
+    let captureTarget
+    try { captureTarget = resolveCaptureWindow(input) }
+    catch (error) {
+      throw new Error(`macOS ${input.action} capture target failed: ${messageOf(error)}`)
+    }
+    stage = 'capture-screenshot'
+    let screen
+    try { screen = captureScreen(input, captureTarget, displayScreen) }
+    catch (error) { throw new Error(`macOS ${input.action} screenshot failed: ${messageOf(error)}`) }
+    stage = 'enumerate-windows'
     const frontmost = frontmostApplication()
     const allWindows = captureTarget === undefined
       ? visibleProcesses(input.maxWindows || 50)
@@ -739,13 +1089,22 @@ function run() {
     const semanticTarget = captureTarget
     let elements = []
     let elementTotal = 0
+    let elementsTruncated = false
+    let semanticLimitReason
+    let semanticElapsedMs = 0
     if (semanticEnabled && semanticTarget !== undefined) {
       try {
-        const semantic = collectAxElements(semanticTarget, input.maxElements || 200)
+        const helperTimeoutMs = Math.max(1_000, Number(input.helperTimeoutMs || 30_000))
+        const semanticTimeBudgetMs = Math.max(250, Math.min(8_000, Math.floor(helperTimeoutMs * 0.4)))
+        const semantic = collectAxElements(semanticTarget, input.maxElements || 200, semanticTimeBudgetMs)
         elements = semantic.elements
         elementTotal = semantic.total
+        elementsTruncated = semantic.truncated
+        semanticLimitReason = semantic.limitReason
+        semanticElapsedMs = semantic.elapsedMs
       } catch { elements = [] }
     }
+    stage = 'serialize-result'
     return JSON.stringify({
       ok: true,
       actionResult,
@@ -756,7 +1115,9 @@ function run() {
       windows,
       elements,
       elementTotal,
-      elementsTruncated: elementTotal > elements.length,
+      elementsTruncated: elementsTruncated || elementTotal > elements.length,
+      semanticLimitReason,
+      semanticElapsedMs,
       capabilities: {
         screenshot: true,
         mouse: true,
@@ -774,7 +1135,9 @@ function run() {
     return JSON.stringify({
       ok: false,
       code: 'MACOS_DESKTOP_ACTION_FAILED',
-      message: messageOf(error),
+      stage,
+      ...(actionDetail === 'none' ? {} : { actionDetail }),
+      message: `macOS helper ${stage} failed${actionDetail === 'none' ? '' : ` at ${actionDetail}`}: ${messageOf(error)}`,
     })
   }
 }

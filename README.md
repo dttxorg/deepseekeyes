@@ -148,7 +148,9 @@ The native `computer` tool can:
 - return a screenshot/window/element `stateDelta` after every step;
 - run native element/window/screen assertions, fall back to visual assertions for pixel-only facts, and save v2 evidence reports.
 
-Every action is bound to the newest screenshot state and returns another lossless PNG through the same visual bridge. A known target remains window-scoped; full-desktop capture is used for discovery or when explicitly requested. Coordinates are relative to the returned image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
+`launch` is stateless: it can run before `observe`, and macOS accepts a display name, a renamed alias resolvable by Launch Services, a bundle ID, or a full `.app` path. Focus by application/title is also stateless. Mutations based on pixels or refs remain bound to the newest screenshot state; read-only `observe` may reuse the current `windowRef` without repeating `stateId`.
+
+Every action returns another lossless PNG through the same visual bridge. A known target remains window-scoped; an explicit application/title always overrides the previous capture. On macOS, the runtime prefers the focused/main usable window over tiny auxiliary dialogs and walks Accessibility children under both the configured element bound and a helper-time budget, avoiding an unbounded Electron tree scan. `semanticStatus` reports availability, truncation/limit reason and elapsed semantic time, allowing Electron/canvas surfaces to switch immediately to screenshot coordinates. Coordinates are relative to the returned image and are mapped back to native desktop coordinates. Native Desktop Computer Use is implemented for Windows and macOS; Browser Computer Use remains available wherever the configured Chromium runtime is available.
 
 ## Token accounting
 

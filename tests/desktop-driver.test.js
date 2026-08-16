@@ -24,6 +24,7 @@ test('native desktop driver routes macOS and Windows to packaged native helpers'
   assert.equal(calls[0].input.macDisplay, 1)
   assert.equal(calls[0].input.semantic, true)
   assert.equal(calls[0].input.maxElements, 200)
+  assert.equal(calls[0].input.helperTimeoutMs, 30_000)
   assert.equal(macResult.platform, 'darwin')
   assert.deepEqual(macResult.screenshot, png)
 
@@ -60,6 +61,13 @@ test('native JSON runner keeps input on stdin and validates helper output', asyn
     runNativeJson(process.execPath, ['-e', 'process.stderr.write("fixture failure");process.exit(9)'], {}),
     error => error.code === 'DESKTOP_HELPER_FAILED' && /fixture failure/.test(error.message),
   )
+  await assert.rejects(
+    runNativeJson(process.execPath, ['-e', 'setTimeout(()=>{},1000)'], {
+      action: 'launch', application: 'FixtureApp',
+    }, { timeoutMs: 10 }),
+    error => error.code === 'DESKTOP_HELPER_TIMEOUT'
+      && /during launch for FixtureApp/.test(error.message),
+  )
 })
 
 test('packaged helpers retain both native platforms and avoid the macOS CFRelease crash', async () => {
@@ -69,10 +77,22 @@ test('packaged helpers retain both native platforms and avoid the macOS CFReleas
   assert.match(mac, /CGEventCreateMouseEvent/)
   assert.match(mac, /CGWindowListCopyWindowInfo/)
   assert.match(mac, /nativeId: matched === undefined \? `ax:/)
-  assert.match(mac, /\['-x', '-t', 'png', '-o', '-l', windowNumber\[1\]/)
+  assert.match(mac, /\['-x', '-t', 'png', '-o', '-a', '-l', windowNumber\[1\]/)
   assert.match(mac, /collectAxElements/)
+  assert.match(mac, /function boundedAxContents\(root, maximum\)/)
+  assert.match(mac, /limitReason: timeLimited \? 'time-budget'/)
+  assert.doesNotMatch(mac, /entireContents\(\)/)
   assert.match(mac, /axIdentityBase/)
   assert.match(mac, /target macOS accessibility element ref is stale/)
+  assert.match(mac, /fullPathForApplication/)
+  assert.match(mac, /URLForApplicationWithBundleIdentifier/)
+  assert.match(mac, /runTask\('\/usr\/bin\/open'/)
+  assert.match(mac, /applicationProcesses\.whose\(\{ unixId: directPid \}\)/)
+  assert.match(mac, /function preferredWindow\(process, windows\)/)
+  assert.match(mac, /windowAxBoolean\(window, 'AXMain'\)/)
+  assert.match(mac, /available running applications/)
+  assert.match(mac, /NSThread\.sleepForTimeInterval/)
+  assert.doesNotMatch(mac, /currentApplication\.delay/)
   assert.match(mac, /`-R\$\{x\},\$\{y\},\$\{width\},\$\{height\}`/)
   assert.doesNotMatch(mac, /\$\.CFRelease\(/)
   assert.match(windows, /user32\.dll/)

@@ -94,6 +94,8 @@ Check the configured Edge/Chrome channel or executable path. Browser mode requir
 
 Grant **Screen Recording** and **Accessibility** to the terminal that starts `dsh web`, then restart that terminal and DSH. Screen Recording provides PNG capture; Accessibility provides element discovery and actions. The doctor verifies packaged native helpers; `npm run test:desktop` exercises desktop discovery, window capture and semantic metadata from a source checkout.
 
+`launch` accepts an application display name, bundle ID or full `.app` path and does not require a prior `stateId`. Version 0.5.1 resolves the app PID before Accessibility discovery, ignores tiny auxiliary dialogs when a focused/main usable window exists, and bounds semantic traversal. A timeout now names both the action and target; run `DEEPSEEKEYES_ACCEPTANCE_APPLICATION=ChatGPT npm run test:desktop` to verify this exact path locally.
+
 ## Windows desktop actions fail
 
 Confirm `powershell.exe` exists or configure its absolute path in the plugin card. DeepSeekEyes uses Windows UI Automation, `user32`, `SendInput` and `System.Drawing`; no separate desktop automation runtime is installed. If screenshots work but `elements` is empty, confirm the target app exposes UI Automation and that the DSH process runs at a compatible integrity level.

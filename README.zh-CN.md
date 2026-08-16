@@ -131,11 +131,14 @@ observe(scope=desktop) 发现窗口
 
 支持：`observe`、`click`、`double_click`、`right_click`、`move_cursor`、`drag`、`type`、`key`、`scroll`、`invoke`、`set_value`、`perform_action`、`launch`、`focus`、`move_window`、`resize_window`、`close_window`、`wait`、`assert`、`report` 和 `close`。
 
+`launch` 可以直接调用，不需要先 `observe` 或提交 `stateId`。macOS 的 `application` 可填写显示名称（包括应用改名前的可解析别名）、Bundle ID 或完整 `.app` 路径；例如 `ChatGPT`、`Codex`、`com.openai.codex`、`/Applications/ChatGPT.app` 均会解析到实际安装的应用。按 `application` / `title` 聚焦同样不依赖旧截图。
+
 运行时可以直接验证 `window_exists`、`window_title_contains`、`element_exists/visible/hidden/enabled/disabled/focused`、`element_value_equals`、`element_name_contains`、`screen_changed/unchanged`；像游戏、Canvas 和自绘界面仍使用 `visual` 断言。最终 `report` 使用 `deepseekeyes.desktop-report.v2` 汇总动作、断言、每步状态差分和截图身份。
 
-- 第一步使用 `observe`；会改变桌面或依赖窗口的动作必须提交最新 `stateId`。
+- 未知目标先使用 `observe`；`launch` 以及按名称聚焦可直接执行，会改变桌面或使用 ref 的其他动作必须提交最新 `stateId`。
 - 坐标绑定最新截图像素，越界坐标在调用系统接口前被拒绝。
-- `windowRef` / `elementRef` 从原生身份生成；同一对象跨观察保持稳定，但引用仍只允许与最新 `stateId` 一起使用，避免对过期界面执行动作。
+- `windowRef` / `elementRef` 从原生身份生成；同一对象跨观察保持稳定。只读 `observe` 可直接复用当前 `windowRef`，所有 ref 变更动作仍必须携带同一次最新结果的 `stateId`，避免对过期界面执行操作。
+- 每个结果都会返回 `semanticStatus`。macOS 会优先选择当前聚焦/主窗口及可用尺寸窗口，而不是应用列表中的微型辅助窗；Accessibility 控件同时受 `desktopMaxElements` 和 Helper 时间预算约束，状态会给出 `truncated`、`limitReason` 与耗时，不再为 Electron 的完整控件树阻塞到超时。当状态为 `sparse`、`empty` 或 `disabled` 时，模型会立即改用当前无损截图坐标，而不是反复查询缺失控件。
 - 已知目标默认继续返回窗口级截图；`scope=desktop` 可显式回到全桌面发现。窗口截图坐标以返回图片左上角为原点，Helper 会映射回系统全局坐标。
 - Windows 通过 PowerShell、UI Automation、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、Accessibility、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
 - 输入文本、`set_value` 的值和启动参数只在报告中保存长度和 SHA-256，不保存原文。

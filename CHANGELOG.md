@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1 - 2026-08-16
+
+- Make desktop `launch` stateless and resolve macOS applications by display name, renamed alias, bundle ID or full `.app` path through `NSWorkspace` plus `/usr/bin/open`.
+- Replace the JXA Standard Additions delay that failed after application activation with an in-process `NSThread` sleep, eliminating the opaque localized “message not understood” launch failure at the default settle delay.
+- Prefer exact application/display-name matches before substring matches, so `ChatGPT` selects the windowed app instead of the earlier `ChatGPTHelper` background process.
+- Resolve exact macOS targets by PID before enumerating Accessibility processes, rank focused/main usable windows ahead of tiny auxiliary dialogs, and traverse semantic children incrementally under both element and time budgets instead of calling unbounded `entireContents()`; ChatGPT launch now returns its real window without consuming the whole native timeout.
+- Make explicit `application` and `title` selectors override a previously captured window, preventing a new ChatGPT request from silently returning another application's old capture.
+- Allow name-based `focus` without state and read-only `observe` with the current `windowRef` without restating `stateId`; state-changing and ref-based mutations remain bound to the newest state.
+- Return actionable macOS routing errors with the failed stage and available applications/windows instead of a generic target-not-found result.
+- Include the action and target in native helper timeout errors so a slow launch/observe can be diagnosed directly.
+- Capture exactly the selected macOS window with `screencapture -a -l`, excluding attached dialogs or parent windows so screenshot dimensions and coordinate origin always match window metadata.
+- Add `semanticStatus` to every desktop state so sparse Electron Accessibility trees immediately direct the model to screenshot coordinates rather than repeated element probing.
+- Add real macOS application routing acceptance for launch, direct window observation and ref observation, while keeping Windows and ordinary non-desktop paths unchanged.
+
 ## 0.5.0 - 2026-08-16
 
 - Add window-scoped native observation on Windows and macOS, with screenshot-relative coordinate mapping back to the desktop and explicit failure instead of silently returning the wrong scope.

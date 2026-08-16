@@ -60,6 +60,8 @@ test('desktop session returns a fresh state and exact screenshot after every act
   assert.equal(observed.screen.height, 6)
   assert.match(observed.windows[0].ref, /^win_[a-f0-9]{12}$/)
   assert.match(observed.elements[0].ref, /^el_[a-f0-9]{12}$/)
+  assert.equal(observed.semanticStatus.quality, 'available')
+  assert.equal(observed.semanticStatus.preferredTargeting, 'element-ref')
   assert.equal(observed.stateDelta.initial, true)
   assert.equal(observed.stateDelta.elements.added[0], observed.elements[0].ref)
   assert.match(observed.stateId, /^desktop-state:[a-f0-9]{64}$/)
@@ -158,6 +160,37 @@ test('window-scoped observations expose stable refs and semantic element actions
   }))
   assert.equal(closedWindow.observationScope.type, 'desktop')
   assert.equal(driver.calls[3].captureScope, 'desktop')
+})
+
+test('launch and name-based focus are stateless while read-only window ref observation reuses current state', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const launched = await session.execute(parseDesktopArgs({ action: 'launch', application: 'Fixture' }))
+  assert.equal(launched.ok, true)
+  assert.equal(driver.calls[0].captureApplication, 'Fixture')
+
+  const focused = await session.execute(parseDesktopArgs({ action: 'focus', application: 'Fixture' }))
+  assert.equal(focused.ok, true)
+  assert.equal(driver.calls[1].application, 'Fixture')
+
+  const observed = await session.execute(parseDesktopArgs({
+    action: 'observe', scope: 'window', windowRef: focused.windows[0].ref,
+  }))
+  assert.equal(observed.ok, true)
+  assert.equal(driver.calls[2].window.nativeId, '42:0')
+  assert.equal(driver.calls[2].captureWindow.nativeId, '42:0')
+})
+
+test('an explicit application target overrides the previously captured window', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  const session = new DesktopSession(mockContext(), config, { driver })
+  await session.execute(parseDesktopArgs({ action: 'observe', scope: 'window', application: 'Fixture' }))
+  assert.equal(driver.calls[0].captureWindow, undefined)
+  await session.execute(parseDesktopArgs({ action: 'launch', application: 'Another App' }))
+  assert.equal(driver.calls[1].captureWindow, undefined)
+  assert.equal(driver.calls[1].captureApplication, 'Another App')
 })
 
 test('runtime assertions evaluate the latest native window, element, and screenshot state', async () => {

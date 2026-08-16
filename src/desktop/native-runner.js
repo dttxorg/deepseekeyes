@@ -37,8 +37,15 @@ export function runNativeJson(command, args, input, options = {}) {
     }
     const timer = setTimeout(() => {
       terminate()
+      const target = input?.application
+        ?? input?.title
+        ?? input?.window?.application
+        ?? input?.captureApplication
+        ?? input?.captureTitle
+        ?? input?.scope
+        ?? 'desktop'
       finish(new DeepSeekEyesError(
-        `native desktop helper timed out after ${timeoutMs}ms`,
+        `native desktop helper timed out after ${timeoutMs}ms during ${input?.action ?? 'unknown'} for ${target}`,
         'DESKTOP_HELPER_TIMEOUT',
       ))
     }, timeoutMs)

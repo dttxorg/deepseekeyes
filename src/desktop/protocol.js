@@ -44,7 +44,7 @@ export const DESKTOP_ASSERTION_KINDS = Object.freeze([
 
 const STATEFUL_ACTIONS = new Set([
   'click', 'double_click', 'right_click', 'move_cursor', 'drag', 'type', 'key',
-  'scroll', 'invoke', 'set_value', 'perform_action', 'launch', 'focus', 'move_window',
+  'scroll', 'invoke', 'set_value', 'perform_action', 'move_window',
   'resize_window', 'close_window', 'wait', 'assert', 'report',
 ])
 
@@ -167,10 +167,17 @@ export function parseDesktopArgs(input) {
     throw new TypeError(`deepseekeyes computer: scope must be one of ${DESKTOP_SCOPES.join(', ')}`)
   }
   if (desktopActionNeedsState(action) && args.stateId === undefined) {
-    throw new TypeError(`deepseekeyes computer: ${action} requires the latest stateId`)
+    throw new TypeError(
+      `deepseekeyes computer: ${action} requires stateId from the latest computer result; `
+      + 'call observe and retry with that stateId',
+    )
   }
-  if ((args.windowRef !== undefined || args.elementRef !== undefined) && args.stateId === undefined) {
-    throw new TypeError('deepseekeyes computer: windowRef and elementRef require the latest stateId')
+  if ((args.windowRef !== undefined || args.elementRef !== undefined)
+    && args.stateId === undefined
+    && action !== 'observe') {
+    throw new TypeError(
+      'deepseekeyes computer: windowRef and elementRef require stateId from the same latest computer result',
+    )
   }
   if (args.durationMs !== undefined
     && (!Number.isInteger(args.durationMs) || args.durationMs < 0 || args.durationMs > 120_000)) {

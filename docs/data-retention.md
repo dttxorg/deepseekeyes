@@ -6,7 +6,7 @@ DeepSeekEyes separates original DSH attachments, derived visual evidence, automa
 | :-- | :-- | :-- | :-- |
 | Original user image | DSH attachment store | Controlled by DSH/session retention | Original bytes and content-addressed attachment metadata. |
 | Evidence cache | `$DSH_HOME/deepseekeyes/evidence/` | One immutable file per source/route/prompt key | Source hash/metadata, selected route and schema-valid evidence. |
-| Token statistics | `$DSH_HOME/deepseekeyes/usage-stats.json` | 50 recent sessions plus totals | Provider usage, bridge estimates and operational counters. |
+| Token statistics | `$DSH_HOME/deepseekeyes/usage-stats.json` | 50 recent sessions plus totals | Provider usage, bridge estimates, Computer Use DeepSeek usage, avoided-replay estimates and operational counters. |
 | Vision attempts | `$DSH_HOME/deepseekeyes/vision-attempts.json` | 1,000 attempts | Provider/model, status, phase, latency, error code, image hash and SHA-256 of session ID. |
 | Browser runs | `$DSH_HOME/deepseekeyes/browser-runs/` | Operator-managed files; model history defaults to 8 summaries | Screenshots, action metadata, assertions and reports. Typed text is represented by length/hash. |
 | Desktop runs | `$DSH_HOME/deepseekeyes/desktop-runs/` | Operator-managed files; model history defaults to 8 summaries | Original/lossless PNG evidence, window/element metadata, state deltas, actions, assertions and v2 reports. Typed text, assigned values and launch arguments are hashed. |
@@ -22,6 +22,7 @@ The attempt log does not store API keys, prompt text, model output, OCR, image b
 
 - Set `persistentEvidence: false` to keep evidence memory-only.
 - Set `usageStats: false` to stop new Token statistics.
+- Set `automationContextMaxTokens: 32768` and `automationMaxCallsPerTurn: 32` to keep the default model-facing Computer Use bounds. Either value may be set to `0` for explicit unlimited mode; neither setting deletes retained task or evidence data.
 - Set `visionAttemptLog: false` to stop new route-attempt records.
 - Set `desktopVisualMode: auto` to keep every native screenshot while omitting model image delivery when semantic/action evidence is sufficient. `manual` requires an explicit `includeScreenshot: true`; neither mode deletes captured artifacts.
 - Set `cacheDir`, `usageStatsPath`, `visionAttemptLogPath`, `browserArtifactsDir` or `desktopArtifactsDir` to explicit private paths.

@@ -16,7 +16,8 @@ flowchart LR
     J --> C
     C --> K["Bounded failover attempt audit"]
     B --> L["Append-only DSH event + original attachment"]
-    M["Browser/Desktop state machine"] --> O["Desktop visualDelivery policy"]
+    M["Browser/Desktop state machine"] --> P["Automation context + call guard"]
+    P --> O["Desktop visualDelivery policy"]
     O -->|"pixels required"| B
     O -->|"semantic/action fast path"| I
     N["Usage tracker"] --- E
@@ -30,6 +31,7 @@ flowchart LR
 | :-- | :-- |
 | `dsh/index.js` | Registers the virtual Provider, keeps pure-text turns on the direct path, orchestrates evidence and final reasoning. |
 | `src/content.js` / `src/session.js` | Finds nested images, preserves raw events and replaces model-facing history with bounded content-addressed pointers. |
+| `src/automation-context.js` | Detects active Browser/Desktop tool turns, keeps the newest user task and atomic tool tail under a configurable model-facing context/call budget, without mutating retained DSH history. |
 | `src/vision.js` | Orders configured/priority/auto-detected routes, applies health TTL and circuit cooldown, executes bounded failover. |
 | `src/vision-attempts.js` | Persists a bounded, privacy-reduced audit of route selection, failures, cache hits and latency. |
 | `schemas/visual-evidence.schema.json` | Single source of truth for base and targeted evidence. |
@@ -39,7 +41,7 @@ flowchart LR
 | `src/look.js` | Gives only image-bearing sessions an on-demand original-image reread tool. |
 | `src/browser/*` | Playwright browser state, semantic refs, stale-state rejection, assertions and reports. |
 | `src/desktop/*` | Native Windows/macOS desktop/window observation, accessibility elements/actions, state deltas, lossless screenshot evidence and conditional visual delivery. |
-| `src/usage.js` | Separates exact Provider usage, estimated bridge input and normal final-answer usage. |
+| `src/usage.js` | Separates exact Provider usage, estimated bridge input, Computer Use DeepSeek calls, avoided replay and normal final-answer usage. |
 
 ## Route ordering and failover
 

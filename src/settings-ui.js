@@ -17,6 +17,8 @@ const SETTINGS_FIELDS = Object.freeze([
   'maxClarifications',
   'baseMaxTokens',
   'targetMaxTokens',
+  'automationContextMaxTokens',
+  'automationMaxCallsPerTurn',
   'historyImageLimit',
   'historySummaryChars',
   'browserHistoryLimit',
@@ -84,6 +86,12 @@ export function normalizeSettingsDraft(value = {}) {
     maxClarifications: Number.isInteger(value.maxClarifications) ? value.maxClarifications : 3,
     baseMaxTokens: Number.isSafeInteger(value.baseMaxTokens) ? value.baseMaxTokens : 16_384,
     targetMaxTokens: Number.isSafeInteger(value.targetMaxTokens) ? value.targetMaxTokens : 8_192,
+    automationContextMaxTokens: Number.isSafeInteger(value.automationContextMaxTokens)
+      ? value.automationContextMaxTokens
+      : 32_768,
+    automationMaxCallsPerTurn: Number.isInteger(value.automationMaxCallsPerTurn)
+      ? value.automationMaxCallsPerTurn
+      : 32,
     historyImageLimit: Number.isInteger(value.historyImageLimit) ? value.historyImageLimit : 8,
     historySummaryChars: Number.isInteger(value.historySummaryChars) ? value.historySummaryChars : 320,
     browserHistoryLimit: Number.isInteger(value.browserHistoryLimit) ? value.browserHistoryLimit : 8,
@@ -150,6 +158,7 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
   const tokenRanges = [
     ['baseMaxTokens', 512],
     ['targetMaxTokens', 256],
+    ['automationContextMaxTokens', 4_096],
   ]
   for (const [field, minimum] of tokenRanges) {
     if (draft[field] !== 0 && (!Number.isSafeInteger(draft[field]) || draft[field] < minimum)) {
@@ -158,6 +167,7 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
   }
   const ranges = [
     ['maxClarifications', 0, 8],
+    ['automationMaxCallsPerTurn', 0, 10_000],
     ['visionFailoverAttempts', 0, 8],
     ['visionHealthTtlMs', 1_000, 3_600_000],
     ['visionFailureCooldownMs', 0, 3_600_000],

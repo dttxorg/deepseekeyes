@@ -61,7 +61,7 @@ const zh = {
   persistentEvidence: '持久化视觉证据缓存',
   usageStats: '记录 DeepSeekEyes Token 统计',
   usageStatsTitle: 'Token 消耗统计',
-  usageStatsHint: '精确值来自 Provider 返回的 usage；最终回答中由视觉证据与协议增加的输入量使用 Harness 的固定密度规则估算。统计查询直接走本机 RPC，不调用模型。',
+  usageStatsHint: '精确值来自 Provider 返回的 usage；Computer Use 引发的 DeepSeek 调用会完整计入。桥接输入与上下文节省量使用 Harness 固定密度规则估算。统计查询直接走本机 RPC，不调用模型。',
   usageStatsDisabled: '统计已关闭；关闭期间不记录新的数据。',
   usageStatsLoading: '正在读取 Token 统计…',
   usageStatsUnavailable: 'Token 统计读取失败：',
@@ -71,10 +71,15 @@ const zh = {
   usageEstimatedTotal: '估算插件合计',
   usageVision: '视觉模型 Token',
   usageClarification: 'DeepSeek 追问轮次 Token',
+  usageAutomation: 'Computer Use DeepSeek Token',
+  usageAutomationTurns: '自动化用户指令',
+  usageContextCompactions: '上下文保护次数',
+  usageInputSaved: '估算避免重放输入',
+  usageLimitStops: '额度保护停止次数',
   usageVisualTurns: '视觉轮次',
   usageLookCalls: '原图按需读取',
   usageCacheHits: '视觉缓存命中',
-  usageFinalExcluded: '最终回答模型的正常回答用量不计入“插件额外消耗”，避免把 DeepSeek 本身的 Token 算到插件头上。',
+  usageFinalExcluded: '普通图文轮次唯一一次最终回答仍单独展示；Browser/Desktop Computer Use 引发的每次 DeepSeek 调用均计入插件额外消耗。',
   usageUpdatedAt: '更新时间：',
   usageRefresh: '刷新统计',
   usageReset: '清零统计',
@@ -97,6 +102,17 @@ const zh = {
   tokenUnlimitedInput: '未发送 maxTokens',
   tokenHint: '可选择建议档位，也可直接输入任意安全整数；“不限制”表示插件不发送 maxTokens，模型或 Provider 自身上限仍然生效。',
   computerUse: 'Computer Use 0.5',
+  automationSpendGuard: '自动化 Token 保护',
+  automationContextMaxTokens: '每次自动化调用的上下文上限',
+  automationContextHint: '仅限制 Browser/Desktop 工具轮次提交给 DeepSeek 的模型副本；完整 DSH 任务、截图与报告不会删除。推荐 32,768，0 表示完整重放。普通文字和普通图片不受影响。',
+  automationMaxCallsPerTurn: '每个用户指令最多模型调用',
+  automationMaxCallsHint: '推荐 32。达到上限后停止自动循环，发送新的用户指令即可继续；0 表示不限制。',
+  automationContextEconomy: '经济 · 8,192',
+  automationContextRecommended: '推荐 · 32,768',
+  automationContextComplex: '复杂任务 · 65,536',
+  automationContextUltra: '超长任务 · 131,072',
+  automationContextUnlimited: '不限制 · 完整会话',
+  automationContextUnlimitedInput: '完整重放会话',
   browserComputerUse: '启用浏览器 Computer Use',
   browserComputerUseHint: '在当前对话中注册 browser 工具，每一步返回最新 DOM、截图、状态 ID 和测试证据。',
   browserHeadless: '无界面运行浏览器',
@@ -158,6 +174,8 @@ const zh = {
   maxClarificationsRange: '追问轮数必须是 0–8 的整数。',
   baseMaxTokensRange: '首次读图 Token 必须为 0（不限制）或至少 512 的安全整数。',
   targetMaxTokensRange: '细节追问 Token 必须为 0（不限制）或至少 256 的安全整数。',
+  automationContextMaxTokensRange: '自动化上下文必须为 0（不限制）或至少 4096 的安全整数。',
+  automationMaxCallsPerTurnRange: '每个用户指令的模型调用数必须是 0–10000 的整数。',
   historyImageLimitRange: '历史图片引用数必须是 0–32 的整数。',
   historySummaryCharsRange: '历史图片摘要字符必须是 64–2000 的整数。',
   browserHistoryLimitRange: 'Browser 状态摘要数必须是 0–32 的整数。',
@@ -221,7 +239,7 @@ const en = {
   persistentEvidence: 'Persist visual evidence cache',
   usageStats: 'Record DeepSeekEyes token usage',
   usageStatsTitle: 'Token usage statistics',
-  usageStatsHint: 'Exact values come from provider usage. Added final-answer input from visual evidence and protocol text uses the Harness fixed-density estimate. Reading these statistics uses local RPC and makes no model call.',
+  usageStatsHint: 'Exact values come from provider usage, including every DeepSeek call caused by Computer Use. Bridge input and avoided replay are estimated with the Harness fixed-density rule. Reading statistics uses local RPC and makes no model call.',
   usageStatsDisabled: 'Statistics are disabled; no new usage is recorded while disabled.',
   usageStatsLoading: 'Loading token statistics…',
   usageStatsUnavailable: 'Token statistics failed: ',
@@ -231,10 +249,15 @@ const en = {
   usageEstimatedTotal: 'Estimated plugin total',
   usageVision: 'Vision model tokens',
   usageClarification: 'DeepSeek clarification tokens',
+  usageAutomation: 'Computer Use DeepSeek tokens',
+  usageAutomationTurns: 'Automation user instructions',
+  usageContextCompactions: 'Context guard activations',
+  usageInputSaved: 'Estimated replay input avoided',
+  usageLimitStops: 'Budget guard stops',
   usageVisualTurns: 'Visual turns',
   usageLookCalls: 'On-demand original reads',
   usageCacheHits: 'Visual cache hits',
-  usageFinalExcluded: 'Normal final-answer model usage is excluded from plugin overhead so DeepSeek’s own response tokens are not charged to the plugin.',
+  usageFinalExcluded: 'The single final answer for an ordinary visual turn remains separate. Every DeepSeek call caused by Browser/Desktop Computer Use is included in plugin overhead.',
   usageUpdatedAt: 'Updated: ',
   usageRefresh: 'Refresh statistics',
   usageReset: 'Reset statistics',
@@ -257,6 +280,17 @@ const en = {
   tokenUnlimitedInput: 'maxTokens omitted',
   tokenHint: 'Choose a suggested tier or enter any safe integer. Unlimited omits maxTokens; the model or provider may still impose its own limit.',
   computerUse: 'Computer Use 0.5',
+  automationSpendGuard: 'Automation token guard',
+  automationContextMaxTokens: 'Context limit per automation call',
+  automationContextHint: 'Applies only to the model-facing copy of Browser/Desktop tool turns. The full DSH task, screenshots and reports remain preserved. Recommended: 32,768. Zero replays the full context. Ordinary text and image turns are unchanged.',
+  automationMaxCallsPerTurn: 'Maximum model calls per user instruction',
+  automationMaxCallsHint: 'Recommended: 32. The loop stops at the limit and a new user instruction can continue. Zero is unlimited.',
+  automationContextEconomy: 'Economy · 8,192',
+  automationContextRecommended: 'Recommended · 32,768',
+  automationContextComplex: 'Complex · 65,536',
+  automationContextUltra: 'Ultra · 131,072',
+  automationContextUnlimited: 'Unlimited · full context',
+  automationContextUnlimitedInput: 'Full context replay',
   browserComputerUse: 'Enable browser computer use',
   browserComputerUseHint: 'Registers the browser tool in this conversation and returns fresh DOM, screenshot, state ID, and test evidence after every step.',
   browserHeadless: 'Run browser headless',
@@ -318,6 +352,8 @@ const en = {
   maxClarificationsRange: 'Clarification rounds must be an integer from 0 through 8.',
   baseMaxTokensRange: 'Initial vision tokens must be 0 (unlimited) or a safe integer of at least 512.',
   targetMaxTokensRange: 'Clarification tokens must be 0 (unlimited) or a safe integer of at least 256.',
+  automationContextMaxTokensRange: 'Automation context must be 0 (unlimited) or a safe integer of at least 4096.',
+  automationMaxCallsPerTurnRange: 'Model calls per user instruction must be an integer from 0 through 10000.',
   historyImageLimitRange: 'Historical image references must be an integer from 0 through 32.',
   historySummaryCharsRange: 'Historical image summary characters must be an integer from 64 through 2000.',
   browserHistoryLimitRange: 'Browser state summaries must be an integer from 0 through 32.',
@@ -392,8 +428,27 @@ const TOKEN_PRESETS = Object.freeze([
   { value: 0, label: 'tokenUnlimited' },
 ])
 
-function TokenBudgetField({ id, label, minimum, value, disabled, onChange, t }) {
-  const preset = TOKEN_PRESETS.find(item => item.value === value)
+const AUTOMATION_CONTEXT_PRESETS = Object.freeze([
+  { value: 8_192, label: 'automationContextEconomy' },
+  { value: 32_768, label: 'automationContextRecommended' },
+  { value: 65_536, label: 'automationContextComplex' },
+  { value: 131_072, label: 'automationContextUltra' },
+  { value: 0, label: 'automationContextUnlimited' },
+])
+
+function TokenBudgetField({
+  id,
+  label,
+  minimum,
+  value,
+  disabled,
+  onChange,
+  t,
+  presets = TOKEN_PRESETS,
+  hint = 'tokenHint',
+  unlimitedInput = 'tokenUnlimitedInput',
+}) {
+  const preset = presets.find(item => item.value === value)
   return (
     <div style={styles.field}>
       <label style={styles.label} htmlFor={id}>{label}</label>
@@ -408,7 +463,7 @@ function TokenBudgetField({ id, label, minimum, value, disabled, onChange, t }) 
           }}
         >
           <option value="custom" disabled={preset !== undefined}>{t('tokenCustom')}</option>
-          {TOKEN_PRESETS.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}
+          {presets.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}
         </select>
         <input
           id={id}
@@ -418,12 +473,12 @@ function TokenBudgetField({ id, label, minimum, value, disabled, onChange, t }) 
           min={minimum}
           step="1"
           value={value === 0 ? '' : value}
-          placeholder={value === 0 ? t('tokenUnlimitedInput') : undefined}
+          placeholder={value === 0 ? t(unlimitedInput) : undefined}
           disabled={disabled || value === 0}
           onChange={event => onChange(numberFrom(event))}
         />
       </div>
-      <p style={styles.hint}>{t('tokenHint')}</p>
+      <p style={styles.hint}>{t(hint)}</p>
     </div>
   )
 }
@@ -814,6 +869,37 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
 
           <details style={styles.details} open>
             <summary style={styles.detailsSummary}>{t('computerUse')}</summary>
+            <div style={styles.field}>
+              <strong style={styles.label}>{t('automationSpendGuard')}</strong>
+              <TokenBudgetField
+                id="deepseekeyes-automation-context-tokens"
+                label={t('automationContextMaxTokens')}
+                minimum={4_096}
+                value={draft.automationContextMaxTokens}
+                disabled={saving || !snapshot.writable}
+                onChange={value => update('automationContextMaxTokens', value)}
+                t={t}
+                presets={AUTOMATION_CONTEXT_PRESETS}
+                hint="automationContextHint"
+                unlimitedInput="automationContextUnlimitedInput"
+              />
+              <div style={{ ...styles.field, marginTop: 10 }}>
+                <label style={styles.label} htmlFor="deepseekeyes-automation-max-calls">{t('automationMaxCallsPerTurn')}</label>
+                <input
+                  id="deepseekeyes-automation-max-calls"
+                  style={styles.input}
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="1"
+                  value={draft.automationMaxCallsPerTurn}
+                  disabled={saving || !snapshot.writable}
+                  onChange={event => update('automationMaxCallsPerTurn', numberFrom(event))}
+                />
+                <small style={styles.hint}>{t('automationMaxCallsHint')}</small>
+              </div>
+            </div>
+            <div style={styles.divider} />
             <label style={styles.checkboxRow}>
               <input
                 type="checkbox"
@@ -994,6 +1080,11 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
                         <UsageMetric label={t('usageEstimatedTotal')} value={usage.value.totals.derived.estimatedAdditionalTokens} />
                         <UsageMetric label={t('usageVision')} value={usage.value.totals.derived.visionTokens} />
                         <UsageMetric label={t('usageClarification')} value={usage.value.totals.derived.upstreamClarificationTokens} />
+                        <UsageMetric label={t('usageAutomation')} value={usage.value.totals.derived.automationTokens} />
+                        <UsageMetric label={t('usageAutomationTurns')} value={usage.value.totals.automationTurns} />
+                        <UsageMetric label={t('usageContextCompactions')} value={usage.value.totals.automationContextCompactions} />
+                        <UsageMetric label={t('usageInputSaved')} value={usage.value.totals.estimatedAutomationInputTokensSaved} />
+                        <UsageMetric label={t('usageLimitStops')} value={usage.value.totals.automationLimitStops} />
                         <UsageMetric label={t('usageVisualTurns')} value={usage.value.totals.visualTurns} />
                         <UsageMetric label={t('usageLookCalls')} value={usage.value.totals.lookCalls} />
                         <UsageMetric label={t('usageCacheHits')} value={usage.value.totals.cacheHits} />

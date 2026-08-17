@@ -1,4 +1,10 @@
 import { EvidenceCache } from '../src/cache.js'
+import {
+  activeAutomationKind,
+  AutomationTurnGuard,
+  boundAutomationContext,
+  latestAutomationTask,
+} from '../src/automation-context.js'
 import { applyBrowserComputerUse } from '../src/browser/index.js'
 import { applyDesktopComputerUse } from '../src/desktop/index.js'
 import {
@@ -84,14 +90,41 @@ function attachmentSha256(block) {
   return match?.[1]
 }
 
-async function* forwardText(ctx, options, logger) {
+async function* forwardText(ctx, options, logger, onUsage) {
   const info = await ctx.llm.resolveModelInfo(options.provider, options.model, options.signal)
   const fitted = fitOutputBudget(options, info, logger)
   if (!fitted.changed) {
-    yield* ctx.llm.stream(options)
+    if (onUsage === undefined) {
+      yield* ctx.llm.stream(options)
+      return
+    }
+    const usage = emptyUsage()
+    let finish
+    try {
+      for await (const chunk of ctx.llm.stream(options)) {
+        if (chunk.type === 'usage') addUsage(usage, chunk.usage)
+        if (chunk.type === 'finish') {
+          finish = chunk
+          continue
+        }
+        yield chunk
+      }
+    } catch (error) {
+      if (usageHasTokens(usage)) await onUsage(usage)
+      throw error
+    }
+    await onUsage(usage)
+    if (finish !== undefined) yield finish
     return
   }
-  const guarded = await collectFinalWithBudget(ctx, options, info, logger)
+  let guarded
+  try {
+    guarded = await collectFinalWithBudget(ctx, options, info, logger)
+  } catch (error) {
+    if (onUsage !== undefined && usageHasTokens(error?.usage)) await onUsage(error.usage)
+    throw error
+  }
+  if (onUsage !== undefined) await onUsage(guarded.result.usage)
   yield* replayWithUsage(guarded.result.chunks, guarded.result.usage)
 }
 
@@ -152,14 +185,78 @@ route_attempts: ${JSON.stringify(attempts)}
 continuation: Continue from the adjacent DeepSeekEyes desktop state, actionResult, windows, accessibility elements, stateDelta and screenshot metadata. Pixels were preserved but were not decoded in this step; request a later targeted reread only when a pixel-only fact is required.`
 }
 
-async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, logger) {
+async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, automationGuard, logger) {
   const { config, router, evidenceManager } = runtime
   const upstreamModel = lockedUpstreamModel(config, options.model)
-  const upstreamOptions = {
+  let upstreamOptions = {
     ...options,
     provider: config.upstreamProvider,
     ...(upstreamModel === undefined ? {} : { model: upstreamModel }),
   }
+  const automationKind = activeAutomationKind(options.messages)
+  const automationTaskId = automationKind === undefined
+    ? undefined
+    : latestAutomationTask(options.messages)?.id
+      ?? `session:${String(options.sessionId ?? 'unknown')}`
+
+  const assertAutomationAvailable = async () => {
+    if (automationKind === undefined) return
+    try {
+      automationGuard.assertAvailable(
+        options.sessionId,
+        automationTaskId,
+        config.automationMaxCallsPerTurn,
+      )
+    } catch (error) {
+      await usageTracker.recordAutomationLimitStop(options.sessionId)
+      throw error
+    }
+  }
+
+  const prepareUpstreamCall = async (callOptions) => {
+    if (automationKind === undefined) return callOptions
+    const bounded = boundAutomationContext(callOptions, config.automationContextMaxTokens)
+    if (bounded.changed) {
+      await usageTracker.recordAutomationContextCompaction(options.sessionId, bounded.savedTokens)
+      logger.warn?.(
+        `deepseekeyes: bounded ${automationKind} model context ${bounded.beforeTokens} -> ${bounded.afterTokens} `
+        + `(limit=${config.automationContextMaxTokens}, droppedMessages=${bounded.droppedMessages})`,
+      )
+    }
+    if (!bounded.withinLimit) {
+      await usageTracker.recordAutomationLimitStop(options.sessionId)
+      throw new DeepSeekEyesError(
+        `Current Computer Use instruction and newest tool state require about ${bounded.afterTokens} input tokens, above automationContextMaxTokens=${config.automationContextMaxTokens}. Increase the setting or choose 0 for unlimited.`,
+        'AUTOMATION_CONTEXT_LIMIT',
+      )
+    }
+    let turn
+    try {
+      turn = automationGuard.begin(
+        options.sessionId,
+        automationTaskId,
+        config.automationMaxCallsPerTurn,
+      )
+    } catch (error) {
+      await usageTracker.recordAutomationLimitStop(options.sessionId)
+      throw error
+    }
+    if (turn.newTurn) await usageTracker.recordAutomationTurn(options.sessionId)
+    return bounded.options
+  }
+
+  const collectPreparedUpstream = async (prepared, upstreamInfo) => {
+    try {
+      return await collectFinalWithBudget(ctx, prepared, upstreamInfo, logger)
+    } catch (error) {
+      if (automationKind !== undefined && usageHasTokens(error?.usage)) {
+        await usageTracker.recordCall(options.sessionId, 'upstreamAutomation', error.usage)
+      }
+      throw error
+    }
+  }
+
+  await assertAutomationAvailable()
   if (!messagesHaveImages(options.messages)) {
     const needsCompaction = messagesNeedHistoryCompaction(options.messages)
     if (needsCompaction) {
@@ -181,7 +278,15 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
           },
         )
       : options.messages
-    yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
+    upstreamOptions = await prepareUpstreamCall({ ...upstreamOptions, messages })
+    yield* forwardText(
+      ctx,
+      upstreamOptions,
+      logger,
+      automationKind === undefined
+        ? undefined
+        : usage => usageTracker.recordCall(options.sessionId, 'upstreamAutomation', usage),
+    )
     return
   }
 
@@ -338,12 +443,17 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
       upstreamModel,
       options.signal,
     )
-    const guarded = await collectFinalWithBudget(ctx, {
+    const prepared = await prepareUpstreamCall({
       ...upstreamOptions,
       messages,
-    }, upstreamInfo, logger)
+    })
+    const guarded = await collectPreparedUpstream(prepared, upstreamInfo)
     addUsage(totalUsage, guarded.result.usage)
-    await usageTracker.recordCall(options.sessionId, 'upstreamFinal', guarded.result.usage)
+    await usageTracker.recordCall(
+      options.sessionId,
+      automationKind === undefined ? 'upstreamFinal' : 'upstreamAutomation',
+      guarded.result.usage,
+    )
     await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
     yield* replayWithUsage(guarded.result.chunks, totalUsage)
     return
@@ -369,22 +479,31 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
   )
 
   for (let clarificationCount = 0; ; clarificationCount += 1) {
-    const guarded = await collectFinalWithBudget(ctx, {
+    const prepared = await prepareUpstreamCall({
       ...upstreamOptions,
       messages,
       system,
-    }, upstreamInfo, logger)
+    })
+    const guarded = await collectPreparedUpstream(prepared, upstreamInfo)
     const upstream = guarded.result
     addUsage(totalUsage, upstream.usage)
     const request = parseClarificationRequest(upstream.text, allowedHashes)
     const bridgeEstimate = injectedEvidenceTokens + injectedSystemTokens + injectedTargetTokens
     if (request === undefined) {
-      await usageTracker.recordCall(options.sessionId, 'upstreamFinal', upstream.usage)
+      await usageTracker.recordCall(
+        options.sessionId,
+        automationKind === undefined ? 'upstreamFinal' : 'upstreamAutomation',
+        upstream.usage,
+      )
       await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
       yield* replayWithUsage(upstream.chunks, totalUsage)
       return
     }
-    await usageTracker.recordCall(options.sessionId, 'upstreamClarification', upstream.usage)
+    await usageTracker.recordCall(
+      options.sessionId,
+      automationKind === undefined ? 'upstreamClarification' : 'upstreamAutomation',
+      upstream.usage,
+    )
     await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
     if (clarificationCount >= config.maxClarifications) {
       throw new DeepSeekEyesError(
@@ -392,6 +511,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, l
         'VISION_CLARIFICATION_LIMIT',
       )
     }
+    await assertAutomationAvailable()
     const block = blockByHash.get(request.imageSha256)
     let baseRecord = baseByHash.get(request.imageSha256)
     if (block === undefined) {
@@ -444,6 +564,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
     file: runtime.config.usageStatsPath,
     logger,
   })
+  const automationGuard = new AutomationTurnGuard()
   let lastCatalogFailure
 
   const state = {
@@ -454,6 +575,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
     get evidenceManager() { return runtime.evidenceManager },
     get visionAttempts() { return runtime.visionAttempts },
     usage,
+    automationGuard,
     reconfigure(nextConfig) {
       const next = createRuntime(ctx, nextConfig, logger)
       if (next.config.providerId !== runtime.config.providerId) {
@@ -515,7 +637,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       return visionWrappedModel(info, current.config, route)
     },
     stream(options) {
-      return bridgeStream(ctx, runtime, options, state.look, state.usage, logger)
+      return bridgeStream(ctx, runtime, options, state.look, state.usage, state.automationGuard, logger)
     },
   }
 
@@ -543,6 +665,9 @@ export function apply(ctx, rawConfig = {}) {
   if (typeof ctx.on === 'function') {
     ctx.on('llm/adapters-updated', () => {
       state.invalidate()
+    })
+    ctx.on('session/disposed', session => {
+      state.automationGuard.clear(session.id)
     })
   }
   return state

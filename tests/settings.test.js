@@ -70,6 +70,8 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /desktopVisualMode/)
   assert.match(JSON.stringify(json), /desktopMaxElements/)
   assert.match(JSON.stringify(json), /usageStats/)
+  assert.match(JSON.stringify(json), /automationContextMaxTokens/)
+  assert.match(JSON.stringify(json), /automationMaxCallsPerTurn/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
   assert.equal(base.upstreamProvider, 'deepseek-official')
@@ -78,6 +80,8 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal(base.usageStats, true)
   assert.equal(base.baseMaxTokens, 16_384)
   assert.equal(base.targetMaxTokens, 8_192)
+  assert.equal(base.automationContextMaxTokens, 32_768)
+  assert.equal(base.automationMaxCallsPerTurn, 32)
   assert.equal(base.historyImageLimit, 8)
   assert.equal(base.historySummaryChars, 320)
   assert.equal(base.browserHistoryLimit, 8)
@@ -149,6 +153,8 @@ test('native settings registration exposes the namespace and reconfigures routin
     activeProbe: false,
     baseMaxTokens: 0,
     targetMaxTokens: 131_072,
+    automationContextMaxTokens: 65_536,
+    automationMaxCallsPerTurn: 48,
     historyImageLimit: 4,
     historySummaryChars: 256,
     browserHistoryLimit: 3,
@@ -174,6 +180,8 @@ test('native settings registration exposes the namespace and reconfigures routin
   assert.equal(state.config.activeProbe, false)
   assert.equal(state.config.baseMaxTokens, 0)
   assert.equal(state.config.targetMaxTokens, 131_072)
+  assert.equal(state.config.automationContextMaxTokens, 65_536)
+  assert.equal(state.config.automationMaxCallsPerTurn, 48)
   assert.equal(state.config.historyImageLimit, 4)
   assert.equal(state.config.historySummaryChars, 256)
   assert.equal(state.config.browserHistoryLimit, 3)

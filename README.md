@@ -194,16 +194,19 @@ On Windows, the native helper consumes and emits UTF-8 JSON under Windows PowerS
 
 If every bounded visual route fails for a `computer` screenshot, the original PNG, hash and route attempts stay preserved and DeepSeek continues from the adjacent native state (`actionResult`, windows, accessibility elements and `stateDelta`). The fallback explicitly states that pixels were not decoded. Pasted user images and explicit pixel-dependent reads remain strict and still fail when no validated evidence exists.
 
+Computer Use model calls are isolated from unrelated long-task history by a default **32,768-token automation context budget**. Only the model-facing copy is bounded: the newest direct user instruction, atomic tool-call/result tail, full DSH task, screenshots and reports remain preserved. A second guard stops after 32 final-model calls for one user instruction. Both limits accept custom values and explicit `0` unlimited mode. Ordinary text and non-automation image turns never enter this guard.
+
 ## Token accounting
 
 The native plugin card exposes **Token usage statistics** without making a statistics model call.
 
 | Counter | Meaning |
 | :-- | :-- |
-| **Exact additional Tokens** | Provider-reported pixel probe, initial read, targeted reread and DeepSeek visual-clarification rounds. |
+| **Exact additional Tokens** | Provider-reported pixel probe, initial read, targeted reread, visual clarifications and every DeepSeek call caused by Browser/Desktop Computer Use. |
 | **Estimated bridge input** | Evidence/protocol/tool text injected by the plugin, estimated with the Harness fixed-density rule. |
 | **Estimated plugin total** | Exact additional usage plus estimated bridge input. |
-| **Final model visual-turn usage** | Recorded separately and excluded from plugin overhead, so DeepSeek's normal answer is not charged to the plugin. |
+| **Final model visual-turn usage** | The single ordinary visual-turn final answer is recorded separately; automation final-model calls are included above. |
+| **Automation protection** | Protected user instructions, context compactions, limit stops and estimated replay input avoided. |
 | **Operational counters** | Visual turns, original-image rereads and vision-cache hits. |
 
 Statistics refresh/reset uses the loopback-only `/deepseekeyes` RPC. Data is atomically stored at `$DSH_HOME/deepseekeyes/usage-stats.json` with mode `0600` and a 50-session detail limit. A temporary write failure keeps counting in memory and does not interrupt the user's turn.
@@ -236,6 +239,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | Vision validation | `autoDetectVision`, `activeProbe`, `maxClarifications` |
 | Route reliability | `visionRoutePriority`, `visionHealthCheck`, `visionFailoverAttempts`, health TTL/cooldown and attempt retention |
 | Visual budgets | `baseMaxTokens`, `targetMaxTokens` — `0` delegates the limit to the Provider |
+| Automation spend guard | `automationContextMaxTokens` (default `32768`) and `automationMaxCallsPerTurn` (default `32`); `0` disables either limit |
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
 | Desktop | `desktopComputerUse`, `desktopVisualMode`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |

@@ -18,6 +18,7 @@ export const USAGE_CATEGORIES = Object.freeze([
   'visionBase',
   'visionTarget',
   'upstreamClarification',
+  'upstreamAutomation',
   'upstreamFinal',
 ])
 
@@ -40,9 +41,13 @@ function zeroUsageByCategory() {
 function zeroAggregate() {
   return {
     visualTurns: 0,
+    automationTurns: 0,
+    automationContextCompactions: 0,
+    automationLimitStops: 0,
     lookCalls: 0,
     cacheHits: 0,
     estimatedBridgeInputTokens: 0,
+    estimatedAutomationInputTokensSaved: 0,
     calls: zeroCalls(),
     usage: zeroUsageByCategory(),
   }
@@ -88,10 +93,12 @@ function sumCategories(aggregate, categories) {
 function summary(aggregate) {
   const vision = sumCategories(aggregate, ['visionProbe', 'visionBase', 'visionTarget'])
   const upstreamClarification = normalizedUsage(aggregate.usage.upstreamClarification)
+  const automation = normalizedUsage(aggregate.usage.upstreamAutomation)
   const finalModel = normalizedUsage(aggregate.usage.upstreamFinal)
   const exactAdditionalUsage = zeroUsage()
   addUsage(exactAdditionalUsage, vision)
   addUsage(exactAdditionalUsage, upstreamClarification)
+  addUsage(exactAdditionalUsage, automation)
   const exactAdditionalTokens = usageTotal(exactAdditionalUsage)
   return {
     ...structuredClone(aggregate),
@@ -100,6 +107,8 @@ function summary(aggregate) {
       visionTokens: usageTotal(vision),
       upstreamClarificationUsage: upstreamClarification,
       upstreamClarificationTokens: usageTotal(upstreamClarification),
+      automationUsage: automation,
+      automationTokens: usageTotal(automation),
       finalModelVisualTurnUsage: finalModel,
       finalModelVisualTurnTokens: usageTotal(finalModel),
       exactAdditionalUsage,
@@ -114,9 +123,13 @@ function validAggregate(input) {
   const aggregate = zeroAggregate()
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return aggregate
   aggregate.visualTurns = nonnegativeInteger(input.visualTurns)
+  aggregate.automationTurns = nonnegativeInteger(input.automationTurns)
+  aggregate.automationContextCompactions = nonnegativeInteger(input.automationContextCompactions)
+  aggregate.automationLimitStops = nonnegativeInteger(input.automationLimitStops)
   aggregate.lookCalls = nonnegativeInteger(input.lookCalls)
   aggregate.cacheHits = nonnegativeInteger(input.cacheHits)
   aggregate.estimatedBridgeInputTokens = nonnegativeInteger(input.estimatedBridgeInputTokens)
+  aggregate.estimatedAutomationInputTokensSaved = nonnegativeInteger(input.estimatedAutomationInputTokensSaved)
   for (const category of USAGE_CATEGORIES) {
     aggregate.calls[category] = nonnegativeInteger(input.calls?.[category])
     aggregate.usage[category] = normalizedUsage(input.usage?.[category])
@@ -148,10 +161,20 @@ function validState(input, now, sessionLimit) {
 
 function applyDelta(aggregate, delta) {
   if (delta.visualTurns !== undefined) aggregate.visualTurns += nonnegativeInteger(delta.visualTurns)
+  if (delta.automationTurns !== undefined) aggregate.automationTurns += nonnegativeInteger(delta.automationTurns)
+  if (delta.automationContextCompactions !== undefined) {
+    aggregate.automationContextCompactions += nonnegativeInteger(delta.automationContextCompactions)
+  }
+  if (delta.automationLimitStops !== undefined) {
+    aggregate.automationLimitStops += nonnegativeInteger(delta.automationLimitStops)
+  }
   if (delta.lookCalls !== undefined) aggregate.lookCalls += nonnegativeInteger(delta.lookCalls)
   if (delta.cacheHits !== undefined) aggregate.cacheHits += nonnegativeInteger(delta.cacheHits)
   if (delta.estimatedBridgeInputTokens !== undefined) {
     aggregate.estimatedBridgeInputTokens += nonnegativeInteger(delta.estimatedBridgeInputTokens)
+  }
+  if (delta.estimatedAutomationInputTokensSaved !== undefined) {
+    aggregate.estimatedAutomationInputTokensSaved += nonnegativeInteger(delta.estimatedAutomationInputTokensSaved)
   }
   if (delta.category !== undefined) {
     if (!USAGE_CATEGORIES.includes(delta.category)) throw new TypeError(`unknown usage category ${delta.category}`)
@@ -232,6 +255,21 @@ export class UsageTracker {
     return this.mutate(sessionId, { visualTurns: 1 })
   }
 
+  recordAutomationTurn(sessionId) {
+    return this.mutate(sessionId, { automationTurns: 1 })
+  }
+
+  recordAutomationContextCompaction(sessionId, savedTokens) {
+    return this.mutate(sessionId, {
+      automationContextCompactions: 1,
+      estimatedAutomationInputTokensSaved: savedTokens,
+    })
+  }
+
+  recordAutomationLimitStop(sessionId) {
+    return this.mutate(sessionId, { automationLimitStops: 1 })
+  }
+
   recordLookCall(sessionId) {
     return this.mutate(sessionId, { lookCalls: 1 })
   }
@@ -297,7 +335,9 @@ export class UsageTracker {
       accounting: {
         providerReported: 'exact-as-reported',
         bridgeInput: 'estimated-4-characters-per-token-plus-structure',
+        automationInputSavings: 'estimated-request-tokens-before-minus-after-context-window',
         finalModelVisualTurnUsageExcludedFromAdditional: true,
+        automationModelUsageIncludedInAdditional: true,
         reasoningTokensAreOutputSubdivision: true,
       },
     }

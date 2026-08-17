@@ -82,7 +82,7 @@ DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉与 Compu
 | 视觉模型输出不完全一致怎么办？ | 推理前缀、多 JSON 候选、缺失空列表及常见数值/bbox 格式先在本地确定性规范化并记录审计，最终仍由同一份公开 JSON Schema 严格校验。 |
 | 会不会影响正常文字对话？ | 纯文字轮次走原有直通路径，不读图、不截图、不注册 Computer Use 工具，也不增加插件统计。 |
 | 能否自动测试网页和桌面？ | Browser Computer Use 与 Windows/macOS 原生 Desktop Computer Use 均已实现，且默认关闭、按需启用。 |
-| 插件到底用了多少 Token？ | 设置卡分别展示 Provider 精确额外用量、桥接输入估算和被排除的正常最终回答用量。 |
+| 插件到底用了多少 Token？ | 设置卡会把 Browser/Desktop Computer Use 引发的每次 DeepSeek 调用计入插件额外用量，并展示上下文保护次数和估算避免重放的输入。 |
 
 ## 工作方式
 
@@ -152,6 +152,8 @@ $DSH_HOME/deepseekeyes/browser-runs/<run-id>/
 
 Browser Computer Use 默认关闭，普通图文桥接和纯文本会话不会携带 `browser` 工具或相关系统提示。启用后，只有最新 Browser 状态保留完整 DOM/OCR/截图证据；历史状态默认只保留最近 8 个紧凑摘要，避免每一步把此前的完整页面证据再次发送给模型。
 
+从 0.5.7 起，Browser/Desktop 工具轮次还共用一层自动化 Token 保护：提交给 DeepSeek 的模型副本默认最多约 32,768 Token，只保留最新直接用户指令以及成对的最新工具调用/结果；完整 Harness 任务、事件、截图与报告不删除。一个用户指令默认最多触发 32 次最终模型调用，达到上限后等待新的用户指令。两个值均可自定义，`0` 表示明确不限制。
+
 ## Windows / macOS Desktop Computer Use 0.5（默认关闭）
 
 0.5 把原有桌面控制推进为“截图 + 原生语义 + 状态差分”的闭环。它保持 [OpenAI 官方 Computer use 文档](https://developers.openai.com/api/docs/guides/tools-computer-use)描述的核心循环：观察当前 UI、执行结构化动作、捕获新状态、基于结果继续；同时复用 Windows UI Automation 与 macOS Accessibility，减少只靠全屏像素猜控件的位置：
@@ -189,6 +191,8 @@ Harness 单图片附件存在 5 MB 边界。桌面截图先做**像素无损** P
 
 Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或桌面系统提示，也不会截图、调用视觉模型或增加普通对话的 Token 开销。启用后的默认自动模式只在像素确实必要时读图；历史桌面状态独立按 `desktopHistoryLimit` 压缩，默认只保留最近 8 个短摘要，不重复携带旧截图和完整窗口列表。
 
+自动模式虽然能省去视觉模型调用，但每个动作之后仍需要 DeepSeek 决定下一步。因此 0.5.7 会在语义快路径和读图路径上统一限制自动化上下文与单指令调用次数，避免在已有几十万 Token 的长会话中把整段历史反复提交。普通文字轮次和非 Computer Use 图片轮次不进入该限制。
+
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
 ## 安装、升级与 doctor
@@ -223,6 +227,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 4. 在“视觉路由可靠性”中按行填写后备 `provider/model`，设置健康检查、故障转移次数、冷却期和 attempts 保留数量。
 5. 选择是否自动检测、是否运行随机像素探针、追问轮数和 Token 档位。
 6. 在 **Computer Use 0.5** 区域分别设置：
+   - 自动化上下文上限（推荐 32,768）和每个用户指令最多模型调用（推荐 32）；两者都可自定义，`0` 为不限制；
    - Browser Computer Use 的启用状态、Edge/Chrome、无界面模式、视口和动作参数；
    - Windows/macOS Desktop Computer Use 的启用状态、截图交付策略、语义控件开关/上限、动作超时、稳定等待、窗口数、macOS 显示器编号、Windows PowerShell 路径和证据目录。
 7. 先核对卡片里的实时摘要，例如 `图片 → MiniMax-M3 读图 → DeepSeek-V4-Pro 最终回答`，再点击 **保存并立即应用**。
@@ -244,11 +249,11 @@ DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；
 
 统计默认开启，并明确分成三组，避免把正常使用的 Token 错算给插件：
 
-1. **精确额外 Token**：Provider 实际返回的随机像素探针、首次读图、细节读图，以及 DeepSeek 生成视觉追问的中间轮次用量；
+1. **精确额外 Token**：Provider 实际返回的随机像素探针、首次读图、细节读图、DeepSeek 视觉追问，以及 Browser/Desktop Computer Use 引发的每一次 DeepSeek 调用；
 2. **估算桥接输入**：插件注入给最终模型的结构化视觉证据、协议和工具结果。Provider 通常只返回整次请求输入量，无法拆出插件片段，因此这里按 Harness 的固定密度规则估算；
-3. **最终回答模型用量**：单独记录视觉轮次的最终调用，但不计入“插件额外消耗”，因为其中包含 DeepSeek 本来就要生成的正常回答。
+3. **最终回答模型用量**：普通图文轮次唯一一次最终调用单独记录，不计入“插件额外消耗”；Computer Use 为规划下一步而产生的最终模型调用会计入额外消耗。
 
-面板同时显示视觉轮次、原图按需读取和视觉缓存命中。刷新、清零和读取统计只调用本机回环 RPC `/deepseekeyes`，不会创建会话消息、工具 Schema 或模型请求。纯文字轮次走原有直通路径，不写统计、不增加模型调用，也不增加 Token。
+面板同时显示自动化 DeepSeek Token、用户指令数、上下文保护次数、额度保护停止次数、估算避免重放输入、视觉轮次、原图按需读取和视觉缓存命中。刷新、清零和读取统计只调用本机回环 RPC `/deepseekeyes`，不会创建会话消息、工具 Schema 或模型请求。普通纯文字轮次走原有直通路径，不写统计、不增加模型调用，也不增加 Token。
 
 累计数据默认原子写入：
 
@@ -381,6 +386,8 @@ $DSH_HOME/deepseekeyes/evidence/
 | `cacheDir` | DSH/Home 路径 | 证据目录；设为 `false` 时只使用进程内缓存 |
 | `baseMaxTokens` | `16384` | 基础视觉证据输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
 | `targetMaxTokens` | `8192` | 单次细节追问输出预算；`0` 表示不发送 `maxTokens`，自定义值没有插件最大值 |
+| `automationContextMaxTokens` | `32768` | 每次 Browser/Desktop 工具轮次提交给 DeepSeek 的模型上下文预算；只裁剪模型副本，保留完整 DSH 任务和证据；`0` 表示不限制 |
+| `automationMaxCallsPerTurn` | `32` | 一个直接用户指令最多触发的 Computer Use 最终模型调用数；新用户指令会重置；`0` 表示不限制 |
 | `usageStats` | `true` | 是否累计本插件的精确 Provider 用量和桥接输入估算；关闭后不再新增记录 |
 | `usageStatsPath` | DSH/Home 路径 | 统计 JSON 路径；设为 `false` 时仅在内存保存，默认 `$DSH_HOME/deepseekeyes/usage-stats.json` |
 | `historyImageLimit` | `8` | 最终模型上下文中保留的最近历史图片短引用数；`0` 表示不自动带入历史引用 |

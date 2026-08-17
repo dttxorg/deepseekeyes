@@ -278,6 +278,116 @@ test('desktop semantic fast path reaches DeepSeek with zero visual-model calls',
   const usage = await ctx.deepseekEyesState.usage.snapshot()
   assert.equal(usage.totals.visualTurns, 0)
   assert.equal(usage.totals.calls.visionBase, 0)
+  assert.equal(usage.totals.calls.upstreamAutomation, 1)
+  assert.equal(usage.totals.derived.automationTokens, 2)
+  assert.equal(usage.totals.derived.exactAdditionalTokens, 2)
+})
+
+test('semantic Computer Use bounds an unrelated long task prefix and accounts its DeepSeek call', async () => {
+  let forwarded
+  const ctx = setupBridge({
+    bridgeConfig: {
+      automationContextMaxTokens: 32_768,
+      automationMaxCallsPerTurn: 4,
+    },
+    upstreamHandler(options) {
+      forwarded = options
+      return textStream('continue automation', { inputTokens: 30_000, outputTokens: 25 })
+    },
+  })
+  const assistant = (content) => ({
+    id: `assistant-${Math.random()}`,
+    role: 'assistant',
+    content,
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+  })
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'automation-bounded',
+    messages: [
+      userMessage([{ type: 'text', text: `old payload ${'x'.repeat(2_000_000)}` }]),
+      assistant([{ type: 'text', text: 'old answer' }]),
+      userMessage([{ type: 'text', text: 'Inspect the current TARGET window.' }]),
+      assistant([{
+        type: 'tool-call',
+        id: 'computer-bounded-call',
+        name: 'computer',
+        arguments: '{"action":"observe"}',
+      }]),
+      userMessage([{
+        type: 'tool-result',
+        toolCallId: 'computer-bounded-call',
+        toolName: 'computer',
+        content: [{
+          type: 'text',
+          text: '[DeepSeekEyes desktop state]\n{"ok":true,"stateId":"desktop-state:bounded"}',
+        }],
+      }]),
+    ],
+  }))
+
+  assert.equal(result.text, 'continue automation')
+  const wire = JSON.stringify(forwarded.messages)
+  assert.equal(wire.includes('old payload'), false)
+  assert.match(wire, /Inspect the current TARGET window/)
+  assert.match(wire, /desktop-state:bounded/)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.automationTurns, 1)
+  assert.equal(usage.totals.automationContextCompactions, 1)
+  assert.ok(usage.totals.estimatedAutomationInputTokensSaved > 450_000)
+  assert.equal(usage.totals.derived.automationTokens, 30_025)
+  assert.equal(usage.totals.derived.exactAdditionalTokens, 30_025)
+})
+
+test('Computer Use model-call guard stops one runaway user instruction and resets on the next', async () => {
+  let upstreamCalls = 0
+  const ctx = setupBridge({
+    bridgeConfig: { automationMaxCallsPerTurn: 2 },
+    upstreamHandler() {
+      upstreamCalls += 1
+      return textStream('next')
+    },
+  })
+  const task = userMessage([{ type: 'text', text: 'Complete the desktop task.' }])
+  const automationMessages = (directTask) => [
+    directTask,
+    {
+      id: 'assistant-call-limit',
+      role: 'assistant',
+      content: [{
+        type: 'tool-call',
+        id: 'computer-call-limit',
+        name: 'computer',
+        arguments: '{"action":"observe"}',
+      }],
+      source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+    },
+    userMessage([{
+      type: 'tool-result',
+      toolCallId: 'computer-call-limit',
+      toolName: 'computer',
+      content: [{ type: 'text', text: '[DeepSeekEyes desktop state]\n{"stateId":"call-limit"}' }],
+    }]),
+  ]
+  const call = directTask => collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'automation-call-limit',
+    messages: automationMessages(directTask),
+  }))
+
+  await call(task)
+  await call(task)
+  await assert.rejects(call(task), error => error.code === 'AUTOMATION_CALL_LIMIT')
+  assert.equal(upstreamCalls, 2)
+
+  await call(userMessage([{ type: 'text', text: 'Continue with a new explicit instruction.' }]))
+  assert.equal(upstreamCalls, 3)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.automationTurns, 2)
+  assert.equal(usage.totals.automationLimitStops, 1)
+  assert.equal(usage.totals.calls.upstreamAutomation, 3)
 })
 
 test('explicit final model locks catalog, text turns, image turns, and exposes both model roles', async () => {

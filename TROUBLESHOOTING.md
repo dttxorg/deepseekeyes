@@ -69,10 +69,13 @@ Pasted user images remain original DSH attachments. Desktop Computer Use screens
 
 ## Context-length or unexpected Token growth
 
+- Upgrade to 0.5.7 or later. Earlier releases could replay an unrelated 500k-token task prefix on every semantic Computer Use step even when no visual-model request was made.
+- Keep **Context limit per automation call** at the recommended `32768` and **Maximum model calls per user instruction** at `32`. Both settings accept custom values; `0` explicitly restores unlimited behavior.
+- The guard changes only the model-facing Browser/Desktop request. It never deletes the DSH task, event log, screenshots, original attachments or reports.
 - Keep `historyImageLimit`, `browserHistoryLimit` and `desktopHistoryLimit` bounded.
 - Historical images are compact hash pointers and do not trigger automatic rereads.
 - Disable Browser/Desktop Computer Use when not needed; both are off by default.
-- Review **Token usage statistics** in the settings card. Normal final-answer usage is displayed separately from plugin overhead.
+- Review **Token usage statistics** in the settings card. Computer Use DeepSeek usage is counted as plugin overhead; the panel also shows estimated replay input avoided and budget stops.
 
 For Desktop 0.5, keep **Desktop screenshot delivery** on **Auto · semantic fast path** and start with `observe` using `scope: "window"` plus the target application/title once it is known. Complete semantic states and successful mutations then bypass the visual Provider while the full PNG remains preserved. Use `includeScreenshot: true` only for a step whose current pixels are required. **Full audit** intentionally reads every step; **Manual** reads only explicit requests.
 

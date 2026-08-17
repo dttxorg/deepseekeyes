@@ -23,6 +23,13 @@ test('usage tracker separates exact plugin overhead from final model usage', asy
     inputTokens: 80,
     outputTokens: 8,
   })
+  await tracker.recordAutomationTurn('session-a')
+  await tracker.recordAutomationContextCompaction('session-a', 450_000)
+  await tracker.recordCall('session-a', 'upstreamAutomation', {
+    inputTokens: 32_000,
+    outputTokens: 100,
+    cacheReadTokens: 30_000,
+  })
   await tracker.recordCall('session-a', 'upstreamFinal', {
     inputTokens: 120,
     outputTokens: 40,
@@ -36,13 +43,18 @@ test('usage tracker separates exact plugin overhead from final model usage', asy
   assert.equal(snapshot.totals.cacheHits, 1)
   assert.equal(snapshot.totals.derived.visionTokens, 162)
   assert.equal(snapshot.totals.derived.upstreamClarificationTokens, 88)
-  assert.equal(snapshot.totals.derived.exactAdditionalTokens, 250)
+  assert.equal(snapshot.totals.derived.automationTokens, 62_100)
+  assert.equal(snapshot.totals.derived.exactAdditionalTokens, 62_350)
   assert.equal(snapshot.totals.derived.estimatedBridgeInputTokens, 25)
-  assert.equal(snapshot.totals.derived.estimatedAdditionalTokens, 275)
+  assert.equal(snapshot.totals.derived.estimatedAdditionalTokens, 62_375)
   assert.equal(snapshot.totals.derived.finalModelVisualTurnTokens, 160)
   assert.equal(snapshot.totals.derived.exactAdditionalUsage.reasoningTokens, 1)
+  assert.equal(snapshot.totals.automationTurns, 1)
+  assert.equal(snapshot.totals.automationContextCompactions, 1)
+  assert.equal(snapshot.totals.estimatedAutomationInputTokensSaved, 450_000)
   assert.equal(snapshot.sessions[0].sessionId, 'session-a')
   assert.equal(snapshot.accounting.finalModelVisualTurnUsageExcludedFromAdditional, true)
+  assert.equal(snapshot.accounting.automationModelUsageIncludedInAdditional, true)
 })
 
 test('usage tracker persists, bounds sessions, disables writes, and resets', async () => {

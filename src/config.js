@@ -7,6 +7,8 @@ export const DEFAULT_MAX_CLARIFICATIONS = 3
 export const UNLIMITED_TOKEN_BUDGET = 0
 export const DEFAULT_BASE_MAX_TOKENS = 16_384
 export const DEFAULT_TARGET_MAX_TOKENS = 8_192
+export const DEFAULT_AUTOMATION_CONTEXT_MAX_TOKENS = 32_768
+export const DEFAULT_AUTOMATION_MAX_CALLS_PER_TURN = 32
 export const DEFAULT_VISION_FAILOVER_ATTEMPTS = 2
 export const DEFAULT_VISION_HEALTH_TTL_MS = 60_000
 export const DEFAULT_VISION_FAILURE_COOLDOWN_MS = 30_000
@@ -80,6 +82,17 @@ function tokenBudgetValue(value, field, fallback, minimum) {
   if (!Number.isSafeInteger(resolved) || resolved < minimum) {
     throw new RangeError(
       `deepseekeyes: ${field} must be 0 for provider-managed output or a safe integer of at least ${minimum}`,
+    )
+  }
+  return resolved
+}
+
+function automationContextBudgetValue(value, field, fallback) {
+  const resolved = value ?? fallback
+  if (resolved === UNLIMITED_TOKEN_BUDGET) return UNLIMITED_TOKEN_BUDGET
+  if (!Number.isSafeInteger(resolved) || resolved < 4_096) {
+    throw new RangeError(
+      `deepseekeyes: ${field} must be 0 for unlimited context or a safe integer of at least 4096`,
     )
   }
   return resolved
@@ -284,6 +297,18 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       'targetMaxTokens',
       DEFAULT_TARGET_MAX_TOKENS,
       256,
+    ),
+    automationContextMaxTokens: automationContextBudgetValue(
+      input.automationContextMaxTokens,
+      'automationContextMaxTokens',
+      DEFAULT_AUTOMATION_CONTEXT_MAX_TOKENS,
+    ),
+    automationMaxCallsPerTurn: integerValue(
+      input.automationMaxCallsPerTurn,
+      'automationMaxCallsPerTurn',
+      DEFAULT_AUTOMATION_MAX_CALLS_PER_TURN,
+      0,
+      10_000,
     ),
     historyImageLimit: integerValue(
       input.historyImageLimit,

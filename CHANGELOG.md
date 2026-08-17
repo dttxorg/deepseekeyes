@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7 - 2026-08-17
+
+- Stop Browser/Desktop Computer Use from replaying an unrelated full long-task prefix on every model step: the model-facing automation copy now defaults to a 32,768-token context budget while the complete DSH task, screenshots, event log and reports remain preserved.
+- Retain the newest direct user instruction plus an atomic tail of assistant tool calls and matching tool results; fail before Provider dispatch when even that required state exceeds the configured budget.
+- Add a per-user-instruction runaway guard with a default of 32 final-model calls. Both safeguards are configurable in the native settings card, accept custom values, and support explicit `0` unlimited mode without changing ordinary text or non-automation image turns.
+- Count every Provider-reported DeepSeek call caused by Browser/Desktop Computer Use as plugin overhead, including the semantic no-image fast path, and expose automation calls, protected turns, compactions, limit stops and estimated avoided replay input.
+
 ## 0.5.6 - 2026-08-17
 
 - Make the one-line install/upgrade/migration commands work from inside `npm exec` on npm 11 by selecting the scoped DSH package and its `dsh` binary explicitly; update the documented uninstall command to use the same argument-safe form.

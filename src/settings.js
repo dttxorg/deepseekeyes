@@ -1,6 +1,8 @@
 import z from '@deepseek-ai/schemastery'
 import {
   DEFAULT_BASE_MAX_TOKENS,
+  DEFAULT_AUTOMATION_CONTEXT_MAX_TOKENS,
+  DEFAULT_AUTOMATION_MAX_CALLS_PER_TURN,
   DEFAULT_BROWSER_MAX_ELEMENTS,
   DEFAULT_BROWSER_MAX_TEXT_CHARS,
   DEFAULT_BROWSER_HISTORY_LIMIT,
@@ -49,6 +51,8 @@ export const SETTINGS_FIELDS = Object.freeze([
   'maxClarifications',
   'baseMaxTokens',
   'targetMaxTokens',
+  'automationContextMaxTokens',
+  'automationMaxCallsPerTurn',
   'historyImageLimit',
   'historySummaryChars',
   'browserHistoryLimit',
@@ -96,6 +100,8 @@ export const SettingsConfig = z.object({
   maxClarifications: z.number().step(1).min(0).max(8).default(DEFAULT_MAX_CLARIFICATIONS),
   baseMaxTokens: z.number().step(1).min(0).default(DEFAULT_BASE_MAX_TOKENS),
   targetMaxTokens: z.number().step(1).min(0).default(DEFAULT_TARGET_MAX_TOKENS),
+  automationContextMaxTokens: z.number().step(1).min(0).default(DEFAULT_AUTOMATION_CONTEXT_MAX_TOKENS),
+  automationMaxCallsPerTurn: z.number().step(1).min(0).max(10_000).default(DEFAULT_AUTOMATION_MAX_CALLS_PER_TURN),
   historyImageLimit: z.number().step(1).min(0).max(32).default(DEFAULT_HISTORY_IMAGE_LIMIT),
   historySummaryChars: z.number().step(1).min(64).max(2_000).default(DEFAULT_HISTORY_SUMMARY_CHARS),
   browserHistoryLimit: z.number().step(1).min(0).max(32).default(DEFAULT_BROWSER_HISTORY_LIMIT),

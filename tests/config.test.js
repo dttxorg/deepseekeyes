@@ -12,6 +12,8 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.activeProbe, true)
   assert.equal(config.baseMaxTokens, 16_384)
   assert.equal(config.targetMaxTokens, 8_192)
+  assert.equal(config.automationContextMaxTokens, 32_768)
+  assert.equal(config.automationMaxCallsPerTurn, 32)
   assert.equal(config.historyImageLimit, 8)
   assert.equal(config.historySummaryChars, 320)
   assert.equal(config.browserHistoryLimit, 8)
@@ -33,6 +35,24 @@ test('visual token budgets accept large custom values and provider-managed outpu
   assert.equal(custom.targetMaxTokens, 131_072)
   assert.throws(() => resolveConfig({ baseMaxTokens: 511 }, {}, '/tmp'), /0 for provider-managed output/)
   assert.throws(() => resolveConfig({ targetMaxTokens: 255 }, {}, '/tmp'), /0 for provider-managed output/)
+})
+
+test('automation spend guard supports a recommended bound, custom values, and explicit unlimited mode', () => {
+  const unlimited = resolveConfig({
+    automationContextMaxTokens: 0,
+    automationMaxCallsPerTurn: 0,
+  }, {}, '/tmp')
+  assert.equal(unlimited.automationContextMaxTokens, 0)
+  assert.equal(unlimited.automationMaxCallsPerTurn, 0)
+
+  const custom = resolveConfig({
+    automationContextMaxTokens: 250_000,
+    automationMaxCallsPerTurn: 96,
+  }, {}, '/tmp')
+  assert.equal(custom.automationContextMaxTokens, 250_000)
+  assert.equal(custom.automationMaxCallsPerTurn, 96)
+  assert.throws(() => resolveConfig({ automationContextMaxTokens: 4_095 }, {}, '/tmp'), /at least 4096/)
+  assert.throws(() => resolveConfig({ automationMaxCallsPerTurn: 10_001 }, {}, '/tmp'), /0 through 10000/)
 })
 
 test('configuration accepts environment-selected Harness vision route', () => {

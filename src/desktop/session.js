@@ -53,10 +53,12 @@ function normalizeWindow(value) {
   const number = field => finite(valueOf(value, field, field[0].toUpperCase() + field.slice(1)))
   return {
     nativeId,
+    ownerNativeId: optionalText(valueOf(value, 'ownerNativeId', 'OwnerNativeId'), 1_000),
     pid: number('pid'),
     application,
     title,
     active: Boolean(valueOf(value, 'active', 'Active')),
+    modal: Boolean(valueOf(value, 'modal', 'Modal')),
     x: number('x'),
     y: number('y'),
     width: number('width'),
@@ -76,6 +78,7 @@ function modelWindow(value, ref = windowRef(value)) {
     application: value.application,
     title: value.title,
     active: value.active,
+    modal: value.modal ? true : undefined,
     x: value.x,
     y: value.y,
     width: value.width,
@@ -407,6 +410,81 @@ export class DesktopSession {
   windowForElement(element) {
     if (element?.windowNativeId === undefined) return undefined
     return [...this.latestWindows.values()].find(window => window.nativeId === element.windowNativeId)
+  }
+
+  activeNativeWindow() {
+    return [...this.latestWindows.values()].find(window => window.active)
+  }
+
+  typeTargetWindow(args, window, element) {
+    if (args.action !== 'type') return undefined
+    const elementWindow = this.windowForElement(element)
+    if (window !== undefined && elementWindow !== undefined && window.nativeId !== elementWindow.nativeId) {
+      throw new DeepSeekEyesError(
+        `computer type element belongs to window ${elementWindow.nativeId}, not ${window.nativeId}`,
+        'DESKTOP_TYPE_TARGET_MISMATCH',
+      )
+    }
+    if (element?.editable === false) {
+      throw new DeepSeekEyesError(
+        `computer type target ${args.elementRef} is not editable in the latest state`,
+        'DESKTOP_TYPE_TARGET_NOT_EDITABLE',
+      )
+    }
+    const target = window
+      ?? elementWindow
+      ?? this.captureWindow
+      ?? (args.allowFocusedTarget === true ? this.activeNativeWindow() : undefined)
+    if (target === undefined && args.allowFocusedTarget !== true) {
+      throw new DeepSeekEyesError(
+        'computer coordinate type needs windowRef or a latest window-scoped observation',
+        'DESKTOP_TYPE_WINDOW_REQUIRED',
+      )
+    }
+    return target
+  }
+
+  requireTypeTargetSafe(args, targetWindow) {
+    if (args.action !== 'type') return
+    const active = this.activeNativeWindow()
+    if (active?.modal === true
+      && targetWindow !== undefined
+      && active.nativeId !== targetWindow.nativeId) {
+      throw new DeepSeekEyesError(
+        `computer type is blocked by active modal window ${active.title || active.nativeId}; target it or close it first`,
+        'DESKTOP_MODAL_TARGET_BLOCKED',
+      )
+    }
+    if (args.x === undefined || targetWindow === undefined) return
+    if (this.captureWindow !== undefined && this.captureWindow.nativeId !== targetWindow.nativeId) {
+      throw new DeepSeekEyesError(
+        'computer type coordinates belong to a different window-scoped screenshot; observe the target window again',
+        'DESKTOP_COORDINATE_SPACE_MISMATCH',
+      )
+    }
+    const screen = this.latest?.screen
+    const fields = [targetWindow.x, targetWindow.y, targetWindow.width, targetWindow.height]
+    if (screen === undefined || !fields.every(Number.isFinite)) {
+      throw new DeepSeekEyesError(
+        'computer type target window has no verifiable bounds in the latest state',
+        'DESKTOP_TARGET_BOUNDS_MISSING',
+      )
+    }
+    const scale = Number.isFinite(Number(screen.scaleFactor)) && Number(screen.scaleFactor) > 0
+      ? Number(screen.scaleFactor)
+      : 1
+    const globalX = Number(screen.x ?? 0) + Number(args.x) / scale
+    const globalY = Number(screen.y ?? 0) + Number(args.y) / scale
+    const inside = globalX >= targetWindow.x
+      && globalY >= targetWindow.y
+      && globalX < targetWindow.x + targetWindow.width
+      && globalY < targetWindow.y + targetWindow.height
+    if (!inside) {
+      throw new DeepSeekEyesError(
+        `computer type coordinate (${args.x}, ${args.y}) is outside target window ${targetWindow.title || targetWindow.nativeId}`,
+        'DESKTOP_TYPE_COORDINATE_OUTSIDE_WINDOW',
+      )
+    }
   }
 
   captureFor(args, window, element) {
@@ -765,6 +843,8 @@ export class DesktopSession {
       this.requireCoordinateInLatestScreen(args)
       const window = this.resolveNativeWindow(args)
       const element = this.resolveNativeElement(args)
+      const targetWindow = this.typeTargetWindow(args, window, element)
+      this.requireTypeTargetSafe(args, targetWindow)
       const capture = this.captureFor(args, window, element)
       const previous = this.latest
       const { native, nativeRoundTripMs } = await this.runNative({
@@ -773,6 +853,7 @@ export class DesktopSession {
         ...(this.latest?.screen === undefined ? {} : { screen: this.latest.screen }),
         ...(window === undefined ? {} : { window }),
         ...(element === undefined ? {} : { element }),
+        ...(targetWindow === undefined ? {} : { targetWindow }),
       }, signal)
       const result = await this.observe(args.action, args, native, event, { nativeRoundTripMs })
       if (args.action === 'assert') {

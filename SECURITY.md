@@ -26,6 +26,8 @@ Public issues are appropriate for ordinary defects. Keep API keys, DSH settings 
 - **Bounded route audit.** Health and failover records contain Provider/model identifiers, status, latency, error code, image hash and a hashed session ID. Prompt text and image bytes are excluded.
 - **Computer Use is opt-in.** Browser and native desktop tools are not registered until enabled. Stateful actions require the newest state ID and stale actions are rejected before mutation.
 - **Window scope fails closed.** An explicit desktop window target that disappears produces an error rather than silently capturing or acting on another window.
+- **Desktop text is target-bound.** Text entry requires a semantic element or screenshot coordinates bound to a current window; focus, modal and coordinate mismatches stop before text dispatch. Ambient-focus compatibility requires an explicit flag.
+- **macOS pasteboard is transactional.** Coordinate-only Unicode input snapshots every current pasteboard item/type and restores them after the native paste event; semantic controls use Accessibility selected-text insertion instead.
 - **Sensitive action values are hashed.** Browser/desktop reports retain the length and SHA-256 of typed values and launch arguments instead of their plaintext.
 - **Private local files.** Evidence, usage and route-attempt files are written under private directories with mode `0600` on POSIX systems.
 

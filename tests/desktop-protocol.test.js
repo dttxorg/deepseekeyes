@@ -42,6 +42,29 @@ test('desktop protocol binds mutations to state, coordinates, current windows, a
     () => parseDesktopArgs({ action: 'set_value', stateId: 'desktop-state:x', elementRef: 'el_1' }),
     /requires value/,
   )
+  assert.throws(
+    () => parseDesktopArgs({ action: 'type', stateId: 'desktop-state:x', text: 'fixture' }),
+    /requires elementRef or x\/y/,
+  )
+  assert.equal(parseDesktopArgs({
+    action: 'type', stateId: 'desktop-state:x', text: 'fixture', allowFocusedTarget: true,
+  }).allowFocusedTarget, true)
+  const coordinateType = parseDesktopArgs({
+    action: 'type', stateId: 'desktop-state:x', text: 'fixture', x: 10, y: 20,
+  })
+  assert.equal(coordinateType.x, 10)
+  assert.equal(coordinateType.y, 20)
+  assert.equal(coordinateType.allowFocusedTarget, undefined)
+  assert.throws(
+    () => parseDesktopArgs({ action: 'type', stateId: 'desktop-state:x', text: 'fixture', x: 10 }),
+    /requires x and y/,
+  )
+  assert.throws(
+    () => parseDesktopArgs({
+      action: 'type', stateId: 'desktop-state:x', text: 'fixture', elementRef: 'el_1', x: 10, y: 20,
+    }),
+    /elementRef or x\/y, not both/,
+  )
   assert.equal(parseDesktopArgs({
     action: 'set_value', stateId: 'desktop-state:x', elementRef: 'el_1', value: 42,
   }).value, '42')
@@ -62,6 +85,7 @@ test('desktop action reports hash typed text and launch arguments', () => {
   const typed = reportableDesktopArgs(parseDesktopArgs({
     action: 'type',
     stateId: 'desktop-state:x',
+    elementRef: 'el_fixture',
     text: 'example-private-input',
     secret: true,
   }))
@@ -175,6 +199,9 @@ test('desktop tool renders the current screenshot and rejects non-Eyes routes be
   assert.equal(fastContent.length, 1)
   assert.equal(fastContent[0].text.includes('"tiles"'), false)
   assert.match(DESKTOP_SYSTEM_PROMPT, /includeScreenshot=true/)
+  assert.match(DESKTOP_SYSTEM_PROMPT, /visual model as the pixel-grounding layer/)
+  assert.match(DESKTOP_SYSTEM_PROMPT, /Never call type with only text/)
+  assert.match(DESKTOP_SYSTEM_PROMPT, /TARGET_FOCUS_MISMATCH/)
   await assert.rejects(
     tool.execute({ action: 'observe' }, {
       signal: new AbortController().signal,

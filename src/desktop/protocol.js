@@ -154,6 +154,7 @@ export function parseDesktopArgs(input) {
     actionName: optionalString(input.actionName, 'actionName'),
     arguments: optionalStringArray(input.arguments, 'arguments'),
     secret: optionalBoolean(input.secret, 'secret'),
+    allowFocusedTarget: optionalBoolean(input.allowFocusedTarget, 'allowFocusedTarget'),
     includeScreenshot: optionalBoolean(input.includeScreenshot, 'includeScreenshot'),
     durationMs: optionalNumber(input.durationMs, 'durationMs'),
     timeoutMs: optionalNumber(input.timeoutMs, 'timeoutMs'),
@@ -200,8 +201,21 @@ export function parseDesktopArgs(input) {
     requireCoordinatePair(args, 'x', 'y', action)
     requireCoordinatePair(args, 'endX', 'endY', action)
   }
-  if (action === 'type' && args.text === undefined) {
-    throw new TypeError('deepseekeyes computer: type requires text')
+  if (action === 'type') {
+    if (args.text === undefined) {
+      throw new TypeError('deepseekeyes computer: type requires text')
+    }
+    const hasCoordinates = hasCoordinatePair(args)
+    if (hasCoordinates) requireCoordinatePair(args, 'x', 'y', action)
+    if (args.elementRef !== undefined && hasCoordinates) {
+      throw new TypeError('deepseekeyes computer: type accepts elementRef or x/y, not both')
+    }
+    if (args.elementRef === undefined && !hasCoordinates && args.allowFocusedTarget !== true) {
+      throw new TypeError(
+        'deepseekeyes computer: type requires elementRef or x/y; '
+        + 'set allowFocusedTarget=true only for an explicitly verified current focus',
+      )
+    }
   }
   if (action === 'key' && args.key === undefined) {
     throw new TypeError('deepseekeyes computer: key requires key')
@@ -298,6 +312,7 @@ export const DESKTOP_TOOL_PARAMETERS = Object.freeze({
     actionName: { type: 'string' },
     arguments: { type: 'array', items: { type: 'string' } },
     secret: { type: 'boolean' },
+    allowFocusedTarget: { type: 'boolean' },
     includeScreenshot: { type: 'boolean' },
     durationMs: { type: 'integer', minimum: 0, maximum: 120_000 },
     timeoutMs: { type: 'integer', minimum: 1_000, maximum: 120_000 },

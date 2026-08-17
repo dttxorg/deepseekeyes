@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.8 - 2026-08-17
+
+- Make desktop `type` target-bound: require an `elementRef` or complete screenshot coordinates, while retaining an explicit `allowFocusedTarget` compatibility escape hatch.
+- Bind coordinate text entry to a current `windowRef` or window-scoped observation, validate screenshot coordinate space and target bounds, and reject ambient-focus input before native mutation.
+- Execute coordinate text atomically on Windows and macOS by focusing the intended window, clicking the target, verifying the foreground window, and sending text only after the check passes.
+- Detect active modal windows and stop text intended for another window with `DESKTOP_MODAL_TARGET_BLOCKED`; native focus races return `TARGET_FOCUS_MISMATCH` with no text sent.
+- Add native window modal metadata, cross-platform target-verification results and action input-method diagnostics without retaining plaintext input.
+- Fix macOS Unicode entry: semantic elements use Accessibility selected-text insertion, while coordinate-only input snapshots every pasteboard item/type, pastes through CoreGraphics and restores the original pasteboard.
+- Teach the Computer Use prompt that the visual model owns pixel grounding, DeepSeek owns planning/text, and the runtime owns target validation and execution.
+- Add protocol/session/helper regressions for targetless input, explicit compatibility mode, semantic and coordinate targets, window bounds, modal interception, helper focus checks and clipboard-preserving Unicode input.
+
 ## 0.5.7 - 2026-08-17
 
 - Stop Browser/Desktop Computer Use from replaying an unrelated full long-task prefix on every model step: the model-facing automation copy now defaults to a 32,768-token context budget while the complete DSH task, screenshots, event log and reports remain preserved.

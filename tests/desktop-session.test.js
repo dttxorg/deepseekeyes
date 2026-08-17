@@ -16,7 +16,7 @@ function nativeResult(sequence, action, input = {}) {
   const screenshot = createProbePng(sequence % 2 === 0 ? [...order].reverse() : order, 2)
   const window = {
     nativeId: '42:0', pid: 42, application: 'Fixture', title: `Fixture ${sequence}`,
-    active: true, x: 100, y: 50, width: 6, height: 6, index: 0,
+    active: true, modal: false, x: 100, y: 50, width: 6, height: 6, index: 0,
   }
   const windowCapture = input.captureScope === 'window'
   return {
@@ -183,6 +183,117 @@ test('desktop coordinates and window refs are valid only against the latest obse
   assert.equal(driver.calls.at(-1).window.nativeId, '42:0')
 })
 
+test('desktop type rejects ambient focus and keeps the explicit compatibility escape hatch auditable', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const state = await session.execute(parseDesktopArgs({ action: 'observe' }))
+  await assert.rejects(
+    session.execute(parseDesktopArgs({
+      action: 'type', stateId: state.stateId, x: 1, y: 1, text: 'must-not-run',
+    })),
+    error => error.code === 'DESKTOP_TYPE_WINDOW_REQUIRED',
+  )
+  assert.deepEqual(driver.calls.map(call => call.action), ['observe'])
+
+  const compatibility = await session.execute(parseDesktopArgs({
+    action: 'type', stateId: state.stateId, text: 'explicit-focus', allowFocusedTarget: true,
+  }))
+  assert.equal(compatibility.ok, true)
+  assert.equal(driver.calls[1].targetWindow.nativeId, '42:0')
+  assert.equal(driver.calls[1].allowFocusedTarget, true)
+  assert.equal(JSON.stringify(session.events).includes('explicit-focus'), false)
+})
+
+test('window-scoped coordinate type binds click and text to one verified target window', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const observed = await session.execute(parseDesktopArgs({
+    action: 'observe', scope: 'window', application: 'Fixture', includeScreenshot: true,
+  }))
+  const typed = await session.execute(parseDesktopArgs({
+    action: 'type', stateId: observed.stateId, x: 2, y: 3, text: 'target-bound',
+  }))
+  assert.equal(typed.ok, true)
+  assert.equal(driver.calls[1].targetWindow.nativeId, '42:0')
+  assert.equal(driver.calls[1].captureWindow.nativeId, '42:0')
+  assert.equal(driver.calls[1].x, 2)
+  assert.equal(driver.calls[1].y, 3)
+  assert.equal(JSON.stringify(session.events).includes('target-bound'), false)
+})
+
+test('coordinate type refuses a point outside its declared window', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  driver.execute = async function execute(args) {
+    this.calls.push(structuredClone(args))
+    const result = nativeResult(this.calls.length, args.action, args)
+    result.windows[0] = { ...result.windows[0], x: 0, y: 0, width: 3, height: 6 }
+    result.activeWindow = result.windows[0]
+    return result
+  }
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const observed = await session.execute(parseDesktopArgs({ action: 'observe' }))
+  await assert.rejects(
+    session.execute(parseDesktopArgs({
+      action: 'type', stateId: observed.stateId, windowRef: observed.windows[0].ref,
+      x: 5, y: 5, text: 'outside',
+    })),
+    error => error.code === 'DESKTOP_TYPE_COORDINATE_OUTSIDE_WINDOW',
+  )
+  assert.deepEqual(driver.calls.map(call => call.action), ['observe'])
+})
+
+test('active modal protection prevents text from reaching a different window', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  driver.execute = async function execute(args) {
+    this.calls.push(structuredClone(args))
+    const result = nativeResult(this.calls.length, args.action, args)
+    const parent = {
+      ...result.windows[0], nativeId: '42:parent', title: 'Editor', active: false,
+      x: 0, y: 0, width: 6, height: 6,
+    }
+    const modal = {
+      ...parent, nativeId: '42:dialog', ownerNativeId: parent.nativeId,
+      title: 'Error', active: true, modal: true, x: 1, y: 1, width: 4, height: 4,
+    }
+    result.windows = [modal, parent]
+    result.activeWindow = modal
+    result.capturedWindow = undefined
+    return result
+  }
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const observed = await session.execute(parseDesktopArgs({ action: 'observe' }))
+  const parent = observed.windows.find(window => window.title === 'Editor')
+  assert.equal(observed.activeWindow.modal, true)
+  await assert.rejects(
+    session.execute(parseDesktopArgs({
+      action: 'type', stateId: observed.stateId, windowRef: parent.ref,
+      x: 2, y: 2, text: 'must-not-enter-dialog',
+    })),
+    error => error.code === 'DESKTOP_MODAL_TARGET_BLOCKED',
+  )
+  assert.deepEqual(driver.calls.map(call => call.action), ['observe'])
+})
+
+test('element type resolves its owning window and sends both refs to the native helper', async () => {
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const driver = new FakeDesktopDriver()
+  const session = new DesktopSession(mockContext(), config, { driver })
+  const observed = await session.execute(parseDesktopArgs({
+    action: 'observe', scope: 'window', application: 'Fixture',
+  }))
+  const typed = await session.execute(parseDesktopArgs({
+    action: 'type', stateId: observed.stateId, elementRef: observed.elements[0].ref, text: 'semantic-target',
+  }))
+  assert.equal(typed.ok, true)
+  assert.equal(driver.calls[1].element.nativeId, '42:0:0.1')
+  assert.equal(driver.calls[1].targetWindow.nativeId, '42:0')
+  assert.equal(JSON.stringify(session.events).includes('semantic-target'), false)
+})
+
 test('window-scoped observations expose stable refs and semantic element actions', async () => {
   const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
   const driver = new FakeDesktopDriver()
@@ -307,7 +418,8 @@ test('desktop reports never persist typed text and close clears live state', asy
   const session = new DesktopSession(mockContext(), config, { driver })
   const observed = await session.execute(parseDesktopArgs({ action: 'observe' }))
   const typed = await session.execute(parseDesktopArgs({
-    action: 'type', stateId: observed.stateId, text: 'private fixture text', secret: true,
+    action: 'type', stateId: observed.stateId, elementRef: observed.elements[0].ref,
+    text: 'private fixture text', secret: true,
   }))
   const reportState = await session.execute(parseDesktopArgs({
     action: 'report', stateId: typed.stateId, reportName: 'acceptance',

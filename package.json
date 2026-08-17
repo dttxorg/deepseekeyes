@@ -1,6 +1,6 @@
 {
   "name": "@dttxorg/deepseekeyes",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Auditable vision and cross-platform Computer Use runtime for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",
@@ -39,7 +39,7 @@
     "pack:release": "npm pack",
     "build:client": "node scripts/build-client.mjs",
     "prepack": "npm run check",
-    "test:desktop": "node acceptance/desktop-native.mjs",
+    "test:desktop": "node acceptance/desktop-native.mjs && node acceptance/macos-pasteboard.mjs",
     "eval:fixtures": "python3 evals/generate-fixtures.py",
     "eval:fixture": "node evals/run.mjs --adapter fixture",
     "eval:live": "node evals/run.mjs --adapter openai",

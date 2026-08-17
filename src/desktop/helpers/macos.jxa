@@ -270,23 +270,79 @@ function scroll(input) {
   $.CGEventPost($.kCGHIDEventTap, event)
 }
 
-function typeUnicode(text) {
-  const value = String(text)
-  for (let offset = 0; offset < value.length;) {
-    let end = Math.min(value.length, offset + 20)
-    const last = value.charCodeAt(end - 1)
-    const next = value.charCodeAt(end)
-    if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end += 1
-    const part = value.slice(offset, end)
-    const down = $.CGEventCreateKeyboardEvent(null, 0, true)
-    const up = $.CGEventCreateKeyboardEvent(null, 0, false)
-    if (!down || !up) throw new Error('CGEventCreateKeyboardEvent returned null')
-    $.CGEventKeyboardSetUnicodeString(down, part.length, part)
-    $.CGEventKeyboardSetUnicodeString(up, part.length, part)
-    $.CGEventPost($.kCGHIDEventTap, down)
-    $.CGEventPost($.kCGHIDEventTap, up)
-    offset = end
+function pasteboardStringType() {
+  try {
+    if ($.NSPasteboardTypeString !== undefined) return $.NSPasteboardTypeString
+  } catch {}
+  return $('public.utf8-plain-text')
+}
+
+function snapshotPasteboard(board) {
+  const records = []
+  const items = board.pasteboardItems
+  if (items === undefined || items === null) return records
+  for (let itemIndex = 0; itemIndex < Number(items.count); itemIndex += 1) {
+    const source = items.objectAtIndex(itemIndex)
+    const entries = []
+    const types = source.types
+    for (let typeIndex = 0; typeIndex < Number(types.count); typeIndex += 1) {
+      const type = types.objectAtIndex(typeIndex)
+      const data = source.dataForType(type)
+      if (data !== undefined && data !== null) entries.push({ type, data: data.copy })
+    }
+    records.push(entries)
   }
+  return records
+}
+
+function restorePasteboard(board, records) {
+  board.clearContents
+  if (records.length === 0) return
+  const items = $.NSMutableArray.array
+  for (const entries of records) {
+    const item = $.NSPasteboardItem.alloc.init
+    for (const entry of entries) item.setDataForType(entry.data, entry.type)
+    items.addObject(item)
+  }
+  if (!board.writeObjects(items)) throw new Error('failed to restore the original pasteboard contents')
+}
+
+function sendPasteShortcut() {
+  const down = $.CGEventCreateKeyboardEvent(null, 9, true)
+  const up = $.CGEventCreateKeyboardEvent(null, 9, false)
+  if (!down || !up) throw new Error('CGEventCreateKeyboardEvent returned null for paste')
+  $.CGEventSetFlags(down, $.kCGEventFlagMaskCommand)
+  $.CGEventSetFlags(up, $.kCGEventFlagMaskCommand)
+  $.CGEventPost($.kCGHIDEventTap, down)
+  $.CGEventPost($.kCGHIDEventTap, up)
+}
+
+function typeUnicode(text) {
+  const board = $.NSPasteboard.generalPasteboard
+  const original = snapshotPasteboard(board)
+  try {
+    const value = String(text)
+    const type = pasteboardStringType()
+    board.clearContents
+    if (!board.setStringForType($(value), type)) {
+      throw new Error('failed to prepare Unicode text on the private pasteboard transaction')
+    }
+    if (objcText(board.stringForType(type)) !== value) {
+      throw new Error('Unicode pasteboard staging verification failed')
+    }
+    sendPasteShortcut()
+    pause(0.16)
+  } finally {
+    restorePasteboard(board, original)
+  }
+}
+
+function insertAxSelectedText(element, text) {
+  try {
+    const attribute = element.attributes.byName('AXSelectedText')
+    attribute.value = String(text)
+    return true
+  } catch { return false }
 }
 
 function modifierName(value) {
@@ -646,10 +702,12 @@ function describeWindow(process, window, index) {
     && candidate.layer === 0 && candidate.onscreen)
   let applicationActive = false
   try { applicationActive = Boolean(process.frontmost()) } catch {}
+  const subrole = windowAxSubrole(window)
+  const modal = windowAxBoolean(window, 'AXModal') || /dialog|sheet/i.test(subrole)
   const active = applicationActive && (
-    windowAxBoolean(window, 'AXFocused')
-    || windowAxBoolean(window, 'AXMain')
-    || (matched !== undefined && matched.number === frontmost?.number)
+    matched !== undefined && frontmost !== undefined
+      ? matched.number === frontmost.number
+      : windowAxBoolean(window, 'AXFocused') || windowAxBoolean(window, 'AXMain')
   )
   const fallbackIdentity = stableTextHash(JSON.stringify({ pid, title, position, size }))
   return {
@@ -659,6 +717,7 @@ function describeWindow(process, window, index) {
     application,
     title,
     active,
+    modal,
     ...(position === undefined ? {} : { x: position[0], y: position[1] }),
     ...(size === undefined ? {} : { width: size[0], height: size[1] }),
   }
@@ -943,6 +1002,75 @@ function captureScreen(input, target, displayScreen) {
   return displayScreen
 }
 
+function resolveTypeTargetWindow(input) {
+  if (input.targetWindow) return resolveWindow({ window: input.targetWindow })
+  if (input.element && input.element.windowNativeId) {
+    return resolveWindow({
+      window: {
+        nativeId: input.element.windowNativeId,
+        pid: input.element.pid,
+        index: Number(String(input.element.windowNativeId).split(':').pop()),
+      },
+    })
+  }
+  return undefined
+}
+
+function focusTypeTargetWindow(target) {
+  if (target === undefined) return
+  focusProcessByPid(target.info.pid)
+  target.process.frontmost = true
+  try { target.window.actions.byName('AXRaise').perform() } catch {}
+  try { target.window.focused = true } catch {}
+}
+
+function topmostWindowAtPoint(point) {
+  cachedCgWindows = undefined
+  return cgWindows().find(candidate => candidate.layer === 0
+    && candidate.onscreen
+    && Number(point.x) >= candidate.x
+    && Number(point.y) >= candidate.y
+    && Number(point.x) < candidate.x + candidate.width
+    && Number(point.y) < candidate.y + candidate.height)
+}
+
+function assertTypeTargetWindow(target, fallback, targetElement, clickPoint) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    cachedCgWindows = undefined
+    const frontmost = frontmostApplication()
+    if (target === undefined) {
+      if (frontmost !== undefined && Number(frontmost.pid) === Number(fallback && fallback.pid)) {
+        return `app:${frontmost.pid}`
+      }
+    } else {
+      const current = describeWindow(target.process, target.window, target.index)
+      const processFrontmostWindow = cgWindows().find(candidate => candidate.layer === 0
+        && candidate.onscreen
+        && Number(candidate.pid) === Number(target.info.pid))
+      const windowMatches = processFrontmostWindow === undefined
+        ? current.active || (targetElement !== undefined && Boolean(axValue(targetElement, 'focused')))
+        : String(current.nativeId) === `cg:${processFrontmostWindow.number}`
+      const pointWindow = clickPoint === undefined ? undefined : topmostWindowAtPoint(clickPoint)
+      const pointMatches = clickPoint === undefined || (pointWindow !== undefined
+        && String(current.nativeId) === `cg:${pointWindow.number}`)
+      if (Number(frontmost && frontmost.pid) === Number(target.info.pid)
+        && windowMatches
+        && pointMatches) {
+        return current.nativeId
+      }
+    }
+    pause(0.025)
+  }
+  cachedCgWindows = undefined
+  const actual = frontmostApplication()
+  const expected = target === undefined
+    ? `pid ${fallback && fallback.pid}`
+    : `${target.info.nativeId} (${target.info.title})`
+  throw new Error(
+    `TARGET_FOCUS_MISMATCH: expected ${expected} but found ${actual ? `${actual.application} pid ${actual.pid}` : 'no foreground application'}; text was not sent`,
+  )
+}
+
 function perform(input) {
   const action = input.action
   if (action === 'observe' || action === 'assert' || action === 'report') return { observed: true }
@@ -994,11 +1122,37 @@ function perform(input) {
     scroll(input)
   }
   else if (action === 'type') {
+    const target = resolveTypeTargetWindow(input)
+    const fallback = frontmostApplication()
+    focusTypeTargetWindow(target)
+    let targetMode = 'focused-target'
+    let targetElement
+    let clickPoint
     if (input.element) {
-      const element = resolveAxElement(input)
-      try { element.focused = true } catch {}
+      targetElement = resolveAxElement(input)
+      try { targetElement.focused = true } catch {}
+      targetMode = 'element-ref'
+      pause(0.06)
+    } else if (input.x !== undefined) {
+      clickPoint = globalPoint(input, input.x, input.y)
+      assertTypeTargetWindow(target, fallback, undefined, clickPoint)
+      clickAt(input, input.x, input.y, $.kCGMouseButtonLeft, 1)
+      targetMode = 'screenshot-coordinate'
+      pause(0.08)
     }
-    typeUnicode(input.text)
+    const focusedWindowNativeId = assertTypeTargetWindow(target, fallback, targetElement, clickPoint)
+    const inputMethod = targetElement !== undefined && insertAxSelectedText(targetElement, input.text)
+      ? 'accessibility-selected-text'
+      : 'pasteboard-restore'
+    if (inputMethod === 'pasteboard-restore') typeUnicode(input.text)
+    return {
+      performed: action,
+      textLength: String(input.text).length,
+      targetMode,
+      targetVerified: true,
+      focusedWindowNativeId,
+      inputMethod,
+    }
   }
   else if (action === 'key') sendKey(input.key)
   else if (action === 'launch') return launchApplication(input)
@@ -1076,13 +1230,11 @@ function run() {
     try { screen = captureScreen(input, captureTarget, displayScreen) }
     catch (error) { throw new Error(`macOS ${input.action} screenshot failed: ${messageOf(error)}`) }
     stage = 'enumerate-windows'
+    cachedCgWindows = undefined
     const frontmost = frontmostApplication()
     const allWindows = captureTarget === undefined
       ? visibleProcesses(input.maxWindows || 50)
-      : [{
-          ...captureTarget.info,
-          active: Number(frontmost && frontmost.pid) === Number(captureTarget.info.pid),
-        }]
+      : [describeWindow(captureTarget.process, captureTarget.window, captureTarget.index)]
     const activeWindow = allWindows.find(window => window.active) || frontmost
     const windows = allWindows.slice(0, input.maxWindows || 50)
     const semanticEnabled = input.semantic !== false && accessibilityAvailable()
@@ -1132,12 +1284,15 @@ function run() {
       },
     })
   } catch (error) {
+    const message = messageOf(error)
     return JSON.stringify({
       ok: false,
-      code: 'MACOS_DESKTOP_ACTION_FAILED',
+      code: message.includes('TARGET_FOCUS_MISMATCH:')
+        ? 'TARGET_FOCUS_MISMATCH'
+        : 'MACOS_DESKTOP_ACTION_FAILED',
       stage,
       ...(actionDetail === 'none' ? {} : { actionDetail }),
-      message: `macOS helper ${stage} failed${actionDetail === 'none' ? '' : ` at ${actionDetail}`}: ${messageOf(error)}`,
+      message: `macOS helper ${stage} failed${actionDetail === 'none' ? '' : ` at ${actionDetail}`}: ${message}`,
     })
   }
 }

@@ -17,7 +17,7 @@
   <a href="#实机能力展示">实机能力</a> ·
   <a href="#安装升级与-doctor">快速安装</a> ·
   <a href="#工作方式">工作方式</a> ·
-  <a href="#windows--macos-desktop-computer-use-05默认关闭">Computer Use</a> ·
+  <a href="#windows--macos-desktop-computer-use-058默认关闭">Computer Use</a> ·
   <a href="#本插件-token-消耗统计">Token 统计</a> ·
   <a href="#配置字段">完整配置</a> ·
   <a href="https://x.com/lucars2026">X / @lucars2026</a>
@@ -154,7 +154,7 @@ Browser Computer Use 默认关闭，普通图文桥接和纯文本会话不会�
 
 从 0.5.7 起，Browser/Desktop 工具轮次还共用一层自动化 Token 保护：提交给 DeepSeek 的模型副本默认最多约 32,768 Token，只保留最新直接用户指令以及成对的最新工具调用/结果；完整 Harness 任务、事件、截图与报告不删除。一个用户指令默认最多触发 32 次最终模型调用，达到上限后等待新的用户指令。两个值均可自定义，`0` 表示明确不限制。
 
-## Windows / macOS Desktop Computer Use 0.5（默认关闭）
+## Windows / macOS Desktop Computer Use 0.5.8（默认关闭）
 
 0.5 把原有桌面控制推进为“截图 + 原生语义 + 状态差分”的闭环。它保持 [OpenAI 官方 Computer use 文档](https://developers.openai.com/api/docs/guides/tools-computer-use)描述的核心循环：观察当前 UI、执行结构化动作、捕获新状态、基于结果继续；同时复用 Windows UI Automation 与 macOS Accessibility，减少只靠全屏像素猜控件的位置：
 
@@ -172,6 +172,10 @@ observe(scope=desktop) 发现窗口
 
 `launch` 可以直接调用，不需要先 `observe` 或提交 `stateId`。macOS 的 `application` 可填写显示名称（包括应用改名前的可解析别名）、Bundle ID 或完整 `.app` 路径；例如 `ChatGPT`、`Codex`、`com.openai.codex`、`/Applications/ChatGPT.app` 均会解析到实际安装的应用。按 `application` / `title` 聚焦同样不依赖旧截图。
 
+从 0.5.8 起，桌面文字输入不再信任“碰巧拥有键盘焦点的控件”。视觉模型负责在本次交付的准确截图中定位像素目标和模态框，DeepSeek 负责规划与生成文字，原生执行器负责一次性完成：聚焦目标窗口 → 点击/聚焦目标控件 → 验证前台窗口与模态状态 → 输入 → 重新截图。`type` 必须提供 `elementRef`，或提供完整 `x/y`；坐标输入还会绑定 `windowRef` 或最近一次窗口级观察。只传 `text` 会在系统输入前被拒绝，只有显式设置 `allowFocusedTarget: true` 才进入兼容路径。
+
+出现 `TARGET_FOCUS_MISMATCH`、`DESKTOP_MODAL_TARGET_BLOCKED`、`DESKTOP_COORDINATE_SPACE_MISMATCH` 或 `DESKTOP_TYPE_COORDINATE_OUTSIDE_WINDOW` 时，表示文字尚未发送。此时重新观察、先处理模态框或让视觉模型在新截图中重新定位，再携带新 `stateId` 重试。Windows 使用窗口聚焦、原子点击和 `SendInput`；macOS 的语义控件优先通过 Accessibility 当前选区插入文字，纯坐标 Unicode 输入使用完整剪贴板 item/type 保存—粘贴—恢复事务。
+
 运行时可以直接验证 `window_exists`、`window_title_contains`、`element_exists/visible/hidden/enabled/disabled/focused`、`element_value_equals`、`element_name_contains`、`screen_changed/unchanged`；像游戏、Canvas 和自绘界面仍使用 `visual` 断言。最终 `report` 使用 `deepseekeyes.desktop-report.v2` 汇总动作、断言、每步状态差分和截图身份。
 
 - 未知目标先使用 `observe`；`launch` 以及按名称聚焦可直接执行，会改变桌面或使用 ref 的其他动作必须提交最新 `stateId`。
@@ -183,7 +187,7 @@ observe(scope=desktop) 发现窗口
 - 已知目标默认继续返回窗口级截图；`scope=desktop` 可显式回到全桌面发现。窗口截图坐标以返回图片左上角为原点，Helper 会映射回系统全局坐标。
 - Windows 通过 PowerShell、UI Automation、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、Accessibility、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
 - Windows PowerShell 5.1 的输入/输出固定为 UTF-8；点击、拖动与移动坐标先把最新截图原点和相对坐标强制转成标量，再调用 `user32`。因此负坐标/多显示器/窗口级截图不会再触发 `[System.Object[]] op_Addition`，且本地化错误信息保持可读。
-- 输入文本、`set_value` 的值和启动参数只在报告中保存长度和 SHA-256，不保存原文。
+- 输入文本、`set_value` 的值和启动参数只在报告中保存长度和 SHA-256，不保存原文；macOS 坐标输入完成后会恢复粘贴前的全部剪贴板 item/type。
 - `stateDelta` 按完整像素哈希判断截图变化，并分别记录窗口与控件的 added/removed/changed，避免 PNG 编码变化被误判为 UI 变化。
 - 每一步原始 PNG 和最终 JSON 报告默认写入 `$DSH_HOME/deepseekeyes/desktop-runs/`。
 

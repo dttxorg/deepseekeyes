@@ -51,6 +51,8 @@ public static class DeepSeekEyesNative {
         public string Application;
         public string Title;
         public bool Active;
+        public string OwnerNativeId;
+        public bool Modal;
         public int X;
         public int Y;
         public int Width;
@@ -64,6 +66,8 @@ public static class DeepSeekEyesNative {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
@@ -86,6 +90,7 @@ public static class DeepSeekEyesNative {
     public const uint MOUSEEVENTF_RIGHTUP = 0x0010;
     public const uint MOUSEEVENTF_WHEEL = 0x0800;
     public const uint MOUSEEVENTF_HWHEEL = 0x01000;
+    public const uint GW_OWNER = 4;
 
     public static void EnableDpiAwareness() {
         try {
@@ -107,6 +112,7 @@ public static class DeepSeekEyesNative {
             GetWindowThreadProcessId(handle, out rawPid);
             RECT rect;
             if (!GetWindowRect(handle, out rect)) return true;
+            IntPtr owner = GetWindow(handle, GW_OWNER);
             string application = "unknown";
             try { application = Process.GetProcessById((int)rawPid).ProcessName; } catch { }
             found.Add(new WindowInfo {
@@ -115,6 +121,8 @@ public static class DeepSeekEyesNative {
                 Application = application,
                 Title = title.ToString(),
                 Active = handle == active,
+                OwnerNativeId = owner == IntPtr.Zero ? null : owner.ToInt64().ToString(),
+                Modal = owner != IntPtr.Zero && !IsWindowEnabled(owner),
                 X = rect.Left,
                 Y = rect.Top,
                 Width = Math.Max(0, rect.Right - rect.Left),
@@ -405,6 +413,51 @@ function Convert-ToAbsolutePoint($InputObject, $Screen, [string]$XName, [string]
     return [int[]]@($absoluteX, $absoluteY)
 }
 
+function Invoke-LeftClick([int[]]$Point) {
+    [DeepSeekEyesNative]::SetCursorPos($Point[0], $Point[1]) | Out-Null
+    [DeepSeekEyesNative]::mouse_event([DeepSeekEyesNative]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    [DeepSeekEyesNative]::mouse_event([DeepSeekEyesNative]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+}
+
+function Resolve-TypeTargetWindow($InputObject) {
+    $target = Get-PropertyValue $InputObject 'targetWindow'
+    if ($null -ne $target) {
+        $nativeId = [string](Get-PropertyValue $target 'nativeId' '')
+        $resolved = Resolve-WindowByNativeId $nativeId
+        if ($null -eq $resolved) { throw "TARGET_FOCUS_MISMATCH: target window $nativeId is no longer available" }
+        return $resolved
+    }
+    $element = Get-PropertyValue $InputObject 'element'
+    if ($null -ne $element) {
+        $nativeId = [string](Get-PropertyValue $element 'windowNativeId' '')
+        $resolved = Resolve-WindowByNativeId $nativeId
+        if ($null -eq $resolved) { throw "TARGET_FOCUS_MISMATCH: element window $nativeId is no longer available" }
+        return $resolved
+    }
+    return $null
+}
+
+function Focus-TypeTargetWindow($TargetWindow) {
+    if ($null -eq $TargetWindow) { return }
+    $handle = [IntPtr]::new([Int64]::Parse([string]$TargetWindow.NativeId))
+    [DeepSeekEyesNative]::ShowWindow($handle, 9) | Out-Null
+    [DeepSeekEyesNative]::SetForegroundWindow($handle) | Out-Null
+}
+
+function Assert-TypeTargetWindow($TargetWindow, [string]$FallbackNativeId) {
+    $expected = if ($null -eq $TargetWindow) { $FallbackNativeId } else { [string]$TargetWindow.NativeId }
+    if ([string]::IsNullOrWhiteSpace($expected) -or $expected -eq '0') {
+        throw 'TARGET_FOCUS_MISMATCH: no foreground window was available for focused-target input'
+    }
+    for ($attempt = 0; $attempt -lt 8; $attempt += 1) {
+        $actual = [DeepSeekEyesNative]::GetForegroundWindow().ToInt64().ToString()
+        if ($actual -eq $expected) { return $actual }
+        Start-Sleep -Milliseconds 25
+    }
+    $actual = [DeepSeekEyesNative]::GetForegroundWindow().ToInt64().ToString()
+    throw "TARGET_FOCUS_MISMATCH: expected foreground window $expected but found $actual; text was not sent"
+}
+
 function Send-KeyCombination([string]$Combination) {
     $map = @{
         'CTRL' = 0x11; 'CONTROL' = 0x11; 'SHIFT' = 0x10; 'ALT' = 0x12; 'WIN' = 0x5B; 'META' = 0x5B
@@ -533,11 +586,31 @@ function Invoke-Action($InputObject, $Screen) {
         return [pscustomobject]@{ performed = 'drag' }
     }
     if ($action -eq 'type') {
+        $targetWindow = Resolve-TypeTargetWindow $InputObject
+        $focusedFallback = [DeepSeekEyesNative]::GetForegroundWindow().ToInt64().ToString()
+        Focus-TypeTargetWindow $targetWindow
+        $targetMode = 'focused-target'
         if ($null -ne (Get-PropertyValue $InputObject 'element')) {
-            (Resolve-AutomationElement $InputObject).SetFocus()
+            $targetElement = Resolve-AutomationElement $InputObject
+            $targetElement.SetFocus()
+            $targetMode = 'element-ref'
+            Start-Sleep -Milliseconds 60
+        } elseif ($null -ne (Get-PropertyValue $InputObject 'x')) {
+            $point = Convert-ToAbsolutePoint $InputObject $Screen 'x' 'y'
+            Assert-TypeTargetWindow $targetWindow $focusedFallback | Out-Null
+            Invoke-LeftClick $point
+            $targetMode = 'screenshot-coordinate'
+            Start-Sleep -Milliseconds 80
         }
+        $verifiedWindow = Assert-TypeTargetWindow $targetWindow $focusedFallback
         [DeepSeekEyesNative]::SendUnicode([string]$InputObject.text)
-        return [pscustomobject]@{ textLength = ([string]$InputObject.text).Length }
+        return [pscustomobject]@{
+            textLength = ([string]$InputObject.text).Length
+            targetMode = $targetMode
+            targetVerified = $true
+            focusedWindowNativeId = $verifiedWindow
+            inputMethod = 'send-input-unicode'
+        }
     }
     if ($action -eq 'key') {
         Send-KeyCombination ([string]$InputObject.key)
@@ -636,10 +709,12 @@ try {
 } catch {
     $failedAction = if ($null -eq $inputObject) { 'unknown' } else { [string](Get-PropertyValue $inputObject 'action' 'unknown') }
     $line = [int]$_.InvocationInfo.ScriptLineNumber
+    $detail = [string]$_.Exception.Message
+    $failureCode = if ($detail.StartsWith('TARGET_FOCUS_MISMATCH:')) { 'TARGET_FOCUS_MISMATCH' } else { 'WINDOWS_DESKTOP_ACTION_FAILED' }
     [pscustomobject]@{
         ok = $false
-        code = 'WINDOWS_DESKTOP_ACTION_FAILED'
-        message = "Windows desktop action '$failedAction' failed at script line $line`: $($_.Exception.Message)"
+        code = $failureCode
+        message = "Windows desktop action '$failedAction' failed at script line $line`: $detail"
         exceptionType = $_.Exception.GetType().FullName
         scriptLine = $line
     } | ConvertTo-Json -Depth 4 -Compress

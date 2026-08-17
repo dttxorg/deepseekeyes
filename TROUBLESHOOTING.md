@@ -107,6 +107,17 @@ Then rerun doctor before restarting DSH.
 
 Check the configured Edge/Chrome channel or executable path. Browser mode requires a compatible local Chromium runtime. Use `npm run test:browser` from a source checkout for an explicit live acceptance run.
 
+## Desktop text goes to the wrong control, or `type` is rejected
+
+Upgrade to 0.5.8 or later. `type` now requires one concrete target:
+
+- semantic UI: `{"action":"type","stateId":"...","elementRef":"el_...","text":"..."}`;
+- pixel-only UI: observe the target window with pixels, then use `{"action":"type","stateId":"...","windowRef":"win_...","x":123,"y":456,"text":"..."}`. A `windowRef` may be omitted only when the newest state is already scoped to that exact window.
+
+Do not split pixel input into an unrelated click followed by targetless text. The coordinate form is one native transaction: focus window, click point, verify the foreground/modal state, then enter text. `TARGET_FOCUS_MISMATCH`, `DESKTOP_MODAL_TARGET_BLOCKED`, `DESKTOP_COORDINATE_SPACE_MISMATCH`, `DESKTOP_TYPE_COORDINATE_OUTSIDE_WINDOW` and `DESKTOP_TYPE_WINDOW_REQUIRED` all stop before text is sent. Observe again, handle any dialog, reground the input control in the new screenshot and retry with the returned `stateId`.
+
+`allowFocusedTarget: true` exists for a caller that independently verified the current focus. It restores the pre-0.5.8 behavior explicitly and should not be the normal visual-control path.
+
 ## macOS desktop actions fail
 
 Grant **Screen Recording** and **Accessibility** to the terminal that starts `dsh web`, then restart that terminal and DSH. Screen Recording provides PNG capture; Accessibility provides element discovery and actions. The doctor verifies packaged native helpers; `npm run test:desktop` exercises desktop discovery, window capture and semantic metadata from a source checkout.

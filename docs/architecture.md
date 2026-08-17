@@ -63,13 +63,16 @@ The canonical schema has two strict variants:
 
 Every object uses `additionalProperties: false`. OCR/region/object/observation entries require all nested fields. Bounding boxes are normalized, positive and contained by the image; confidence is `0..1`. A successful model response with an extra nested field is still rejected.
 
-## Desktop 0.5 state machine
+## Desktop 0.5.8 state machine
 
 ```mermaid
 stateDiagram-v2
     [*] --> DesktopDiscovery: observe scope=desktop
     DesktopDiscovery --> WindowState: observe scope=window + target
-    WindowState --> WindowState: elementRef or pixel action
+    WindowState --> GroundedTarget: visual bbox/coordinates or elementRef
+    GroundedTarget --> GuardedInput: bind window + verify focus/modal
+    GuardedInput --> WindowState: atomic click/focus + type + observe
+    WindowState --> WindowState: non-text pixel/element action
     WindowState --> WindowState: preserve screenshot + semantic tree + stateDelta
     WindowState --> WindowState: auto fast path or explicit visual delivery
     WindowState --> Verified: runtime or visual assertion
@@ -81,11 +84,13 @@ Windows uses UI Automation runtime IDs and native window handles. macOS uses Acc
 
 The screenshot origin and scale are returned with every state. Desktop discovery uses display coordinates. Window capture moves the origin to the target window, so model coordinates stay relative to the exact returned PNG and the native helper translates them back to global coordinates. A requested target that disappears fails explicitly instead of falling back to an unrelated full desktop image.
 
+Text entry has a stricter target contract than ordinary pointer motion. `type` requires an `elementRef` or complete `x/y`; coordinate entry must also resolve a current target window from `windowRef` or the latest window-scoped observation. The session validates coordinate space, point containment, element/window agreement and any active modal before entering the native helper. The helper then focuses the intended window, focuses or clicks the control, rechecks native foreground identity and only then emits text. `allowFocusedTarget: true` is an explicit compatibility branch, not an implicit fallback. Focus/modal/coordinate failures happen before text dispatch.
+
 `stateDelta.screenshotChanged` compares decoded pixel identity rather than PNG encoding bytes. Window and element deltas separately report added, removed and field-level changed refs. Semantic collection is bounded by `desktopMaxElements`; macOS also caps the walk to 40% of the native helper timeout (maximum 8 seconds) instead of materializing an unbounded `entireContents()` tree. `semanticStatus` exposes truncation, the limit reason and measured semantic time. Pixel actions remain available for games, canvases and controls absent from the accessibility tree.
 
 `desktopVisualMode` controls only model delivery, never acquisition or evidence retention. `auto` omits image blocks when a complete semantic state or successful mutation already gives the final model enough evidence; `always` sends each captured screenshot through the visual bridge; `manual` requires `includeScreenshot: true`. Every state still retains the exact encoded/pixel hashes, attachments and configured artifact. The no-image fast path therefore enters the adapter's existing text-only branch and makes no visual Provider request.
 
-On macOS, launch resolution uses Launch Services/`NSWorkspace` plus `/usr/bin/open` and accepts display names, renamed aliases, bundle IDs and full `.app` paths. Exact app identity is resolved to its PID before any fallback process scan, wins over substring matches, and a newly supplied application/title replaces any prior capture target. With no explicit title/ref, focused and main usable windows outrank tiny auxiliary dialogs. The runtime binds each controllable window to its CoreGraphics window number and re-resolves the corresponding Accessibility window for every action. A z-order change therefore keeps the same `windowRef` instead of reusing a mutable per-application window index. Accessibility elements use a semantic fingerprint plus duplicate ordinal; a cached traversal index is accepted only when its identity and bounds still match. Explicit window and element targets fail closed when that native identity disappears. `semanticStatus` marks sparse trees and directs the control loop to lossless screenshot coordinates.
+On macOS, launch resolution uses Launch Services/`NSWorkspace` plus `/usr/bin/open` and accepts display names, renamed aliases, bundle IDs and full `.app` paths. Exact app identity is resolved to its PID before any fallback process scan, wins over substring matches, and a newly supplied application/title replaces any prior capture target. With no explicit title/ref, focused and main usable windows outrank tiny auxiliary dialogs. The runtime binds each controllable window to its CoreGraphics window number and re-resolves the corresponding Accessibility window for every action. A z-order change therefore keeps the same `windowRef` instead of reusing a mutable per-application window index. Accessibility elements use a semantic fingerprint plus duplicate ordinal; a cached traversal index is accepted only when its identity and bounds still match. Explicit window and element targets fail closed when that native identity disappears. Semantic text entry uses `AXSelectedText`; coordinate-only Unicode uses a complete pasteboard item/type snapshot, CoreGraphics paste, and restoration. `semanticStatus` marks sparse trees and directs the control loop to lossless screenshot coordinates.
 
 ## Failure semantics
 
@@ -98,3 +103,4 @@ On macOS, launch resolution uses Launch Services/`NSWorkspace` plus `/usr/bin/op
 - Desktop screenshot exhaustion may forward only the already-validated native semantic state plus an explicit pixels-not-decoded marker; ordinary uploaded images remain fail-closed.
 - Pure-text turns create no vision route, probe, screenshot or attempt record.
 - Native desktop refs are current-state capabilities: stale refs do not execute actions, and missing window captures do not silently widen to the desktop.
+- Target-bound desktop input fails before text dispatch when focus, modal state, coordinate space, target bounds or element/window identity no longer match the latest observation.

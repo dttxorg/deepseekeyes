@@ -264,6 +264,13 @@ function Get-AutomationActions($Element) {
     return @($actions)
 }
 
+function Test-FiniteDouble($Value) {
+    try {
+        $number = [double]$Value
+        return -not [double]::IsNaN($number) -and -not [double]::IsInfinity($number)
+    } catch { return $false }
+}
+
 function Convert-AutomationElement($Element, $Window, [int[]]$Path) {
     try {
         $current = $Element.Current
@@ -277,7 +284,7 @@ function Convert-AutomationElement($Element, $Window, [int[]]$Path) {
         $value = if ($null -eq $valuePattern -or $current.IsPassword) { $null } else { [string]$valuePattern.Current.Value }
         $checked = if ($null -eq $togglePattern) { $null } else { [string]$togglePattern.Current.ToggleState -eq 'On' }
         $selected = if ($null -eq $selectionPattern) { $null } else { [bool]$selectionPattern.Current.IsSelected }
-        return [pscustomobject]@{
+        $record = [ordered]@{
             nativeId = "$($Window.NativeId):$runtime"
             windowNativeId = $Window.NativeId
             pid = [int]$current.ProcessId
@@ -295,12 +302,22 @@ function Convert-AutomationElement($Element, $Window, [int[]]$Path) {
             editable = $null -ne $valuePattern -and -not [bool]$valuePattern.Current.IsReadOnly
             selected = $selected
             checked = $checked
-            x = [double]$rectangle.X
-            y = [double]$rectangle.Y
-            width = [double]$rectangle.Width
-            height = [double]$rectangle.Height
             actions = @(Get-AutomationActions $Element)
         }
+        # UIA uses infinite rectangles for some virtual/offscreen controls.
+        # PowerShell emits Infinity as a bare token, which is not valid JSON.
+        # Keep the semantic element and omit only its unusable pixel bounds.
+        $finiteBounds = (Test-FiniteDouble $rectangle.X) `
+            -and (Test-FiniteDouble $rectangle.Y) `
+            -and (Test-FiniteDouble $rectangle.Width) `
+            -and (Test-FiniteDouble $rectangle.Height)
+        if ($finiteBounds) {
+            $record.Add('x', [double]$rectangle.X)
+            $record.Add('y', [double]$rectangle.Y)
+            $record.Add('width', [double]$rectangle.Width)
+            $record.Add('height', [double]$rectangle.Height)
+        }
+        return [pscustomobject]$record
     } catch { return $null }
 }
 
@@ -358,7 +375,11 @@ function Resolve-AutomationElement($InputObject) {
 
 function Get-AutomationCenter($Element) {
     $rectangle = $Element.Current.BoundingRectangle
-    if ($rectangle.Width -le 0 -or $rectangle.Height -le 0) { throw 'accessibility element has no clickable bounds' }
+    $finiteBounds = (Test-FiniteDouble $rectangle.X) `
+        -and (Test-FiniteDouble $rectangle.Y) `
+        -and (Test-FiniteDouble $rectangle.Width) `
+        -and (Test-FiniteDouble $rectangle.Height)
+    if (-not $finiteBounds -or $rectangle.Width -le 0 -or $rectangle.Height -le 0) { throw 'accessibility element has no clickable bounds' }
     $centerX = [int][Math]::Round([double]$rectangle.X + ([double]$rectangle.Width / 2))
     $centerY = [int][Math]::Round([double]$rectangle.Y + ([double]$rectangle.Height / 2))
     return [int[]]@($centerX, $centerY)

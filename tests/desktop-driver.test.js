@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
 import { NativeDesktopDriver, runNativeJson } from '../src/desktop/index.js'
@@ -70,6 +72,31 @@ test('native JSON runner keeps input on stdin and validates helper output', asyn
   )
 })
 
+test('native JSON runner absorbs a late broken pipe after the helper closes', async () => {
+  const child = new EventEmitter()
+  child.stdin = new PassThrough()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => {}
+  const end = child.stdin.end.bind(child.stdin)
+  child.stdin.end = (...args) => {
+    end(...args)
+    queueMicrotask(() => {
+      child.stdout.end(JSON.stringify({ ok: true, source: 'fixture' }))
+      child.emit('close', 0, null)
+      const error = new Error('write EPIPE')
+      error.code = 'EPIPE'
+      child.stdin.emit('error', error)
+    })
+  }
+
+  const result = await runNativeJson('fixture', [], { action: 'observe' }, {
+    spawnImpl: () => child,
+  })
+  assert.equal(result.source, 'fixture')
+  await new Promise(resolve => setImmediate(resolve))
+})
+
 test('packaged helpers retain both native platforms and avoid the macOS CFRelease crash', async () => {
   const mac = await readFile(new URL('../src/desktop/helpers/macos.jxa', import.meta.url), 'utf8')
   const windows = await readFile(new URL('../src/desktop/helpers/windows.ps1', import.meta.url), 'utf8')
@@ -116,6 +143,11 @@ test('packaged helpers retain both native platforms and avoid the macOS CFReleas
   assert.match(windows, /SendUnicode/)
   assert.match(windows, /System\.Windows\.Automation/)
   assert.match(windows, /Get-AutomationElements/)
+  assert.match(windows, /return \$output\.ToArray\(\)/)
+  assert.doesNotMatch(windows, /return @\(\$output\)/)
+  assert.match(windows, /function Test-FiniteDouble\(\$Value\)/)
+  assert.match(windows, /\$record\.Add\('x', \[double\]\$rectangle\.X\)/)
+  assert.doesNotMatch(windows, /x = \[double\]\$rectangle\.X/)
   assert.match(windows, /\$elementCount = @\(\$elements\)\.Count/)
   assert.match(windows, /public static void Scroll/)
   assert.match(windows, /\[Console\]::InputEncoding = \$script:DeepSeekEyesUtf8/)

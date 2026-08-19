@@ -111,6 +111,10 @@ if (target !== undefined) {
   assert.ok(windowResult.screen.width > 0)
   assert.ok(windowResult.screen.height > 0)
   assert.ok(Array.isArray(windowResult.elements))
+  if (process.platform === 'win32') {
+    assert.ok(windowResult.elementTotal > 0, 'Windows UI Automation returned no window elements')
+    assert.ok(windowResult.elements.length > 0, 'Windows UI Automation element tree was not delivered')
+  }
   assert.equal(windowResult.stateDelta.fromStateId, windowSource.stateId)
   assert.equal(renderDesktopResult(windowResult).filter(block => block.type === 'image').length, windowResult.screenshot.tileCount)
 }

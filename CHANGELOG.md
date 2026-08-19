@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.9 - 2026-08-19
+
+- Fix Windows PowerShell 5.1 UI Automation observations returning an empty semantic tree by materializing `Generic.List[object]` with `ToArray()` before returning it through the PowerShell pipeline.
+- Preserve UIA elements whose virtual/offscreen bounds are non-finite while omitting only those unusable bounds, preventing PowerShell's bare `Infinity` token from corrupting native JSON.
+- Add source-level regression coverage and a Windows PowerShell CI smoke test for the exact list-materialization failure reported in Issue #1.
+- Require the Windows native window-observation acceptance test to return a real non-empty UI Automation tree.
+- Prevent a helper's late asynchronous stdin `EPIPE` from escaping after its authoritative close/result event, removing the cross-platform native-runner CI race exposed while validating this patch.
+
 ## 0.5.8 - 2026-08-17
 
 - Make desktop `type` target-bound: require an `elementRef` or complete screenshot coordinates, while retaining an explicit `allowFocusedTarget` compatibility escape hatch.

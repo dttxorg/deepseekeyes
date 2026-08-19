@@ -56,6 +56,17 @@ export function runNativeJson(command, args, input, options = {}) {
       `native desktop helper failed to start: ${errorMessage(error)}`,
       'DESKTOP_HELPER_START_FAILED',
     )))
+    child.stdin.on('error', error => {
+      // A helper can exit after producing its result while Node is still
+      // completing the stdin write. Broken-pipe errors are then followed by
+      // the authoritative child close event and must not escape asynchronously.
+      if (settled || error?.code === 'EPIPE' || error?.code === 'ERR_STREAM_DESTROYED') return
+      terminate()
+      finish(new DeepSeekEyesError(
+        `native desktop helper input failed: ${errorMessage(error)}`,
+        'DESKTOP_HELPER_INPUT_FAILED',
+      ))
+    })
     child.stdout.on('data', chunk => {
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_OUTPUT_BYTES) {

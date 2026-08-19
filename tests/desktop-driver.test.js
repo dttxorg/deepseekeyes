@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import { resolveConfig } from '../src/config.js'
 import { NativeDesktopDriver, runNativeJson } from '../src/desktop/index.js'
@@ -68,6 +70,31 @@ test('native JSON runner keeps input on stdin and validates helper output', asyn
     error => error.code === 'DESKTOP_HELPER_TIMEOUT'
       && /during launch for FixtureApp/.test(error.message),
   )
+})
+
+test('native JSON runner absorbs a late broken pipe after the helper closes', async () => {
+  const child = new EventEmitter()
+  child.stdin = new PassThrough()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => {}
+  const end = child.stdin.end.bind(child.stdin)
+  child.stdin.end = (...args) => {
+    end(...args)
+    queueMicrotask(() => {
+      child.stdout.end(JSON.stringify({ ok: true, source: 'fixture' }))
+      child.emit('close', 0, null)
+      const error = new Error('write EPIPE')
+      error.code = 'EPIPE'
+      child.stdin.emit('error', error)
+    })
+  }
+
+  const result = await runNativeJson('fixture', [], { action: 'observe' }, {
+    spawnImpl: () => child,
+  })
+  assert.equal(result.source, 'fixture')
+  await new Promise(resolve => setImmediate(resolve))
 })
 
 test('packaged helpers retain both native platforms and avoid the macOS CFRelease crash', async () => {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.9 - 2026-08-19
+
+- Fix Windows PowerShell 5.1 UI Automation observations returning an empty semantic tree by materializing `Generic.List[object]` with `ToArray()` before returning it through the PowerShell pipeline.
+- Add source-level regression coverage and a Windows PowerShell CI smoke test for the exact list-materialization failure reported in Issue #1.
+
 ## 0.5.8 - 2026-08-17
 
 - Make desktop `type` target-bound: require an `elementRef` or complete screenshot coordinates, while retaining an explicit `allowFocusedTarget` compatibility escape hatch.

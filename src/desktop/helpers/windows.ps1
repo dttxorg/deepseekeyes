@@ -325,7 +325,10 @@ function Get-AutomationElements($Window, [int]$Maximum) {
         if ($null -eq $root) { return @() }
         $output = New-Object System.Collections.Generic.List[object]
         Add-AutomationChildren $root $Window @() 0 $Maximum $output ([System.Windows.Automation.TreeWalker]::RawViewWalker)
-        return @($output)
+        # Windows PowerShell 5.1 cannot array-wrap Generic.List[object]
+        # directly (ArgumentException: "Argument types do not match").
+        # Materialize the list first so callers receive the collected UIA tree.
+        return $output.ToArray()
     } catch { return @() }
 }
 

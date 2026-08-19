@@ -38,6 +38,24 @@ jobs:
             exit 1
           }
           Write-Host 'WINDOWS_HELPER_PARSE_OK'
+      - name: Exercise Windows UIA list materialization
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $output = New-Object System.Collections.Generic.List[object]
+          $output.Add([pscustomobject]@{ role = 'window'; name = 'fixture' }) | Out-Null
+          $elements = @($output.ToArray())
+          if ($elements.Count -ne 1 -or $elements[0].name -ne 'fixture') {
+            throw 'Windows PowerShell failed to materialize the UIA Generic.List[object]'
+          }
+          $helper = Get-Content 'src/desktop/helpers/windows.ps1' -Raw
+          if ($helper -notmatch 'return\s+\$output\.ToArray\(\)') {
+            throw 'Windows helper does not use the verified list materialization path'
+          }
+          if ($helper -match 'return\s+@\(\$output\)') {
+            throw 'Windows helper still contains the PowerShell 5.1 incompatible return path'
+          }
+          Write-Host 'WINDOWS_UIA_LIST_MATERIALIZATION_OK'
       - name: Compile macOS native helper
         if: runner.os == 'macOS'
         run: /usr/bin/osacompile -l JavaScript -o "$RUNNER_TEMP/deepseekeyes-macos-helper.scpt" src/desktop/helpers/macos.jxa

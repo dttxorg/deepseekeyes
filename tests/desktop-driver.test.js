@@ -116,6 +116,8 @@ test('packaged helpers retain both native platforms and avoid the macOS CFReleas
   assert.match(windows, /SendUnicode/)
   assert.match(windows, /System\.Windows\.Automation/)
   assert.match(windows, /Get-AutomationElements/)
+  assert.match(windows, /return \$output\.ToArray\(\)/)
+  assert.doesNotMatch(windows, /return @\(\$output\)/)
   assert.match(windows, /\$elementCount = @\(\$elements\)\.Count/)
   assert.match(windows, /public static void Scroll/)
   assert.match(windows, /\[Console\]::InputEncoding = \$script:DeepSeekEyesUtf8/)

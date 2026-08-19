@@ -1,13 +1,13 @@
 # Security Policy
 
-DeepSeekEyes is an auditable vision and Computer Use runtime for DeepSeek Harness. Its security boundary includes untrusted image pixels, untrusted model output, Provider failures, browser pages, native desktop state and local evidence files.
+DeepSeekEyes is an auditable vision, MCP and Computer Use runtime for DeepSeek Harness. Its security boundary includes untrusted image pixels, untrusted model output, Provider failures, MCP servers/results, browser pages, native desktop state and local evidence files.
 
 ## Supported versions
 
 | Version | Security fixes |
 | :-- | :--: |
-| 0.5.x | ✅ |
-| 0.4.x | Critical fixes during the 0.5 migration window |
+| 0.6.x | ✅ |
+| 0.5.x | Critical fixes during the 0.6 migration window |
 | Earlier | Upgrade to the current release |
 
 ## Report a vulnerability
@@ -29,7 +29,28 @@ Public issues are appropriate for ordinary defects. Keep API keys, DSH settings 
 - **Desktop text is target-bound.** Text entry requires a semantic element or screenshot coordinates bound to a current window; focus, modal and coordinate mismatches stop before text dispatch. Ambient-focus compatibility requires an explicit flag.
 - **macOS pasteboard is transactional.** Coordinate-only Unicode input snapshots every current pasteboard item/type and restores them after the native paste event; semantic controls use Accessibility selected-text insertion instead.
 - **Sensitive action values are hashed.** Browser/desktop reports retain the length and SHA-256 of typed values and launch arguments instead of their plaintext.
-- **Private local files.** Evidence, usage and route-attempt files are written under private directories with mode `0600` on POSIX systems.
+- **Private local files.** Evidence, usage, route-attempt and complete MCP-result files are written under private directories with mode `0600` on POSIX systems.
+- **MCP is explicit and least-exposed.** The global MCP switch is off and the server list is empty by default. A newly added server exposes zero tools until its allowlist is populated; deny rules win, and global tool-count/Schema Token budgets can block further definitions.
+- **MCP is Provider-isolated.** Tool registrations are process-global for live reconfiguration, but prompt assembly retains their schemas and guidance only for the DeepSeekEyes virtual Provider. Assembly for every other Provider strips both. Execution independently rejects a wrong Provider and every agentless call before contacting the server.
+- **Code Mode result context is Host-authenticated and bounded.** A nested MCP call uses Harness `deferContext()` to append a message whose source is exactly `plugin/deepseekeyes/mcp-context`; only that source plus the private marker prefix activates MCP continuation handling. Success and failure carry status/digests rather than full results or error text, and image contexts contain content-addressed attachment references rather than base64 bytes. Native execution does not duplicate this context. A nested call without the Host channel stops before server invocation with `MCP_RESULT_CONTEXT_UNAVAILABLE`.
+- **The final-model guard is not a per-run MCP call quota.** In 0.6, `automationMaxCallsPerTurn` limits model continuation requests, not the number of MCP functions invoked inside one `run_code`. ToolRuntime concurrency and individual call timeouts still apply, but the plugin does not yet impose a cumulative external-call ceiling or request a separate approval for every sub-call. Keep MCP disabled unless needed, expose a minimal allowlist, scope credentials narrowly and configure server-side rate/operation limits. P1 tracks `mcpMaxExternalCallsPerRun` with recommended default `64` and explicit `0` unlimited.
+- **Lifecycle changes fail closed.** Stop and reconfigure withdraw every exposed MCP schema and prompt section before awaiting transport cleanup. Exposure remains suspended across slow multi-server close/reconnect work and is rebuilt only from the validated post-change generation; cleanup failure cannot revive the old definition.
+- **Credentials are env-from-process references, not settings values.** stdio `env` entries and Streamable HTTP headers accept only `{ "env": "VARIABLE_NAME" }`; the named value is resolved from the `dsh web` process environment only when the connection starts. Resolved values are excluded from settings, snapshots and audit output. Credential-bearing command arguments, URL user information and credential query keys are rejected by the strict GUI/runtime validator.
+- **Remote MCP transport requires TLS.** A Streamable HTTP URL must use HTTPS unless its hostname/address is explicitly loopback (`localhost`/`.localhost`, IPv4 `127/8`, IPv6 loopback or its IPv4-compatible/mapped loopback forms). A private-LAN hostname/address is not loopback and still requires HTTPS.
+- **The retained tool catalog is fixed-bounded and atomic.** CaptureRegistry rejects the whole generation above 256 tools, 1,000,000 measured schema characters, 4,000,000 UTF-8 schema bytes, schema depth 64 or 100,000 schema nodes; no partial generation is published. `mcpMaxTools` and the Schema Token budget are later model-exposure controls, not substitutes for these capture limits.
+- **A non-empty-to-zero catalog transition fails closed.** The old exposure is withdrawn and connection health becomes unknown until a fresh uncached probe observes the same zero-tool catalog. A genuinely empty server can therefore be healthy, but transport loss cannot reuse zero as silent proof of health.
+- **Successful adapter results have a hard post-client admission boundary.** Before DeepSeekEyes canonicalization, base64 decode, attachment writes or artifact persistence, an iterative walk limits depth to 64, nodes to 50,000, content blocks to 4,096, aggregate non-image strings to 16 Mi characters, images to 8, encoded image data to 28 MiB, decoded image data to 20 MiB and other binary data to 20 MiB. `mcpMaxResultChars` is a later model-preview limit and cannot relax these fixed guards.
+- **MCP results are bounded and attributable.** An admitted adapter value receives a canonical SHA-256. The model gets a bounded preview; truncated and non-text results are written to a private, content-addressed artifact by default. Artifact write/rename failure rejects the call and runs best-effort temporary-file cleanup without masking the authoritative error. With artifact persistence disabled, the projection truthfully labels delivered image attachments and raw non-text blocks that were not retained. MCP image blocks are admitted through one Harness `saveImages()` batch before visual processing. A saveImage-only legacy Host uses finite count/byte/media limits and validates the full batch before sequential compatibility writes.
+- **MCP audit is privacy-reduced.** The default in-memory ring records server/tool identity, risk, status, duration, argument/result hashes and, on failure, only a stable/redacted error code plus the error-message SHA-256. It stores neither the error message, plaintext credentials nor complete arguments/results. The complete result artifact is separate and can be disabled with `mcpArtifactDir: false`.
+- **Missing MCP risk hints are conservative.** The pinned official client does not forward server annotations, so an unannotated tool is shown as `unknown-write`, never silently classified as read-only. Exposure still requires the explicit allowlist.
+
+An enabled stdio server runs the configured local command with the privileges of the `dsh web` process. A Streamable HTTP server receives calls at the configured endpoint and can return untrusted text or media. Result hashing and bounding provide identity and context control; they do not make an untrusted server authoritative. Review the server package/endpoint, expose only required tools and use a narrowly scoped environment credential.
+
+The pinned official rc.6 client and MCP SDK parse/decode the transport response before DeepSeekEyes receives a value. Whenever `content` is an array, rc.6 walks the blocks and joins extracted text before checking `isError`; the successful path discards that temporary string, while the failed path throws it. DeepSeekEyes' hard admission therefore protects only the subsequent handling of a successful adapter value, while the error path bounds and redacts the already-created exception. It does not retroactively bound the dependency's earlier network decode or pre-admission extract/join allocation.
+
+Catalog capture also starts after an upstream allocation boundary. rc.6 fully drains and validates every `tools/list` page and builds its definition map before registering definitions into CaptureRegistry. DeepSeekEyes' catalog limits bound the persistent post-client generation and downstream traversal; they do not cap an individual page's wire bytes, cursor-page count or rc.6's temporary map before capture.
+
+DeepSeekEyes 0.6 bridges MCP Tools only. It does not consume MCP Resources or Prompts, provide interactive OAuth, sandbox a stdio child, or make an external write trustworthy merely because the tool returned successfully. Server process/network privileges, authentication scope and write verification remain external application boundaries.
 
 ## Dependency and release checks
 
@@ -38,8 +59,9 @@ Every release runs:
 ```bash
 npm ci
 npm run check
+npm run test:coverage
 npm audit --omit=dev
 npm pack --dry-run
 ```
 
-CI repeats package and native-helper checks on Ubuntu, macOS and Windows. The release workflow should publish the exact commit that passed those checks.
+CI repeats package and native-helper checks on Ubuntu, macOS and Windows. MCP coverage includes a real Cordis context, the official DSH MCP client, a temporary stdio SDK server and a temporary loopback Streamable HTTP SDK server for connect, discovery, call, probe/refresh and disposal. The HTTP fixture validates the actual local protocol path; it does not substitute for a particular external server or certificate. The release workflow should publish the exact commit that passed those checks.

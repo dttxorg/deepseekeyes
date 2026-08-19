@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export const USAGE_STATS_SCHEMA_VERSION = 1
+export const USAGE_STATS_SCHEMA_VERSION = 2
 export const DEFAULT_USAGE_SESSION_LIMIT = 50
 
 const USAGE_FIELDS = Object.freeze([
@@ -19,6 +19,7 @@ export const USAGE_CATEGORIES = Object.freeze([
   'visionTarget',
   'upstreamClarification',
   'upstreamAutomation',
+  'upstreamMcp',
   'upstreamFinal',
 ])
 
@@ -44,6 +45,11 @@ function zeroAggregate() {
     automationTurns: 0,
     automationContextCompactions: 0,
     automationLimitStops: 0,
+    mcpExternalCalls: 0,
+    mcpSchemaInputTokensEstimated: 0,
+    mcpResultInputTokensEstimated: 0,
+    mcpContextCompactions: 0,
+    mcpLimitStops: 0,
     lookCalls: 0,
     cacheHits: 0,
     estimatedBridgeInputTokens: 0,
@@ -94,11 +100,13 @@ function summary(aggregate) {
   const vision = sumCategories(aggregate, ['visionProbe', 'visionBase', 'visionTarget'])
   const upstreamClarification = normalizedUsage(aggregate.usage.upstreamClarification)
   const automation = normalizedUsage(aggregate.usage.upstreamAutomation)
+  const mcp = normalizedUsage(aggregate.usage.upstreamMcp)
   const finalModel = normalizedUsage(aggregate.usage.upstreamFinal)
   const exactAdditionalUsage = zeroUsage()
   addUsage(exactAdditionalUsage, vision)
   addUsage(exactAdditionalUsage, upstreamClarification)
   addUsage(exactAdditionalUsage, automation)
+  addUsage(exactAdditionalUsage, mcp)
   const exactAdditionalTokens = usageTotal(exactAdditionalUsage)
   return {
     ...structuredClone(aggregate),
@@ -109,6 +117,10 @@ function summary(aggregate) {
       upstreamClarificationTokens: usageTotal(upstreamClarification),
       automationUsage: automation,
       automationTokens: usageTotal(automation),
+      mcpUsage: mcp,
+      mcpTokens: usageTotal(mcp),
+      mcpSchemaInputTokensEstimated: aggregate.mcpSchemaInputTokensEstimated,
+      mcpResultInputTokensEstimated: aggregate.mcpResultInputTokensEstimated,
       finalModelVisualTurnUsage: finalModel,
       finalModelVisualTurnTokens: usageTotal(finalModel),
       exactAdditionalUsage,
@@ -126,6 +138,11 @@ function validAggregate(input) {
   aggregate.automationTurns = nonnegativeInteger(input.automationTurns)
   aggregate.automationContextCompactions = nonnegativeInteger(input.automationContextCompactions)
   aggregate.automationLimitStops = nonnegativeInteger(input.automationLimitStops)
+  aggregate.mcpExternalCalls = nonnegativeInteger(input.mcpExternalCalls)
+  aggregate.mcpSchemaInputTokensEstimated = nonnegativeInteger(input.mcpSchemaInputTokensEstimated)
+  aggregate.mcpResultInputTokensEstimated = nonnegativeInteger(input.mcpResultInputTokensEstimated)
+  aggregate.mcpContextCompactions = nonnegativeInteger(input.mcpContextCompactions)
+  aggregate.mcpLimitStops = nonnegativeInteger(input.mcpLimitStops)
   aggregate.lookCalls = nonnegativeInteger(input.lookCalls)
   aggregate.cacheHits = nonnegativeInteger(input.cacheHits)
   aggregate.estimatedBridgeInputTokens = nonnegativeInteger(input.estimatedBridgeInputTokens)
@@ -138,7 +155,7 @@ function validAggregate(input) {
 }
 
 function validState(input, now, sessionLimit) {
-  if (input?.schemaVersion !== USAGE_STATS_SCHEMA_VERSION) return zeroState(now)
+  if (![1, USAGE_STATS_SCHEMA_VERSION].includes(input?.schemaVersion)) return zeroState(now)
   const fallback = zeroState(now)
   const sessions = Array.isArray(input.sessions)
     ? input.sessions
@@ -167,6 +184,21 @@ function applyDelta(aggregate, delta) {
   }
   if (delta.automationLimitStops !== undefined) {
     aggregate.automationLimitStops += nonnegativeInteger(delta.automationLimitStops)
+  }
+  if (delta.mcpExternalCalls !== undefined) {
+    aggregate.mcpExternalCalls += nonnegativeInteger(delta.mcpExternalCalls)
+  }
+  if (delta.mcpSchemaInputTokensEstimated !== undefined) {
+    aggregate.mcpSchemaInputTokensEstimated += nonnegativeInteger(delta.mcpSchemaInputTokensEstimated)
+  }
+  if (delta.mcpResultInputTokensEstimated !== undefined) {
+    aggregate.mcpResultInputTokensEstimated += nonnegativeInteger(delta.mcpResultInputTokensEstimated)
+  }
+  if (delta.mcpContextCompactions !== undefined) {
+    aggregate.mcpContextCompactions += nonnegativeInteger(delta.mcpContextCompactions)
+  }
+  if (delta.mcpLimitStops !== undefined) {
+    aggregate.mcpLimitStops += nonnegativeInteger(delta.mcpLimitStops)
   }
   if (delta.lookCalls !== undefined) aggregate.lookCalls += nonnegativeInteger(delta.lookCalls)
   if (delta.cacheHits !== undefined) aggregate.cacheHits += nonnegativeInteger(delta.cacheHits)
@@ -270,6 +302,26 @@ export class UsageTracker {
     return this.mutate(sessionId, { automationLimitStops: 1 })
   }
 
+  recordMcpExternalCall(sessionId, { schemaTokens = 0, resultTokens = 0 } = {}) {
+    return this.mutate(sessionId, {
+      mcpExternalCalls: 1,
+      mcpSchemaInputTokensEstimated: schemaTokens,
+      mcpResultInputTokensEstimated: resultTokens,
+    })
+  }
+
+  recordMcpSchemaInput(sessionId, tokens) {
+    return this.mutate(sessionId, { mcpSchemaInputTokensEstimated: tokens })
+  }
+
+  recordMcpContextCompaction(sessionId) {
+    return this.mutate(sessionId, { mcpContextCompactions: 1 })
+  }
+
+  recordMcpLimitStop(sessionId) {
+    return this.mutate(sessionId, { mcpLimitStops: 1 })
+  }
+
   recordLookCall(sessionId) {
     return this.mutate(sessionId, { lookCalls: 1 })
   }
@@ -336,6 +388,9 @@ export class UsageTracker {
         providerReported: 'exact-as-reported',
         bridgeInput: 'estimated-4-characters-per-token-plus-structure',
         automationInputSavings: 'estimated-request-tokens-before-minus-after-context-window',
+        mcpSchemaInput: 'estimated-4-characters-per-token-plus-tool-definition-structure',
+        mcpResultInput: 'estimated-4-characters-per-token-plus-tool-result-structure',
+        mcpEstimatesAreSubsetsOfProviderInputUsage: true,
         finalModelVisualTurnUsageExcludedFromAdditional: true,
         automationModelUsageIncludedInAdditional: true,
         reasoningTokensAreOutputSubdivision: true,

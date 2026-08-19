@@ -1,5 +1,23 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import {
+  DEFAULT_MCP_MAX_RESULT_CHARS,
+  DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+  DEFAULT_MCP_MAX_TOOLS,
+  DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+  MCP_SERVER_ID_PATTERN,
+  MCP_TRANSPORTS,
+} from './mcp/config.js'
+import { mcpArgsContainInlineCredentials } from './mcp/credential-policy.js'
+import { mcpHttpUrlUsesSecureTransport } from './mcp/url-policy.js'
+
+export {
+  DEFAULT_MCP_MAX_RESULT_CHARS,
+  DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+  DEFAULT_MCP_MAX_TOOLS,
+  DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+  MCP_TRANSPORTS,
+} from './mcp/config.js'
 
 export const DEFAULT_PROVIDER_ID = 'deepseekeyes'
 export const DEFAULT_UPSTREAM_PROVIDER = 'deepseek-official'
@@ -30,6 +48,24 @@ export const DEFAULT_DESKTOP_SETTLE_MS = 300
 export const DEFAULT_DESKTOP_MAX_WINDOWS = 50
 export const DEFAULT_DESKTOP_MAX_ELEMENTS = 200
 export const DEFAULT_DESKTOP_MAC_DISPLAY = 1
+const MCP_SERVER_FIELDS = new Set([
+  'id',
+  'name',
+  'enabled',
+  'transport',
+  'command',
+  'args',
+  'cwd',
+  'url',
+  'env',
+  'headers',
+  'allowedTools',
+  'denyTools',
+  'timeoutMs',
+])
+const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+const CREDENTIAL_QUERY_PATTERN = /(?:api[-_]?key|authorization|credential|password|secret|signature|token)/i
 
 function optionalString(value, field) {
   if (value === undefined || value === null || value === '') return undefined
@@ -40,7 +76,11 @@ function optionalString(value, field) {
 }
 
 function requiredString(value, field, fallback) {
-  return optionalString(value ?? fallback, field)
+  const resolved = optionalString(value ?? fallback, field)
+  if (resolved === undefined) {
+    throw new TypeError(`deepseekeyes: ${field} must be a non-empty string`)
+  }
+  return resolved
 }
 
 function booleanValue(value, field, fallback) {
@@ -66,11 +106,35 @@ function environmentBoolean(value, field) {
   throw new TypeError(`deepseekeyes: ${field} environment value must be true or false`)
 }
 
+function environmentInteger(value, field) {
+  if (value === undefined || value === null || value === '') return undefined
+  const normalized = String(value).trim()
+  if (!/^(?:0|[1-9]\d*)$/.test(normalized)) {
+    throw new TypeError(`deepseekeyes: ${field} environment value must be a non-negative integer`)
+  }
+  const resolved = Number(normalized)
+  if (!Number.isSafeInteger(resolved)) {
+    throw new RangeError(`deepseekeyes: ${field} environment value exceeds the safe integer range`)
+  }
+  return resolved
+}
+
 function integerValue(value, field, fallback, minimum, maximum) {
   const resolved = value ?? fallback
   if (!Number.isInteger(resolved) || resolved < minimum || resolved > maximum) {
     throw new RangeError(
       `deepseekeyes: ${field} must be an integer from ${minimum} through ${maximum}`,
+    )
+  }
+  return resolved
+}
+
+function integerOrUnlimitedValue(value, field, fallback, minimum, maximum) {
+  const resolved = value ?? fallback
+  if (resolved === UNLIMITED_TOKEN_BUDGET) return UNLIMITED_TOKEN_BUDGET
+  if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
+    throw new RangeError(
+      `deepseekeyes: ${field} must be 0 for unlimited or an integer from ${minimum} through ${maximum}`,
     )
   }
   return resolved
@@ -96,6 +160,208 @@ function automationContextBudgetValue(value, field, fallback) {
     )
   }
   return resolved
+}
+
+function plainObject(value, field) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`deepseekeyes: ${field} must be an object`)
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`deepseekeyes: ${field} must be a plain serializable object`)
+  }
+  return value
+}
+
+function stringList(value, field, unique = false) {
+  if (value === undefined || value === null) return Object.freeze([])
+  if (!Array.isArray(value)) {
+    throw new TypeError(`deepseekeyes: ${field} must be a string array`)
+  }
+  const result = []
+  const seen = new Set()
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = requiredString(value[index], `${field}[${index}]`)
+    if (unique && seen.has(entry)) {
+      throw new TypeError(`deepseekeyes: ${field} contains duplicate value ${entry}`)
+    }
+    seen.add(entry)
+    result.push(entry)
+  }
+  return Object.freeze(result)
+}
+
+function environmentReference(value, field) {
+  const source = plainObject(value, field)
+  const keys = Object.keys(source)
+  if (keys.length !== 1 || keys[0] !== 'env') {
+    throw new TypeError(`deepseekeyes: ${field} must contain only an env reference`)
+  }
+  const env = requiredString(source.env, `${field}.env`)
+  if (!ENVIRONMENT_NAME_PATTERN.test(env)) {
+    throw new TypeError(`deepseekeyes: ${field}.env must be an environment variable name`)
+  }
+  return Object.freeze({ env })
+}
+
+function environmentReferenceMap(value, field, keyPattern, keyDescription) {
+  if (value === undefined || value === null) return Object.freeze({})
+  const source = plainObject(value, field)
+  const result = Object.create(null)
+  for (const [key, reference] of Object.entries(source)) {
+    if (!keyPattern.test(key)) {
+      throw new TypeError(`deepseekeyes: ${field} key ${key} must be ${keyDescription}`)
+    }
+    result[key] = environmentReference(reference, `${field}.${key}`)
+  }
+  return Object.freeze(result)
+}
+
+function validateHttpUrl(value, field) {
+  const input = requiredString(value, field)
+  let parsed
+  try {
+    parsed = new URL(input)
+  } catch {
+    throw new TypeError(`deepseekeyes: ${field} must be a valid HTTP(S) URL`)
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new TypeError(`deepseekeyes: ${field} must use http or https`)
+  }
+  if (!mcpHttpUrlUsesSecureTransport(parsed)) {
+    throw new TypeError(`deepseekeyes: ${field} must use https unless the hostname is explicit loopback`)
+  }
+  if (parsed.username || parsed.password) {
+    throw new TypeError(`deepseekeyes: ${field} cannot contain inline credentials`)
+  }
+  for (const key of parsed.searchParams.keys()) {
+    if (CREDENTIAL_QUERY_PATTERN.test(key)) {
+      throw new TypeError(`deepseekeyes: ${field} credentials must use header env references`)
+    }
+  }
+  return input
+}
+
+function resolveMcpServer(value, index) {
+  const field = `mcpServers[${index}]`
+  const source = plainObject(value, field)
+  for (const key of Object.keys(source)) {
+    if (!MCP_SERVER_FIELDS.has(key)) {
+      throw new TypeError(`deepseekeyes: ${field} has unknown field ${key}`)
+    }
+  }
+
+  const id = requiredString(source.id, `${field}.id`)
+  if (!MCP_SERVER_ID_PATTERN.test(id)) {
+    throw new TypeError(
+      `deepseekeyes: ${field}.id must use 1-32 letters, numbers, underscores, or hyphens`,
+    )
+  }
+  const name = requiredString(source.name, `${field}.name`)
+  const transport = choiceValue(source.transport, `${field}.transport`, undefined, MCP_TRANSPORTS)
+  const enabled = booleanValue(source.enabled, `${field}.enabled`, true)
+  const allowedTools = stringList(source.allowedTools, `${field}.allowedTools`, true)
+  const denyTools = stringList(source.denyTools, `${field}.denyTools`, true)
+  const denied = new Set(denyTools)
+  for (const tool of allowedTools) {
+    if (denied.has(tool)) {
+      throw new TypeError(
+        `deepseekeyes: ${field}.${tool} cannot appear in both allowedTools and denyTools`,
+      )
+    }
+  }
+
+  const timeoutMs = source.timeoutMs === undefined
+    ? undefined
+    : integerValue(source.timeoutMs, `${field}.timeoutMs`, undefined, 100, 3_600_000)
+  const common = {
+    id,
+    name,
+    enabled,
+    transport,
+    allowedTools,
+    denyTools,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  }
+
+  if (transport === 'stdio') {
+    const command = requiredString(source.command, `${field}.command`)
+    if (source.url !== undefined && source.url !== null && source.url !== '') {
+      throw new TypeError(`deepseekeyes: ${field}.url is only valid for streamable-http`)
+    }
+    if (source.headers !== undefined && Object.keys(plainObject(source.headers, `${field}.headers`)).length > 0) {
+      throw new TypeError(`deepseekeyes: ${field}.headers is only valid for streamable-http`)
+    }
+    const args = stringList(source.args, `${field}.args`)
+    if (mcpArgsContainInlineCredentials(args)) {
+      throw new TypeError(`deepseekeyes: ${field}.args credentials must use env references`)
+    }
+    const cwd = optionalString(source.cwd, `${field}.cwd`)
+    const env = environmentReferenceMap(
+      source.env,
+      `${field}.env`,
+      ENVIRONMENT_NAME_PATTERN,
+      'an environment variable name',
+    )
+    return Object.freeze({
+      ...common,
+      command,
+      args,
+      ...(cwd === undefined ? {} : { cwd }),
+      env,
+      headers: Object.freeze({}),
+    })
+  }
+
+  if (source.command !== undefined && source.command !== null && source.command !== '') {
+    throw new TypeError(`deepseekeyes: ${field}.command is only valid for stdio`)
+  }
+  if (source.cwd !== undefined && source.cwd !== null && source.cwd !== '') {
+    throw new TypeError(`deepseekeyes: ${field}.cwd is only valid for stdio`)
+  }
+  if (source.args !== undefined && (!Array.isArray(source.args) || source.args.length > 0)) {
+    throw new TypeError(`deepseekeyes: ${field}.args is only valid for stdio`)
+  }
+  if (source.env !== undefined && Object.keys(plainObject(source.env, `${field}.env`)).length > 0) {
+    throw new TypeError(`deepseekeyes: ${field}.env is only valid for stdio`)
+  }
+  const url = validateHttpUrl(source.url, `${field}.url`)
+  const headers = environmentReferenceMap(
+    source.headers,
+    `${field}.headers`,
+    HTTP_HEADER_NAME_PATTERN,
+    'a valid HTTP header name',
+  )
+  return Object.freeze({
+    ...common,
+    url,
+    args: Object.freeze([]),
+    env: Object.freeze({}),
+    headers,
+  })
+}
+
+function mcpServersValue(value) {
+  if (value === undefined || value === null) return Object.freeze([])
+  if (!Array.isArray(value)) {
+    throw new TypeError('deepseekeyes: mcpServers must be a serializable server array')
+  }
+  const servers = value.map(resolveMcpServer)
+  const ids = new Set()
+  const names = new Set()
+  for (const server of servers) {
+    const normalizedId = server.id.toLowerCase()
+    const normalizedName = server.name.toLocaleLowerCase('en-US')
+    if (ids.has(normalizedId)) {
+      throw new TypeError(`deepseekeyes: mcpServers id must be unique: ${server.id}`)
+    }
+    if (names.has(normalizedName)) {
+      throw new TypeError(`deepseekeyes: mcpServers name must be unique: ${server.name}`)
+    }
+    ids.add(normalizedId)
+    names.add(normalizedName)
+  }
+  return Object.freeze(servers)
 }
 
 function routePriorityValue(value, providerId) {
@@ -226,6 +492,17 @@ export function resolveConfig(input = {}, environment = process.env, home = home
     desktopArtifactsDir = requiredString(configuredDesktopArtifactsDir, 'desktopArtifactsDir')
   } else {
     desktopArtifactsDir = join(dshBase, 'deepseekeyes', 'desktop-runs')
+  }
+
+  const configuredMcpArtifactDir = input.mcpArtifactDir
+    ?? environment.DEEPSEEKEYES_MCP_ARTIFACT_DIR
+  let mcpArtifactDir
+  if (configuredMcpArtifactDir === false) {
+    mcpArtifactDir = undefined
+  } else if (configuredMcpArtifactDir !== undefined) {
+    mcpArtifactDir = requiredString(configuredMcpArtifactDir, 'mcpArtifactDir')
+  } else {
+    mcpArtifactDir = join(dshBase, 'deepseekeyes', 'mcp-artifacts')
   }
 
   return Object.freeze({
@@ -460,5 +737,60 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       'desktopWindowsPowerShell',
     ),
     desktopArtifactsDir,
+    mcpEnabled: booleanValue(
+      input.mcpEnabled
+        ?? environmentBoolean(environment.DEEPSEEKEYES_MCP_ENABLED, 'DEEPSEEKEYES_MCP_ENABLED'),
+      'mcpEnabled',
+      false,
+    ),
+    mcpServers: mcpServersValue(input.mcpServers),
+    mcpMaxTools: integerOrUnlimitedValue(
+      input.mcpMaxTools
+        ?? environmentInteger(environment.DEEPSEEKEYES_MCP_MAX_TOOLS, 'DEEPSEEKEYES_MCP_MAX_TOOLS'),
+      'mcpMaxTools',
+      DEFAULT_MCP_MAX_TOOLS,
+      1,
+      1_000,
+    ),
+    mcpMaxSchemaTokens: integerOrUnlimitedValue(
+      input.mcpMaxSchemaTokens
+        ?? environmentInteger(
+          environment.DEEPSEEKEYES_MCP_MAX_SCHEMA_TOKENS,
+          'DEEPSEEKEYES_MCP_MAX_SCHEMA_TOKENS',
+        ),
+      'mcpMaxSchemaTokens',
+      DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+      256,
+      10_000_000,
+    ),
+    mcpMaxResultChars: integerValue(
+      input.mcpMaxResultChars
+        ?? environmentInteger(
+          environment.DEEPSEEKEYES_MCP_MAX_RESULT_CHARS,
+          'DEEPSEEKEYES_MCP_MAX_RESULT_CHARS',
+        ),
+      'mcpMaxResultChars',
+      DEFAULT_MCP_MAX_RESULT_CHARS,
+      256,
+      10_000_000,
+    ),
+    mcpToolCallTimeoutMs: integerValue(
+      input.mcpToolCallTimeoutMs
+        ?? environmentInteger(
+          environment.DEEPSEEKEYES_MCP_TOOL_CALL_TIMEOUT_MS,
+          'DEEPSEEKEYES_MCP_TOOL_CALL_TIMEOUT_MS',
+        ),
+      'mcpToolCallTimeoutMs',
+      DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+      100,
+      3_600_000,
+    ),
+    mcpAudit: booleanValue(
+      input.mcpAudit
+        ?? environmentBoolean(environment.DEEPSEEKEYES_MCP_AUDIT, 'DEEPSEEKEYES_MCP_AUDIT'),
+      'mcpAudit',
+      true,
+    ),
+    mcpArtifactDir,
   })
 }

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
+import { Context } from '@deepseek-ai/cordis'
+import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { apply } from '../dsh/index.js'
+import { MCP_CONTEXT_PREFIX } from '../src/content.js'
 import { renderDesktopResult } from '../src/desktop/index.js'
 import { collectStream, textStream } from '../src/stream.js'
 import {
@@ -140,6 +145,366 @@ test('text-only turns delegate directly without spending a visual call', async (
   const usage = await ctx.deepseekEyesState.usage.snapshot()
   assert.equal(usage.totals.derived.estimatedAdditionalTokens, 0)
   assert.deepEqual(usage.sessions, [])
+})
+
+test('MCP continuation calls are isolated and account their model plus schema input', async () => {
+  const ctx = setupBridge({
+    bridgeConfig: { mcpEnabled: true },
+    upstreamHandler: () => textStream('MCP result consumed', {
+      inputTokens: 30,
+      outputTokens: 4,
+      cacheReadTokens: 10,
+    }),
+  })
+  const task = userMessage([{ type: 'text', text: 'List the open application issues.' }])
+  const assistant = {
+    role: 'assistant',
+    content: [{
+      type: 'tool-call',
+      id: 'mcp-call-1',
+      name: 'mcp__github__list_issues',
+      arguments: '{}',
+    }],
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+  }
+  const resultMessage = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'mcp-call-1',
+    toolName: 'mcp__github__list_issues',
+    content: [{ type: 'text', text: '[DeepSeekEyes MCP result]\npreview: issue 1' }],
+  }])
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'mcp-session',
+    messages: [task, assistant, resultMessage],
+    tools: [{
+      name: 'mcp__github__list_issues',
+      description: 'List issues',
+      parameters: { type: 'object', additionalProperties: false },
+    }],
+  }))
+  assert.equal(result.text, 'MCP result consumed')
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.calls.upstreamMcp, 1)
+  assert.equal(usage.totals.derived.mcpTokens, 44)
+  assert.ok(usage.totals.mcpSchemaInputTokensEstimated > 0)
+  assert.equal(usage.totals.automationTurns, 1)
+})
+
+test('Code Mode MCP image context reaches Eyes, keeps MCP budgets, and installs targeted reread', async () => {
+  const bytes = Buffer.from('code-mode MCP source image')
+  const imageSha256 = createHash('sha256').update(bytes).digest('hex')
+  let visionCalls = 0
+  let upstreamCalls = 0
+  let forwarded
+  const ctx = setupBridge({
+    bridgeConfig: {
+      mcpEnabled: true,
+      mcpServers: [],
+      automationMaxCallsPerTurn: 1,
+    },
+    visionHandler(options) {
+      visionCalls += 1
+      assert.equal(options.messages[0].content.some(block => block.type === 'image'), true)
+      const prompt = options.messages[0].content.find(block => block.type === 'text').text
+      return prompt.includes('deepseekeyes.target.v1')
+        ? jsonStream(validTargetEvidence({ answer: 'targeted MCP image detail' }))
+        : jsonStream(validBaseEvidence({ summary: 'MCP application returned a visible chart' }))
+    },
+    upstreamHandler(options) {
+      upstreamCalls += 1
+      forwarded = options
+      return textStream('MCP image evidence consumed', {
+        inputTokens: 30,
+        outputTokens: 4,
+        cacheReadTokens: 10,
+      })
+    },
+  })
+  const ref = ctx.attachments.add(bytes, { width: 800, height: 450, name: 'mcp-chart.png' })
+  const task = userMessage([{ type: 'text', text: 'Inspect the application chart through MCP.' }])
+  const assistant = {
+    id: 'mcp-code-image-assistant',
+    role: 'assistant',
+    content: [{
+      type: 'tool-call',
+      id: 'mcp-code-image-call',
+      name: 'run_code',
+      arguments: '{"code":"fixture","description":"Read chart"}',
+    }],
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+  }
+  const outerResult = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'mcp-code-image-call',
+    toolName: 'run_code',
+    content: [{ type: 'text', text: 'MCP image call completed' }],
+  }])
+  const context = {
+    id: 'mcp-code-image-context',
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `${MCP_CONTEXT_PREFIX}${JSON.stringify({
+        schemaVersion: 'deepseekeyes.mcp-context.v1',
+        tool: 'mcp__fixture__image',
+        status: 'success',
+        resultSha256: 'a'.repeat(64),
+        imageCount: 1,
+      })}`,
+    }, { type: 'image', attachment: ref }],
+    source: {
+      kind: 'plugin',
+      plugin: 'deepseekeyes',
+      form: 'mcp-context',
+      summary: 'MCP image result context',
+    },
+  }
+  const messages = [task, assistant, outerResult, context]
+  const sessionId = 'mcp-code-image-session'
+  const agent = {
+    id: sessionId,
+    ctx,
+    session: { deriveMessages: () => messages },
+  }
+  ctx.agents = { get: id => id === sessionId ? agent : undefined }
+  const request = () => collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId,
+    messages,
+  }))
+
+  const result = await request()
+  assert.equal(result.text, 'MCP image evidence consumed')
+  assert.equal(visionCalls, 1)
+  assert.equal(upstreamCalls, 1)
+  const wire = JSON.stringify(forwarded.messages)
+  assert.equal(wire.includes('"type":"image"'), false)
+  assert.match(wire, /DeepSeekEyes MCP context/)
+  assert.match(wire, /MCP application returned a visible chart/)
+  assert.ok(ctx.deepseekEyesState.evidenceManager.knownBase(imageSha256))
+  assert.deepEqual(Buffer.from((await ctx.attachments.readImage(ref)).data), bytes)
+
+  const look = ctx.tools.get('deepseekeyes_look')
+  assert.ok(look, 'the original MCP attachment must be registered for targeted reread')
+  const reread = await look.execute({
+    imageSha256,
+    question: 'Read the exact highlighted value.',
+  }, { agent, signal: new AbortController().signal })
+  assert.equal(reread.evidence.answer, 'targeted MCP image detail')
+  assert.equal(visionCalls, 2)
+
+  await assert.rejects(request(), error => error.code === 'AUTOMATION_CALL_LIMIT')
+  assert.equal(visionCalls, 2)
+  assert.equal(upstreamCalls, 1)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.calls.upstreamMcp, 1)
+  assert.equal(usage.totals.automationTurns, 1)
+  assert.equal(usage.totals.mcpLimitStops, 1)
+  assert.equal(usage.totals.lookCalls, 1)
+})
+
+async function realMcpSchemaMode(mode, { mcpEnabled = true } = {}) {
+  const root = new Context()
+  const systemPromptFiber = root.plugin(SystemPrompt, { includeHarnessIdentity: false, persona: '' })
+  await systemPromptFiber
+  const disposeCodeRuntime = root.provide('codeRuntime', { language: 'typescript' })
+  const toolsFiber = root.plugin(ToolRuntime, { mode })
+  await toolsFiber
+
+  const output = {
+    schema: {
+      type: 'object',
+      properties: { preview: { type: 'string' } },
+      required: ['preview'],
+      additionalProperties: false,
+    },
+    render(_args, value) { return [{ type: 'text', text: value.preview }] },
+  }
+  const disposeOrdinary = root.tools.register({
+    name: 'ordinary_lookup',
+    description: 'Ordinary non-MCP fixture',
+    parameters: { type: 'object', additionalProperties: false },
+    output,
+    async execute() { return { preview: 'ordinary' } },
+  })
+  const disposeMcp = root.tools.register({
+    name: 'mcp__fixture__search',
+    description: 'Search a fixture application through MCP',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    output,
+    async execute() { return { preview: 'mcp' } },
+  })
+
+  const ctx = mockContext()
+  ctx.tools = root.tools
+  ctx.systemPrompt = root.systemPrompt
+  ctx.get = root.get.bind(root)
+  let forwarded
+  ctx.llm.addProvider(
+    'deepseek-official',
+    [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text'] }],
+    options => {
+      forwarded = options
+      return textStream('schema surface consumed')
+    },
+  )
+  const state = apply(
+    ctx,
+    {
+      upstreamProvider: 'deepseek-official',
+      activeProbe: false,
+      cacheDir: false,
+      mcpEnabled,
+      mcpServers: [],
+    },
+    { loadDshTools: () => import('@deepseek-ai/dsh-tools') },
+  )
+
+  const sessionId = `schema-${mode}-${mcpEnabled ? 'enabled' : 'disabled'}`
+  const agent = { id: sessionId, options: { provider: 'deepseekeyes' }, session: {} }
+  const scope = createScope(root, agent)
+  agent.ctx = scope.ctx
+  ctx.agents = { get: id => id === sessionId ? agent : undefined }
+  const assembly = await root.systemPrompt.assemble({ agent, scope: agent })
+  const request = {
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId,
+    messages: [userMessage([{ type: 'text', text: 'Use the available application tools.' }])],
+    system: renderPrompt(assembly),
+    tools: assembly.tools,
+  }
+  await collectStream(ctx.llm.stream(request))
+  const usage = await state.usage.snapshot()
+
+  await scope.dispose()
+  disposeMcp()
+  disposeOrdinary()
+  await toolsFiber.dispose()
+  await disposeCodeRuntime()
+  await systemPromptFiber.dispose()
+  return {
+    tokens: usage.totals.mcpSchemaInputTokensEstimated,
+    request,
+    forwarded,
+  }
+}
+
+test('real DSH native, code, and both modes account every MCP input surface actually sent', async () => {
+  const native = await realMcpSchemaMode('native')
+  const code = await realMcpSchemaMode('code')
+  const both = await realMcpSchemaMode('both')
+  const disabled = await realMcpSchemaMode('code', { mcpEnabled: false })
+
+  assert.ok(native.tokens > 0)
+  assert.ok(code.tokens > 0)
+  assert.equal(
+    both.tokens,
+    native.tokens + code.tokens,
+    'both mode sends and must account the native schema plus its tools:sdk declaration',
+  )
+  assert.equal(disabled.tokens, 0)
+
+  assert.match(JSON.stringify(native.request.tools), /mcp__fixture__search/)
+  assert.doesNotMatch(native.request.system, /mcp__fixture__search/)
+  assert.deepEqual(code.request.tools.map(tool => tool.name), ['run_code'])
+  assert.match(code.request.system, /mcp__fixture__search/)
+  assert.match(JSON.stringify(both.request.tools), /mcp__fixture__search/)
+  assert.match(both.request.system, /mcp__fixture__search/)
+  assert.equal(code.forwarded.system, code.request.system)
+  assert.deepEqual(code.forwarded.tools, code.request.tools)
+})
+
+test('historical-image MCP continuation still compacts context, accounts usage, and enforces the call guard', async () => {
+  let upstreamCalls = 0
+  let forwarded
+  const ctx = setupBridge({
+    bridgeConfig: {
+      automationContextMaxTokens: 4_096,
+      automationMaxCallsPerTurn: 1,
+    },
+    upstreamHandler(options) {
+      upstreamCalls += 1
+      forwarded = options
+      return textStream('historical image MCP consumed', {
+        inputTokens: 30,
+        outputTokens: 4,
+        cacheReadTokens: 10,
+      })
+    },
+  })
+  const ref = ctx.attachments.add(Buffer.from('historical image bytes'), {
+    attachmentId: 'historical-mcp-image',
+    width: 640,
+    height: 360,
+  })
+  const oldImageTask = userMessage([
+    { type: 'text', text: `old payload ${'x'.repeat(200_000)}` },
+    { type: 'image', attachment: ref },
+  ])
+  const oldAssistant = {
+    id: 'historical-assistant',
+    role: 'assistant',
+    content: [{ type: 'text', text: 'old completed image answer' }],
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+  }
+  const currentTask = userMessage([{ type: 'text', text: 'List the current issues through MCP.' }])
+  const assistant = {
+    id: 'historical-mcp-assistant',
+    role: 'assistant',
+    content: [{
+      type: 'tool-call',
+      id: 'historical-mcp-call',
+      name: 'mcp__github__list_issues',
+      arguments: '{}',
+    }],
+    source: { kind: 'model', provider: 'deepseekeyes', model: 'deepseek-v4-flash' },
+  }
+  const resultMessage = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'historical-mcp-call',
+    toolName: 'mcp__github__list_issues',
+    content: [{ type: 'text', text: '[DeepSeekEyes MCP result]\npreview: issue 1' }],
+  }])
+  const request = () => collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    sessionId: 'historical-mcp-session',
+    messages: [oldImageTask, oldAssistant, currentTask, assistant, resultMessage],
+    tools: [{
+      name: 'mcp__github__list_issues',
+      description: 'List issues',
+      parameters: { type: 'object', additionalProperties: false },
+    }],
+  }))
+
+  const result = await request()
+  assert.equal(result.text, 'historical image MCP consumed')
+  assert.equal(upstreamCalls, 1)
+  const wire = JSON.stringify(forwarded.messages)
+  assert.equal(wire.includes('old payload'), false)
+  assert.match(wire, /List the current issues through MCP/)
+  assert.match(wire, /preview: issue 1/)
+
+  await assert.rejects(request(), error => error.code === 'AUTOMATION_CALL_LIMIT')
+  assert.equal(upstreamCalls, 1)
+  const usage = await ctx.deepseekEyesState.usage.snapshot()
+  assert.equal(usage.totals.calls.upstreamMcp, 1)
+  assert.equal(usage.totals.derived.mcpTokens, 44)
+  assert.equal(usage.totals.automationTurns, 1)
+  assert.equal(usage.totals.automationContextCompactions, 1)
+  assert.equal(usage.totals.mcpContextCompactions, 1)
+  assert.equal(usage.totals.automationLimitStops, 1)
+  assert.equal(usage.totals.mcpLimitStops, 1)
+  assert.ok(usage.totals.estimatedAutomationInputTokensSaved > 40_000)
 })
 
 test('browser screenshot inside a tool result is reread by Eyes before DeepSeek continues', async () => {

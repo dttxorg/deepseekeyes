@@ -1,18 +1,28 @@
 # Data retention
 
-DeepSeekEyes separates original DSH attachments, derived visual evidence, automation artifacts, usage accounting and route diagnostics.
+DeepSeekEyes separates original DSH attachments, derived visual evidence, MCP results, automation artifacts, usage accounting and route diagnostics.
 
 | Data | Default location | Default bound | Contents |
 | :-- | :-- | :-- | :-- |
 | Original user image | DSH attachment store | Controlled by DSH/session retention | Original bytes and content-addressed attachment metadata. |
 | Evidence cache | `$DSH_HOME/deepseekeyes/evidence/` | One immutable file per source/route/prompt key | Source hash/metadata, selected route and schema-valid evidence. |
-| Token statistics | `$DSH_HOME/deepseekeyes/usage-stats.json` | 50 recent sessions plus totals | Provider usage, bridge estimates, Computer Use DeepSeek usage, avoided-replay estimates and operational counters. |
+| Token statistics | `$DSH_HOME/deepseekeyes/usage-stats.json` | 50 recent sessions plus totals | Provider usage, bridge estimates, Computer Use/MCP DeepSeek usage, MCP Schema/result attribution, avoided-replay estimates and operational counters. Nested Code Mode success/failure continuations are attributed to `upstreamMcp`; `both`-mode Schema estimates include the native and generated `tools:sdk` input surfaces. |
 | Vision attempts | `$DSH_HOME/deepseekeyes/vision-attempts.json` | 1,000 attempts | Provider/model, status, phase, latency, error code, image hash and SHA-256 of session ID. |
 | Browser runs | `$DSH_HOME/deepseekeyes/browser-runs/` | Operator-managed files; model history defaults to 8 summaries | Screenshots, action metadata, assertions and reports. Typed text is represented by length/hash. |
 | Desktop runs | `$DSH_HOME/deepseekeyes/desktop-runs/` | Operator-managed files; model history defaults to 8 summaries | Original/lossless PNG evidence, window/element metadata, state deltas, actions, assertions and v2 reports. Typed text, assigned values and launch arguments are hashed. |
+| Transient official-client tool catalog | Official rc.6 process memory before CaptureRegistry | Controlled by the dependency while it drains/validates paginated `tools/list` and builds its definition map | Complete upstream pages/map exist before DeepSeekEyes can apply its catalog limits; this plugin does not bound page bytes or cursor count at that earlier stage. |
+| Captured MCP tool catalog | Process memory after official-client registration | Fixed per-generation limits: 256 tools; 1,000,000 schema chars; 4,000,000 UTF-8 bytes; depth 64; 100,000 nodes | Name, description, input parameters and output schema. Invalid/duplicate/over-limit generations are atomically cleared; a non-empty-to-zero transition is unverified until a matching live probe. |
+| Transient MCP adapter result | Official rc.6 and plugin process memory before projection | The dependency decodes first and, for array-valued `content`, extracts/joins text before checking `isError`; fixed DeepSeekEyes post-client admission then limits depth 64, 50,000 nodes, 4,096 blocks, 16 Mi string chars, 8 images, 28 MiB encoded image, 20 MiB decoded image and 20 MiB other binary data | The temporary join occurs on both successful and failed array-content paths and is discarded on success or thrown on failure. Only the subsequently returned successful value enters DeepSeekEyes admission, canonicalization and persistence controls. |
+| MCP model-visible result | DSH session/event storage | Controlled by DSH/session retention; each admitted result defaults to 20,000 visible characters | Bounded text preview, canonical-admitted-result SHA-256, byte count, truncation flag and optional local artifact reference. |
+| Code Mode MCP context | DSH session/event storage through Host `deferContext()` | One trusted plugin message per successful or failed nested MCP sub-call | Tool/status/result-or-error digest/image count plus content-addressed Harness attachment references. It contains no inline base64, full result, error text or credential; native calls do not duplicate it. |
+| Complete MCP result artifact | `$DSH_HOME/deepseekeyes/mcp-artifacts/<server>/` | Content-addressed, operator-managed files; created by default for truncated or non-text admitted results | Exact canonical JSON of the admitted adapter value, not the original transport bytes. The filename contains the tool name and result SHA-256; POSIX files use mode `0600`. A private temporary file is best-effort removed in `finally` after success or failure; persistence failure rejects the result. |
+| MCP image output | DSH attachment store | Controlled by DSH/session retention and Host batch limits; saveImage-only fallback uses Host limits or 8 images / 5 MiB each / 20 MiB total | Decoded MCP image content submitted once through `saveImages()` and passed into the visual evidence path. Legacy Hosts validate a bounded full batch before sequential compatibility writes. |
+| MCP audit ring | Process memory | 200 most recent calls | Server/tool identity, risk class, status, duration and argument/result hashes; failures add only a stable/redacted error code and message SHA-256. No error text, complete arguments/results or credentials. |
 | In-memory route health | Process memory | Current process | Success/failure counts, last timestamps and circuit cooldown. |
 
 On Windows, `$DSH_HOME` normally resolves to `%USERPROFILE%\.dsh`; on macOS/Linux it normally resolves to `~/.dsh`. When the environment variable is absent, DeepSeekEyes uses the same `~/.dsh` fallback as Harness. Explicit DSH configuration takes precedence.
+
+The 200-entry MCP audit ring is retention, not enforcement. In 0.6, `automationMaxCallsPerTurn` limits final-model continuations and does not cap MCP sub-calls inside one `run_code`; ToolRuntime concurrency/timeouts do not create a cumulative per-run quota. The planned P1 `mcpMaxExternalCallsPerRun` control (recommended `64`, explicit `0` unlimited) is not present in this release.
 
 ## What is excluded from the route-attempt log
 
@@ -24,8 +34,14 @@ The attempt log does not store API keys, prompt text, model output, OCR, image b
 - Set `usageStats: false` to stop new Token statistics.
 - Set `automationContextMaxTokens: 32768` and `automationMaxCallsPerTurn: 32` to keep the default model-facing Computer Use bounds. Either value may be set to `0` for explicit unlimited mode; neither setting deletes retained task or evidence data.
 - Set `visionAttemptLog: false` to stop new route-attempt records.
+- Keep `mcpEnabled: false` (the default) to avoid connecting MCP servers or registering tool definitions.
+- Keep each server `allowedTools` list empty until a tool is needed. `denyTools` always overrides matching allow entries; unrelated Providers receive neither these MCP schemas nor the MCP prompt section.
+- Treat `mcpMaxTools` as a post-capture model-exposure budget. `0` removes only that later budget; it does not disable the fixed 256-tool/catalog-complexity limits or the official client's earlier paginated-discovery allocation.
+- Set `mcpMaxResultChars` to bound the preview of an already-admitted result stored in the model-visible session. It does not change the fixed raw-result admission. Keep `mcpMaxTools` / `mcpMaxSchemaTokens` bounded to reduce persistent conversation growth from exposed tools.
+- Set `mcpAudit: false` to stop new in-memory MCP audit summaries. This audit is not written to disk by default.
+- Set `mcpArtifactDir: false` to stop complete MCP result artifacts. The model still receives a bounded preview, but no artifact/reference is claimed: delivered images are labelled as attachments and omitted raw image/audio/resource blocks are explicitly labelled as not retained. A truncated tail has no DeepSeekEyes complete-result copy.
 - Set `desktopVisualMode: auto` to keep every native screenshot while omitting model image delivery when semantic/action evidence is sufficient. `manual` requires an explicit `includeScreenshot: true`; neither mode deletes captured artifacts.
-- Set `cacheDir`, `usageStatsPath`, `visionAttemptLogPath`, `browserArtifactsDir` or `desktopArtifactsDir` to explicit private paths.
+- Set `cacheDir`, `usageStatsPath`, `visionAttemptLogPath`, `browserArtifactsDir`, `desktopArtifactsDir` or `mcpArtifactDir` to explicit private paths.
 - Set an artifact directory to `false` in headless configuration where the field supports it.
 - Reduce `visionAttemptLimit`, `historyImageLimit`, `browserHistoryLimit` and `desktopHistoryLimit` for shorter retention.
 
@@ -38,7 +54,8 @@ macOS/Linux:
 ```bash
 rm -rf "$DSH_HOME/deepseekeyes/evidence" \
        "$DSH_HOME/deepseekeyes/browser-runs" \
-       "$DSH_HOME/deepseekeyes/desktop-runs"
+       "$DSH_HOME/deepseekeyes/desktop-runs" \
+       "$DSH_HOME/deepseekeyes/mcp-artifacts"
 rm -f "$DSH_HOME/deepseekeyes/usage-stats.json" \
       "$DSH_HOME/deepseekeyes/vision-attempts.json"
 ```
@@ -50,8 +67,9 @@ $root = Join-Path $env:DSH_HOME 'deepseekeyes'
 Remove-Item (Join-Path $root 'evidence') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $root 'browser-runs') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $root 'desktop-runs') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $root 'mcp-artifacts') -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $root 'usage-stats.json') -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $root 'vision-attempts.json') -Force -ErrorAction SilentlyContinue
 ```
 
-Deleting DeepSeekEyes-derived files does not delete the original DSH session attachment. Apply the DSH session-retention workflow separately when original attachments must also be removed.
+Deleting DeepSeekEyes-derived files does not delete original user images, MCP image attachments, deferred Code Mode `mcp-context` messages or bounded MCP result previews already retained by the DSH session. Apply the DSH session-retention workflow separately when those session records and attachments must also be removed. On both the current batch API and the legacy saveImage-only path, a storage failure after full-batch validation may leave unreachable content-addressed image blobs while returning no partial reference list; use the Host's attachment cleanup policy for those objects. Restarting DSH clears the in-memory MCP audit ring and connection-health state.

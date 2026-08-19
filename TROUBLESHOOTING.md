@@ -17,6 +17,99 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 Restart `dsh web` once after installation or upgrade. The installer migrates the old unscoped `deepseekeyes` profile dependency after the scoped package is added successfully.
 
+DeepSeekEyes 0.6 MCP integration is verified with DeepSeek Harness `0.1.0-rc.6` and resolves the official runtime pair `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` plus `@deepseek-ai/dsh-tools@0.1.0-rc.6` only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the exact optional Host-peer declarations, the managed Host entries and their exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
+
+## An MCP server connects but exposes no tools
+
+This is the expected safe state for a new server: its `allowedTools` list is empty.
+
+1. Enable **MCP applications**, save, and verify that the server status is **connected**.
+2. Use **Test connection** for an independent live transport/tools-list probe, or **Refresh tools** to replace the active transport generation and repopulate discovery. Neither operation treats a captured tool list as proof of health.
+3. Select only the tools required for the task, then save again. A deny selector always overrides an allow selector.
+4. Check the global **Maximum exposed tools** and **Maximum Schema Tokens** counters. A discovered tool can be shown as blocked when either budget is exhausted.
+5. Select the `DeepSeekEyes` virtual Provider in the conversation. Managed MCP tools deliberately reject calls from a native Provider with `MCP_REQUIRES_DEEPSEEKEYES`.
+
+Disabling MCP, disabling the server or clearing its allowlist unregisters the managed definitions and MCP prompt section. When MCP is enabled for DeepSeekEyes, prompt assembly still strips those schemas and guidance from every non-DeepSeekEyes Provider, and execution rejects wrong-Provider or agentless calls. Ordinary text, image, Browser and Desktop routes are unaffected.
+
+## `MCP_CATALOG_*` rejection or a server suddenly shows zero tools
+
+DeepSeekEyes atomically rejects a captured catalog generation above any fixed post-client boundary:
+
+| Limit code | Fixed captured-catalog boundary |
+| :-- | :-- |
+| `MCP_CATALOG_TOOL_LIMIT` | 256 tools |
+| `MCP_CATALOG_SCHEMA_CHARS_LIMIT` | 1,000,000 measured schema characters |
+| `MCP_CATALOG_SCHEMA_BYTES_LIMIT` | 4,000,000 UTF-8 schema bytes |
+| `MCP_CATALOG_SCHEMA_DEPTH_LIMIT` | schema depth 64 |
+| `MCP_CATALOG_SCHEMA_NODES_LIMIT` | 100,000 schema nodes |
+
+The measured surface includes each captured tool's name, description, input parameters and output schema. A rejection publishes no partial catalog and removes that server's exposure; other servers remain independent. `mcpMaxTools` is a later cross-server exposure budget, so increasing it does not change these fixed capture limits. Reduce the server's advertised tool/schema surface.
+
+When a previously non-empty generation becomes empty, DeepSeekEyes withdraws its tools and marks health unknown instead of treating the unregister event as a healthy empty server. **Test connection** performs a fresh uncached probe: a matching zero-tool response confirms a legitimate healthy empty catalog; a mismatch remains disconnected.
+
+These limits begin at CaptureRegistry. Official rc.6 has already drained and validated every paginated `tools/list` response and built an in-memory definition map before registration, so this layer does not pre-limit bytes in one network page, the number of cursor pages or that temporary upstream map. Diagnose a server with pathological pagination at the server/official-client boundary rather than treating the post-capture limits as a network-response cap.
+
+## `MCP_CREDENTIAL_MISSING` or an MCP connection fails
+
+Credential fields contain environment-variable **names**, not secret values. For example, an HTTP `Authorization` header may point to `{ "env": "APP_MCP_AUTHORIZATION" }`. Export that variable in the environment that starts `dsh web`, then restart or reconnect the server. The settings card, runtime snapshot and audit do not return the resolved value.
+
+For stdio, verify the executable path, argument array and optional working directory from the same user account that runs DSH. Put secrets in the server's `env` reference map rather than command arguments; common inline forms such as `--token VALUE`, `--auth=VALUE` and Basic/Bearer authorization arguments are rejected. For Streamable HTTP, a remote endpoint must use `https://`. Plain `http://` is accepted only when the URL hostname/address is explicitly loopback, for example `localhost`, `service.localhost`, `127.0.0.1` or `[::1]`; a private-LAN name or address is not loopback. Keep credentials out of URL user information/query parameters and put them in header environment references. **Test connection** returns the stage, error code, latency and discovered-tool count without exposing the credential. There is no plaintext-secret or interactive OAuth field in 0.6. Settings status uses a fresh successful check for 30 seconds and single-flights an expired live probe; a failed probe marks the server degraded and withdraws its managed tools.
+
+## An MCP result is truncated or has only an artifact reference
+
+`mcpMaxResultChars` defaults to `20000`, but it is not the raw-result memory guard. A successful adapter value first passes the fixed admission described below. DeepSeekEyes then canonicalizes and hashes that admitted value, sends a bounded preview to the model, and writes the complete canonical JSON under:
+
+```text
+$DSH_HOME/deepseekeyes/mcp-artifacts/<server-id>/
+```
+
+The returned SHA-256, byte count and path identify the canonical admitted adapter result, not the transport's original wire bytes. Non-text MCP content also creates an artifact by default; image blocks are additionally saved as Harness attachments for the visual bridge. Set a different private `mcpArtifactDir` when needed. Setting it to `false` means no complete artifact or reference is created: delivered images are labelled as model attachments, while raw image/audio/resource blocks that were not retained are labelled accordingly in the preview. Raising `mcpMaxResultChars` raises future model input but does not change the hard admission limits, so prefer a narrower MCP query or a follow-up tool call over placing a very large record in context.
+
+If artifact persistence fails, the MCP result is rejected instead of presenting a complete-result reference that was not written. DeepSeekEyes attempts to remove the per-write `.tmp` file on success and failure, while preserving the original write/rename error for diagnosis; inspect the artifact directory's permissions and whether the destination path was replaced by a directory.
+
+## `MCP_RESULT_*_LIMIT` before a preview is produced
+
+Every successful adapter result must pass fixed limits before DeepSeekEyes canonicalization, base64 decoding, attachment writes or artifact persistence:
+
+| Limit code | Fixed boundary |
+| :-- | :-- |
+| `MCP_RESULT_DEPTH_LIMIT` | nesting depth 64 |
+| `MCP_RESULT_NODE_LIMIT` | 50,000 visited values |
+| `MCP_RESULT_BLOCK_LIMIT` | 4,096 content blocks |
+| `MCP_RESULT_STRING_LIMIT` | 16 Mi aggregate non-image string characters, including object keys |
+| `MCP_RESULT_IMAGE_COUNT_LIMIT` | 8 image blocks |
+| `MCP_RESULT_IMAGE_ENCODED_LIMIT` | 28 MiB aggregate base64/encoded image data |
+| `MCP_RESULT_IMAGE_DECODED_LIMIT` | 20 MiB aggregate decoded image data |
+| `MCP_RESULT_BINARY_LIMIT` | 20 MiB aggregate Buffer/Uint8Array data |
+
+These fixed guards are intentionally separate from `mcpMaxResultChars`. A rejected result writes no DeepSeekEyes artifact or attachment and contributes zero MCP result-input estimate; narrow the server query or result shape rather than increasing the preview setting.
+
+The official rc.6 client and MCP SDK already parsed/decoded the transport response before this admission runs. For any array-valued `content`, rc.6 walks the blocks and joins extracted text before checking `isError`; it discards that temporary string on success and throws it on failure. The plugin bounds and redacts an already-created exception before showing it, and the audit retains only a stable/redacted code plus message SHA-256. These controls do not bound the dependency's earlier decode or pre-admission extract/join allocation.
+
+## Code Mode reports `MCP_RESULT_CONTEXT_UNAVAILABLE`
+
+An MCP tool invoked inside `run_code` needs the current Harness Host's `deferContext()` channel. DeepSeekEyes uses it to append one trusted plugin `mcp-context` marker for every successful or failed nested call, so the following model request remains inside MCP context/call guards and `upstreamMcp` usage accounting. Image results carry Harness attachment references through this message and never embed base64; the visual bridge reads the original attachment and installs targeted reread state. Native MCP execution already returns its result directly and intentionally does not append a duplicate context.
+
+This error is fail-closed and occurs before contacting the MCP server. Upgrade the Harness Host/runtime pair and restart the selected profile; retry after doctor confirms the pinned 0.6 dependencies.
+
+Do not use `automationMaxCallsPerTurn` as a quota for calls made inside one `run_code`. In 0.6 it counts only final-model continuation requests; one Code Mode execution can still issue multiple MCP sub-calls subject to ToolRuntime concurrency and each tool's timeout. DeepSeekEyes does not currently add a cumulative per-run call cap or a separate approval prompt per sub-call. Until the planned P1 `mcpMaxExternalCallsPerRun` control lands (recommended default `64`, `0` unlimited), keep allowlists minimal and enforce rate/operation limits at the MCP server or credential scope.
+
+## An MCP image result is rejected
+
+After the fixed raw-result admission succeeds, DeepSeekEyes submits every image block from one tool result through exactly one `ctx.attachments.saveImages()` call on a current Harness Host. The Host owns the batch count, aggregate-byte, media-type and raster-decode admission, so a validation rejection returns no prefix of attachment references. A later storage failure also returns no partial reference list, although already written content-addressed objects may remain unreachable until Host retention collects them. Reduce the server response or image sizes when the surfaced code is a fixed `MCP_RESULT_IMAGE_*_LIMIT` or Host admission code such as `TOO_MANY_IMAGES`, `IMAGES_TOO_LARGE`, `IMAGE_TOO_LARGE`, `UNSUPPORTED_IMAGE_TYPE` or `INVALID_IMAGE_BASE64`.
+
+An older Host that exposes only `saveImage()` uses the Host's advertised limits when available, otherwise a compatibility ceiling of 8 images, 5 MiB per image and 20 MiB total. DeepSeekEyes decodes and validates the complete bounded batch before the first compatibility write. A later storage fault can leave unreachable content-addressed blobs, but the failed call returns no partial image-reference list. Upgrade Harness to use the batch boundary.
+
+## MCP causes unexpected Token growth
+
+An exposed tool definition consumes input context on every model request even when the tool is not called. Keep per-server allowlists narrow, leave MCP off outside structured-application tasks, and use `mcpMaxTools` plus `mcpMaxSchemaTokens` as hard exposure budgets. MCP continuations share `automationContextMaxTokens` and `automationMaxCallsPerTurn`; both support an explicit `0` unlimited value, which removes the corresponding guard.
+
+The Schema estimate follows the request actually sent. Native mode counts the native function definition, Code Mode counts the generated `tools:sdk` declaration, and `both` mode counts both surfaces; the larger `both` value is expected and is not an accidental duplicate of one surface.
+
+During stop or live reconfiguration, all MCP tools can temporarily disappear even when only one transport is slow to close. This is intentional fail-closed behavior: exposure is revoked before asynchronous cleanup and restored only from the validated replacement generation. Wait for the operation to finish, then refresh status; a cleanup failure remains visible instead of re-enabling stale tools.
+
+The Token panel separates final-model MCP usage, external call count, Schema input estimate, result input estimate, MCP compactions and MCP limit stops. Schema/result values are attribution subsets of Provider input and are not added twice to exact usage. Non-DeepSeekEyes Provider requests receive neither the MCP schemas nor MCP guidance, so they do not pay this plugin's MCP Schema estimate. Clearing or refreshing statistics uses only the loopback RPC and does not call a model.
+
 ## The selected DeepSeek model still rejects images
 
 Select the virtual model under **DeepSeekEyes** in the conversation model picker. Choosing the native DeepSeek entry bypasses the image bridge by design. In **Settings → Plugins → DeepSeekEyes**, verify both the final-answer route and the visual route, save, then refresh the model catalog.

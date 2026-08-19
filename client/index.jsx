@@ -6,12 +6,16 @@ import {
   useSyncExternalStore,
 } from 'react'
 import {
+  createMcpServerDraft,
+  mcpToolAllowedInDraft,
+  nextMcpReferenceEntry,
   normalizeSettingsDraft,
   providerDeclaresVision,
   providerSettingsTarget,
   providerVisionMutation,
   settingsDraftFailure,
   settingsPathOps,
+  updateMcpToolSelection,
 } from '../src/settings-ui.js'
 
 const NS = 'deepseekeyes.settings'
@@ -76,6 +80,13 @@ const zh = {
   usageContextCompactions: '上下文保护次数',
   usageInputSaved: '估算避免重放输入',
   usageLimitStops: '额度保护停止次数',
+  usageMcpTokens: 'MCP 调用 Token',
+  usageMcpExternalCalls: 'MCP 外部调用',
+  usageMcpSchemaInput: 'MCP Schema 输入估算',
+  usageMcpResultInput: 'MCP 结果输入估算',
+  usageMcpContextCompactions: 'MCP 上下文压缩',
+  usageMcpLimitStops: 'MCP 预算停止',
+  usageMcpSubsetHint: 'MCP Schema 与结果输入是 Provider input usage 的组成部分，用于解释成本来源，不会再次加到“精确额外 Token”或“MCP 调用 Token”中。',
   usageVisualTurns: '视觉轮次',
   usageLookCalls: '原图按需读取',
   usageCacheHits: '视觉缓存命中',
@@ -149,6 +160,79 @@ const zh = {
   desktopArtifactsDir: '桌面测试证据目录',
   desktopArtifactsDirPlaceholder: '留空使用 DSH 默认证据目录',
   desktopHistoryLimit: '最近 Desktop 状态摘要数',
+  mcpTitle: 'MCP 应用与工具',
+  mcpVersion: 'MCP 控制中心',
+  mcpEnabled: '启用 MCP 应用执行层',
+  mcpEnabledHint: '让 DeepSeek 通过结构化工具调用其他应用；没有 MCP 的界面仍由 Browser / Desktop Computer Use 处理。',
+  mcpTokenCost: 'Token 提示：每个暴露工具的 Schema 都会占用模型上下文。新 Server 默认不暴露任何工具，请只勾选当前任务真正需要的工具。',
+  mcpAddServer: '添加 Server',
+  mcpNoServers: '尚未配置 MCP Server。添加后先保存，再测试连接并选择要暴露的工具。',
+  mcpServer: 'MCP Server',
+  mcpRemoveServer: '删除 Server',
+  mcpServerEnabled: '启用此 Server',
+  mcpServerId: 'Server ID',
+  mcpServerName: '显示名称',
+  mcpTransport: '传输方式',
+  mcpTransportStdio: 'stdio（本机进程）',
+  mcpTransportHttp: 'Streamable HTTP',
+  mcpCommand: '启动命令',
+  mcpCommandPlaceholder: '例如 npx 或 node',
+  mcpArgs: '参数（每行一个）',
+  mcpArgsPlaceholder: '-y\n@modelcontextprotocol/server-example',
+  mcpCwd: '工作目录',
+  mcpCwdPlaceholder: '留空使用 DSH 工作目录',
+  mcpUrl: 'Server URL',
+  mcpUrlPlaceholder: 'https://mcp.example.com/mcp',
+  mcpServerTimeoutMs: '连接超时（毫秒）',
+  mcpServerTimeoutPlaceholder: '留空继承全局超时',
+  mcpEnvRefs: '环境变量引用',
+  mcpHeaderRefs: '请求头引用',
+  mcpReferenceKey: '注入名称',
+  mcpReferenceEnv: '读取的环境变量名',
+  mcpAddEnvRef: '添加环境变量引用',
+  mcpAddHeaderRef: '添加请求头引用',
+  mcpRemoveReference: '删除引用',
+  mcpCredentialHint: '这里只保存环境变量名，不保存 Token、Header 值或其他明文凭据。',
+  mcpAllowedTools: '允许工具（每行一个）',
+  mcpAllowedToolsPlaceholder: '默认留空，即不暴露任何工具',
+  mcpDenyTools: '拒绝工具（每行一个）',
+  mcpDenyToolsPlaceholder: '即使已允许也始终拒绝',
+  mcpToolsHint: '允许列表默认为空；连接后可在下方工具清单中精确选择。',
+  mcpHealth: '运行状态',
+  mcpStatusDisabled: '已禁用',
+  mcpStatusIdle: '待连接',
+  mcpStatusConnecting: '连接中',
+  mcpStatusConnected: '已连接',
+  mcpStatusDegraded: '已降级',
+  mcpStatusError: '错误',
+  mcpStatusUnknown: '尚未检测',
+  mcpLatency: '延迟',
+  mcpToolCount: '工具总数',
+  mcpSelectedCount: '已选工具',
+  mcpSchemaTokens: 'Schema Token 估算',
+  mcpToolExposed: '已暴露',
+  mcpToolAllowedNotExposed: '已允许 / 未暴露',
+  mcpToolNotAllowed: '未允许',
+  mcpLastError: '最近错误',
+  mcpTestConnection: '测试连接',
+  mcpRefreshTools: '刷新工具',
+  mcpReconnect: '重新连接',
+  mcpRuntimeUnavailable: 'MCP 状态 RPC 尚未就绪；配置仍可保存，运行时升级后会自动显示状态。',
+  mcpRuntimeLoading: '正在读取 MCP 运行状态…',
+  mcpRuntimeUpdatedAt: '状态更新时间：',
+  mcpBudgets: 'MCP Token 与调用预算',
+  mcpMaxTools: '最多暴露工具数',
+  mcpMaxToolsHint: '跨所有 Server 的硬上限；0 表示不限制。是否暴露仍由每个 Server 的允许列表决定。',
+  mcpMaxSchemaTokens: 'Schema Token 总预算',
+  mcpMaxSchemaTokensHint: '超出预算的工具不会进入模型上下文；0 表示不限制。',
+  mcpMaxResultChars: '单次结果字符上限',
+  mcpMaxResultCharsHint: '超长结果只传预览、哈希和本地引用，避免上下文膨胀。',
+  mcpToolCallTimeoutMs: '工具调用全局超时（毫秒）',
+  mcpAudit: '记录 MCP 审计摘要',
+  mcpAuditHint: '只记录 Server、工具、状态、耗时、错误码及哈希，不保存密钥或完整参数/结果。',
+  mcpPersistArtifacts: '将超长 MCP 结果落盘',
+  mcpArtifactDir: 'MCP 结果目录',
+  mcpArtifactDirPlaceholder: '留空使用 DSH 默认 MCP 证据目录',
   advanced: '高级设置',
   statusReady: '视觉路由元数据检测已通过',
   statusReadyProbe: '；发送首张图片时还会执行随机像素探针。',
@@ -192,6 +276,28 @@ const zh = {
   desktopMaxElementsRange: '语义控件数量必须是 20–500 的整数。',
   desktopMacDisplayRange: 'macOS 显示器编号必须是 1–32 的整数。',
   desktopVisualModeInvalid: '桌面截图交付策略无效。',
+  mcpServersInvalid: 'MCP Server 配置必须是列表。',
+  mcpServerIdInvalid: 'Server ID 必须为 1–32 位字母、数字、下划线或连字符。',
+  mcpServerIdDuplicate: 'Server ID 不能重复。',
+  mcpServerNameRequired: '每个 MCP Server 都必须填写显示名称。',
+  mcpServerNameDuplicate: 'MCP Server 显示名称不能重复。',
+  mcpServerTransportInvalid: 'MCP Server 传输方式无效。',
+  mcpServerCommandRequired: 'stdio Server 必须填写启动命令。',
+  mcpServerArgsInvalid: 'stdio 参数必须是字符串列表。',
+  mcpServerArgsCredential: '启动参数疑似包含凭据，请改用环境变量引用。',
+  mcpServerUrlInvalid: 'Streamable HTTP Server 必须填写有效的 http/https URL。',
+  mcpServerUrlHttpsRequired: '远程 Streamable HTTP Server 必须使用 HTTPS；HTTP 仅可连接 localhost、127.0.0.0/8 或 ::1 等明确本机地址。',
+  mcpServerUrlCredential: 'Server URL 不能包含用户名、密码或疑似凭据查询参数，请改用请求头环境变量引用。',
+  mcpServerTransportFields: '当前传输方式包含另一种传输方式专用的配置字段。',
+  mcpServerTimeoutMsRange: 'Server 连接超时必须留空或为 100–3600000 的整数。',
+  mcpServerEnvInvalid: '环境变量引用必须使用有效变量名，且只能指向另一个环境变量名。',
+  mcpServerHeadersInvalid: '请求头名称无效，或其值不是环境变量引用。',
+  mcpServerToolsInvalid: '工具允许/拒绝列表无效。',
+  mcpServerToolsConflict: '同一个工具不能同时出现在允许与拒绝列表。',
+  mcpMaxToolsRange: '最多暴露工具数必须是 0（不限制）或 1–1000 的整数。',
+  mcpMaxSchemaTokensRange: 'Schema Token 预算必须是 0（不限制）或 256–10000000 的整数。',
+  mcpMaxResultCharsRange: '结果字符上限必须是 256–10000000 的整数。',
+  mcpToolCallTimeoutMsRange: 'MCP 工具调用超时必须是 100–3600000 的整数。',
   noProviders: 'Harness 中还没有可用 Provider，请先在「设置 → 模型」添加。',
   inactive: '（未激活）',
 }
@@ -254,6 +360,13 @@ const en = {
   usageContextCompactions: 'Context guard activations',
   usageInputSaved: 'Estimated replay input avoided',
   usageLimitStops: 'Budget guard stops',
+  usageMcpTokens: 'MCP call tokens',
+  usageMcpExternalCalls: 'MCP external calls',
+  usageMcpSchemaInput: 'Estimated MCP schema input',
+  usageMcpResultInput: 'Estimated MCP result input',
+  usageMcpContextCompactions: 'MCP context compactions',
+  usageMcpLimitStops: 'MCP budget stops',
+  usageMcpSubsetHint: 'MCP schema and result input are subsets of provider input usage. They explain cost sources and are not added again to Exact additional tokens or MCP call tokens.',
   usageVisualTurns: 'Visual turns',
   usageLookCalls: 'On-demand original reads',
   usageCacheHits: 'Visual cache hits',
@@ -327,6 +440,79 @@ const en = {
   desktopArtifactsDir: 'Desktop evidence directory',
   desktopArtifactsDirPlaceholder: 'Blank uses the DSH evidence default',
   desktopHistoryLimit: 'Recent desktop state summaries',
+  mcpTitle: 'MCP apps and tools',
+  mcpVersion: 'MCP control center',
+  mcpEnabled: 'Enable the MCP application layer',
+  mcpEnabledHint: 'Let DeepSeek call other apps through structured tools. Interfaces without MCP still use Browser / Desktop Computer Use.',
+  mcpTokenCost: 'Token note: every exposed tool schema consumes model context. New servers expose no tools by default; select only the tools needed for the current task.',
+  mcpAddServer: 'Add server',
+  mcpNoServers: 'No MCP server is configured. Add one, save, test the connection, then select the tools to expose.',
+  mcpServer: 'MCP server',
+  mcpRemoveServer: 'Remove server',
+  mcpServerEnabled: 'Enable this server',
+  mcpServerId: 'Server ID',
+  mcpServerName: 'Display name',
+  mcpTransport: 'Transport',
+  mcpTransportStdio: 'stdio (local process)',
+  mcpTransportHttp: 'Streamable HTTP',
+  mcpCommand: 'Launch command',
+  mcpCommandPlaceholder: 'For example: npx or node',
+  mcpArgs: 'Arguments (one per line)',
+  mcpArgsPlaceholder: '-y\n@modelcontextprotocol/server-example',
+  mcpCwd: 'Working directory',
+  mcpCwdPlaceholder: 'Blank uses the DSH working directory',
+  mcpUrl: 'Server URL',
+  mcpUrlPlaceholder: 'https://mcp.example.com/mcp',
+  mcpServerTimeoutMs: 'Connection timeout (ms)',
+  mcpServerTimeoutPlaceholder: 'Blank inherits the global timeout',
+  mcpEnvRefs: 'Environment references',
+  mcpHeaderRefs: 'Request-header references',
+  mcpReferenceKey: 'Injected name',
+  mcpReferenceEnv: 'Source environment variable',
+  mcpAddEnvRef: 'Add environment reference',
+  mcpAddHeaderRef: 'Add header reference',
+  mcpRemoveReference: 'Remove reference',
+  mcpCredentialHint: 'Only environment-variable names are stored here—never tokens, header values, or other plaintext credentials.',
+  mcpAllowedTools: 'Allowed tools (one per line)',
+  mcpAllowedToolsPlaceholder: 'Blank by default, which exposes no tools',
+  mcpDenyTools: 'Denied tools (one per line)',
+  mcpDenyToolsPlaceholder: 'Always denied, even when also allowed',
+  mcpToolsHint: 'The allowlist starts empty. After connecting, select exact tools from the list below.',
+  mcpHealth: 'Runtime health',
+  mcpStatusDisabled: 'Disabled',
+  mcpStatusIdle: 'Idle',
+  mcpStatusConnecting: 'Connecting',
+  mcpStatusConnected: 'Connected',
+  mcpStatusDegraded: 'Degraded',
+  mcpStatusError: 'Error',
+  mcpStatusUnknown: 'Not checked',
+  mcpLatency: 'Latency',
+  mcpToolCount: 'Total tools',
+  mcpSelectedCount: 'Selected tools',
+  mcpSchemaTokens: 'Estimated schema tokens',
+  mcpToolExposed: 'Exposed',
+  mcpToolAllowedNotExposed: 'Allowed / not exposed',
+  mcpToolNotAllowed: 'Not allowed',
+  mcpLastError: 'Latest error',
+  mcpTestConnection: 'Test connection',
+  mcpRefreshTools: 'Refresh tools',
+  mcpReconnect: 'Reconnect',
+  mcpRuntimeUnavailable: 'The MCP status RPC is not ready. Configuration can still be saved and status will appear after the runtime is upgraded.',
+  mcpRuntimeLoading: 'Loading MCP runtime health…',
+  mcpRuntimeUpdatedAt: 'Health updated: ',
+  mcpBudgets: 'MCP token and call budgets',
+  mcpMaxTools: 'Maximum exposed tools',
+  mcpMaxToolsHint: 'Hard limit across all servers. Zero is unlimited; each server allowlist still decides which tools are exposed.',
+  mcpMaxSchemaTokens: 'Total schema token budget',
+  mcpMaxSchemaTokensHint: 'Tools beyond this budget never enter model context. Zero is unlimited.',
+  mcpMaxResultChars: 'Result character limit',
+  mcpMaxResultCharsHint: 'Long results provide only a preview, hash, and local reference to prevent context growth.',
+  mcpToolCallTimeoutMs: 'Global tool-call timeout (ms)',
+  mcpAudit: 'Record MCP audit summaries',
+  mcpAuditHint: 'Stores server, tool, status, duration, error code and hashes—not secrets or full arguments/results.',
+  mcpPersistArtifacts: 'Persist long MCP results',
+  mcpArtifactDir: 'MCP result directory',
+  mcpArtifactDirPlaceholder: 'Blank uses the default DSH MCP evidence directory',
   advanced: 'Advanced settings',
   statusReady: 'Vision route metadata check passed',
   statusReadyProbe: '; the first image will also run the randomized pixel probe.',
@@ -370,6 +556,28 @@ const en = {
   desktopMaxElementsRange: 'Maximum semantic controls must be an integer from 20 through 500.',
   desktopMacDisplayRange: 'The macOS display number must be an integer from 1 through 32.',
   desktopVisualModeInvalid: 'The desktop screenshot delivery mode is invalid.',
+  mcpServersInvalid: 'MCP servers must be an array.',
+  mcpServerIdInvalid: 'Server IDs must contain 1–32 letters, digits, underscores, or hyphens.',
+  mcpServerIdDuplicate: 'Server IDs must be unique.',
+  mcpServerNameRequired: 'Every MCP server needs a display name.',
+  mcpServerNameDuplicate: 'MCP server display names must be unique.',
+  mcpServerTransportInvalid: 'The MCP server transport is invalid.',
+  mcpServerCommandRequired: 'A stdio server requires a launch command.',
+  mcpServerArgsInvalid: 'stdio arguments must be a list of strings.',
+  mcpServerArgsCredential: 'A launch argument appears to contain a credential. Use an environment reference instead.',
+  mcpServerUrlInvalid: 'A Streamable HTTP server requires a valid http/https URL.',
+  mcpServerUrlHttpsRequired: 'Remote Streamable HTTP servers must use HTTPS. HTTP is limited to explicit loopback addresses such as localhost, 127.0.0.0/8, or ::1.',
+  mcpServerUrlCredential: 'The server URL cannot contain a username, password, or credential-like query parameter. Use a header environment reference instead.',
+  mcpServerTransportFields: 'The selected transport contains fields reserved for the other transport.',
+  mcpServerTimeoutMsRange: 'Server connection timeout must be blank or an integer from 100 through 3600000.',
+  mcpServerEnvInvalid: 'Environment references must use valid variable names and point only to another environment variable.',
+  mcpServerHeadersInvalid: 'A request-header name is invalid or does not point to an environment variable.',
+  mcpServerToolsInvalid: 'The tool allow/deny lists are invalid.',
+  mcpServerToolsConflict: 'A tool cannot be both allowed and denied.',
+  mcpMaxToolsRange: 'Maximum exposed tools must be zero (unlimited) or an integer from 1 through 1000.',
+  mcpMaxSchemaTokensRange: 'Schema token budget must be zero (unlimited) or an integer from 256 through 10000000.',
+  mcpMaxResultCharsRange: 'Result character limit must be an integer from 256 through 10000000.',
+  mcpToolCallTimeoutMsRange: 'MCP tool-call timeout must be an integer from 100 through 3600000.',
   noProviders: 'No provider is available in Harness. Add one under Settings → Models first.',
   inactive: ' (inactive)',
 }
@@ -408,6 +616,24 @@ const styles = {
   metric: { minWidth: 0, padding: '11px 12px', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', borderRadius: 9, background: 'var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, .04))' },
   metricValue: { display: 'block', fontSize: 18, fontWeight: 650, lineHeight: 1.25, fontVariantNumeric: 'tabular-nums', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
   metricLabel: { display: 'block', marginTop: 4, fontSize: 11, lineHeight: 1.4, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
+  sectionTitle: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  serverList: { display: 'grid', gap: 12, marginTop: 14 },
+  serverCard: { display: 'grid', gap: 14, padding: 14, border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #e4e7ec))', borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, .035))' },
+  serverHeader: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' },
+  serverHeading: { minWidth: 0, margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  textArea: { width: '100%', minHeight: 76, boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #ccd3df))', borderRadius: 8, padding: '8px 12px', resize: 'vertical', fontSize: 13, lineHeight: 1.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))', background: 'var(--dsw-alias-bg-layer-3, var(--input-bg, #fff))', colorScheme: 'inherit' },
+  referenceList: { display: 'grid', gap: 8 },
+  referenceRow: { display: 'grid', gridTemplateColumns: 'minmax(120px, .8fr) minmax(160px, 1fr) auto', gap: 8, alignItems: 'center' },
+  iconButton: { width: 32, height: 32, borderRadius: 8, border: '1px solid var(--dsw-alias-border-l2, var(--border-color, #ccd3df))', background: 'transparent', color: 'var(--dsw-alias-label-secondary, var(--text-primary, #172033))', cursor: 'pointer', fontSize: 18, lineHeight: 1 },
+  statusBadge: { display: 'inline-flex', alignItems: 'center', minHeight: 20, borderRadius: 999, padding: '1px 8px', fontSize: 11, fontWeight: 600, background: 'var(--dsw-alias-bg-module-platform, rgba(127, 127, 127, .10))', color: 'var(--dsw-alias-label-secondary, var(--text-primary, #172033))' },
+  statusBadgeOk: { background: 'rgba(34, 197, 94, .10)', color: 'var(--dsw-alias-state-success-primary, var(--success-color, #15803d))' },
+  statusBadgeWarn: { background: 'rgba(245, 158, 11, .10)', color: 'var(--dsw-alias-state-warn-primary, var(--warning-color, #a16207))' },
+  statusBadgeError: { background: 'rgba(242, 90, 90, .10)', color: 'var(--dsw-alias-state-error-primary, var(--danger-color, #b91c1c))' },
+  toolList: { display: 'grid', gap: 7, maxHeight: 260, overflow: 'auto', padding: '2px 2px 2px 0' },
+  toolRow: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', gap: 8, alignItems: 'start', padding: '7px 8px', borderRadius: 7, background: 'var(--dsw-alias-bg-layer-3, rgba(127, 127, 127, .035))' },
+  toolName: { display: 'block', overflowWrap: 'anywhere', fontSize: 12, fontWeight: 600, color: 'var(--dsw-alias-label-primary, var(--text-primary, #172033))' },
+  toolDescription: { display: 'block', marginTop: 2, fontSize: 11, lineHeight: 1.4, color: 'var(--dsw-alias-label-tertiary, var(--text-secondary, #697386))' },
+  toolMeta: { display: 'grid', gap: 4, justifyItems: 'end' },
 }
 
 function messageOf(error) {
@@ -505,6 +731,422 @@ function UsageMetric({ label, value }) {
   )
 }
 
+function linesOf(value) {
+  return Array.isArray(value) ? value.join('\n') : ''
+}
+
+function listFromText(value) {
+  return [...new Set(value.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean))]
+}
+
+function argsFromText(value) {
+  return value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
+}
+
+function mcpStatusLabel(status) {
+  return {
+    disabled: 'mcpStatusDisabled',
+    idle: 'mcpStatusIdle',
+    connecting: 'mcpStatusConnecting',
+    connected: 'mcpStatusConnected',
+    degraded: 'mcpStatusDegraded',
+    error: 'mcpStatusError',
+  }[status] ?? 'mcpStatusUnknown'
+}
+
+function mcpStatusStyle(status) {
+  if (status === 'connected') return styles.statusBadgeOk
+  if (status === 'degraded' || status === 'connecting') return styles.statusBadgeWarn
+  if (status === 'error') return styles.statusBadgeError
+  return undefined
+}
+
+function rpcEnvelope(response) {
+  return response?.result ?? response
+}
+
+function rpcMethodUnavailable(error) {
+  const code = String(error?.code ?? '').toLowerCase()
+  const message = messageOf(error).toLowerCase()
+  return ['not-found', 'not_found', 'method_not_found', 'unknown_method', 'unavailable'].includes(code)
+    || /method.*(not found|unknown)|rpc.*(not found|unavailable)/.test(message)
+}
+
+async function callMcpRpc(rpc, method, payload) {
+  if (typeof rpc?.call !== 'function') throw new Error('MCP RPC unavailable')
+  const endpoint = method === 'snapshot' ? 'mcp.status' : `mcp.${method}`
+  const routes = [
+    ['/deepseekeyes', endpoint],
+    ['/deepseekeyes/mcp', method],
+    ['deepseekeyes/mcp', method],
+  ]
+  let lastError
+  for (const [namespace, routedMethod] of routes) {
+    try {
+      const result = rpcEnvelope(await rpc.call(namespace, routedMethod, payload))
+      if (result?.ok === false) {
+        const error = Object.assign(new Error(result.error?.message ?? 'MCP RPC failed'), result.error)
+        throw error
+      }
+      return result?.ok === true ? result.value : result
+    } catch (error) {
+      lastError = error
+      if (!rpcMethodUnavailable(error)) break
+    }
+  }
+  throw lastError ?? new Error('MCP RPC unavailable')
+}
+
+function McpMetric({ label, value }) {
+  return (
+    <div style={styles.metric}>
+      <strong style={styles.metricValue}>{value ?? '—'}</strong>
+      <span style={styles.metricLabel}>{label}</span>
+    </div>
+  )
+}
+
+function McpReferenceEditor({ id, title, addLabel, value, disabled, header, onChange, t }) {
+  const entries = Object.entries(value ?? {})
+  const replaceAt = (index, key, env) => {
+    const next = entries.map(([currentKey, reference], currentIndex) => (
+      currentIndex === index ? [key, { env }] : [currentKey, reference]
+    ))
+    onChange(Object.fromEntries(next))
+  }
+  const add = () => {
+    const { key, reference } = nextMcpReferenceEntry(value, { header })
+    onChange({ ...(value ?? {}), [key]: reference })
+  }
+  return (
+    <div style={styles.field}>
+      <span style={styles.label}>{title}</span>
+      <div style={styles.referenceList}>
+        {entries.map(([key, reference], index) => (
+          <div style={styles.referenceRow} key={index}>
+            <input
+              aria-label={`${title}: ${t('mcpReferenceKey')} ${index + 1}`}
+              style={styles.input}
+              type="text"
+              value={key}
+              disabled={disabled}
+              onChange={event => replaceAt(index, event.target.value, reference.env)}
+            />
+            <input
+              aria-label={`${title}: ${t('mcpReferenceEnv')} ${index + 1}`}
+              style={styles.input}
+              type="text"
+              value={reference.env}
+              disabled={disabled}
+              onChange={event => replaceAt(index, key, event.target.value)}
+            />
+            <button
+              type="button"
+              style={styles.iconButton}
+              aria-label={`${t('mcpRemoveReference')}: ${key}`}
+              title={t('mcpRemoveReference')}
+              disabled={disabled}
+              onClick={() => onChange(Object.fromEntries(entries.filter((_, current) => current !== index)))}
+            >×</button>
+          </div>
+        ))}
+      </div>
+      <div>
+        <button id={id} type="button" style={styles.button} disabled={disabled} onClick={add}>{addLabel}</button>
+      </div>
+    </div>
+  )
+}
+
+function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChange, onRemove, onAction, t }) {
+  const serverDisabled = disabled || !server.enabled
+  const tools = Array.isArray(runtimeServer?.tools) ? runtimeServer.tools : []
+  const status = runtimeServer?.status
+  const setAllowed = (tool, allowed) => {
+    onChange(updateMcpToolSelection(server, tool, allowed))
+  }
+  return (
+    <section style={styles.serverCard} aria-label={`${t('mcpServer')}: ${server.name || server.id}`}>
+      <div style={styles.serverHeader}>
+        <div style={styles.sectionTitle}>
+          <h4 style={styles.serverHeading}>{server.name || `${t('mcpServer')} ${index + 1}`}</h4>
+          <span style={{ ...styles.statusBadge, ...mcpStatusStyle(status) }}>{t(mcpStatusLabel(status))}</span>
+        </div>
+        <button type="button" style={styles.button} disabled={disabled} onClick={onRemove}>{t('mcpRemoveServer')}</button>
+      </div>
+
+      <label style={styles.checkboxRow}>
+        <input type="checkbox" checked={server.enabled} disabled={disabled} onChange={event => onChange({ ...server, enabled: event.target.checked })} />
+        <span>{t('mcpServerEnabled')}</span>
+      </label>
+
+      <div style={styles.grid}>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-id-${index}`}>{t('mcpServerId')}</label>
+          <input id={`deepseekeyes-mcp-id-${index}`} style={styles.input} type="text" value={server.id} disabled={disabled} onChange={event => onChange({ ...server, id: event.target.value })} />
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-name-${index}`}>{t('mcpServerName')}</label>
+          <input id={`deepseekeyes-mcp-name-${index}`} style={styles.input} type="text" value={server.name} disabled={disabled} onChange={event => onChange({ ...server, name: event.target.value })} />
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-transport-${index}`}>{t('mcpTransport')}</label>
+          <select
+            id={`deepseekeyes-mcp-transport-${index}`}
+            style={styles.input}
+            value={server.transport}
+            disabled={disabled}
+            onChange={(event) => {
+              const transport = event.target.value
+              onChange(transport === 'stdio'
+                ? { ...server, transport, url: '', headers: {} }
+                : { ...server, transport, command: '', args: [], cwd: '', env: {} })
+            }}
+          >
+            <option value="stdio">{t('mcpTransportStdio')}</option>
+            <option value="streamable-http">{t('mcpTransportHttp')}</option>
+          </select>
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-timeout-${index}`}>{t('mcpServerTimeoutMs')}</label>
+          <input
+            id={`deepseekeyes-mcp-timeout-${index}`}
+            style={styles.input}
+            type="number"
+            min="100"
+            max="3600000"
+            step="1"
+            value={server.timeoutMs ?? ''}
+            placeholder={t('mcpServerTimeoutPlaceholder')}
+            disabled={serverDisabled}
+            onChange={event => onChange({ ...server, timeoutMs: event.target.value === '' ? undefined : numberFrom(event) })}
+          />
+        </div>
+      </div>
+
+      {server.transport === 'stdio'
+        ? (
+          <div style={styles.grid}>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor={`deepseekeyes-mcp-command-${index}`}>{t('mcpCommand')}</label>
+              <input id={`deepseekeyes-mcp-command-${index}`} style={styles.input} type="text" value={server.command} placeholder={t('mcpCommandPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, command: event.target.value })} />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor={`deepseekeyes-mcp-cwd-${index}`}>{t('mcpCwd')}</label>
+              <input id={`deepseekeyes-mcp-cwd-${index}`} style={styles.input} type="text" value={server.cwd} placeholder={t('mcpCwdPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, cwd: event.target.value })} />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor={`deepseekeyes-mcp-args-${index}`}>{t('mcpArgs')}</label>
+              <textarea id={`deepseekeyes-mcp-args-${index}`} style={styles.textArea} value={linesOf(server.args)} placeholder={t('mcpArgsPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, args: argsFromText(event.target.value) })} />
+            </div>
+          </div>
+        )
+        : (
+          <div style={styles.field}>
+            <label style={styles.label} htmlFor={`deepseekeyes-mcp-url-${index}`}>{t('mcpUrl')}</label>
+            <input id={`deepseekeyes-mcp-url-${index}`} style={styles.input} type="url" value={server.url} placeholder={t('mcpUrlPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, url: event.target.value })} />
+          </div>
+        )}
+
+      <div style={styles.grid}>
+        {server.transport === 'stdio'
+          ? <McpReferenceEditor id={`deepseekeyes-mcp-env-add-${index}`} title={t('mcpEnvRefs')} addLabel={t('mcpAddEnvRef')} value={server.env} disabled={serverDisabled} onChange={env => onChange({ ...server, env })} t={t} />
+          : null}
+        {server.transport === 'streamable-http'
+          ? <McpReferenceEditor id={`deepseekeyes-mcp-header-add-${index}`} title={t('mcpHeaderRefs')} addLabel={t('mcpAddHeaderRef')} value={server.headers} disabled={serverDisabled} header onChange={headers => onChange({ ...server, headers })} t={t} />
+          : null}
+      </div>
+      <p style={styles.hint}>{t('mcpCredentialHint')}</p>
+
+      <div style={styles.grid}>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-allow-${index}`}>{t('mcpAllowedTools')}</label>
+          <textarea id={`deepseekeyes-mcp-allow-${index}`} style={styles.textArea} value={linesOf(server.allowedTools)} placeholder={t('mcpAllowedToolsPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, allowedTools: listFromText(event.target.value) })} />
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-deny-${index}`}>{t('mcpDenyTools')}</label>
+          <textarea id={`deepseekeyes-mcp-deny-${index}`} style={styles.textArea} value={linesOf(server.denyTools)} placeholder={t('mcpDenyToolsPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, denyTools: listFromText(event.target.value) })} />
+        </div>
+      </div>
+      <p style={styles.hint}>{t('mcpToolsHint')}</p>
+
+      <div style={styles.metricGrid}>
+        <McpMetric label={t('mcpLatency')} value={Number.isFinite(runtimeServer?.latencyMs) ? `${formatCount(runtimeServer.latencyMs)} ms` : '—'} />
+        <McpMetric label={t('mcpToolCount')} value={formatCount(runtimeServer?.toolCount)} />
+        <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtimeServer?.exposedToolCount ?? server.allowedTools.length)} />
+        <McpMetric label={t('mcpSchemaTokens')} value={formatCount(runtimeServer?.schemaTokensEstimated)} />
+      </div>
+      {runtimeServer?.lastError?.message
+        ? <p style={styles.statusError}>{t('mcpLastError')}: {runtimeServer.lastError.code ? `[${runtimeServer.lastError.code}] ` : ''}{runtimeServer.lastError.message}</p>
+        : null}
+
+      {tools.length > 0
+        ? (
+          <div style={styles.toolList}>
+            {tools.map(tool => (
+              <label key={tool.name} style={styles.toolRow}>
+                <input type="checkbox" checked={mcpToolAllowedInDraft(server, tool)} disabled={serverDisabled} onChange={event => setAllowed(tool, event.target.checked)} />
+                <span>
+                  <span style={styles.toolName}>{tool.name}</span>
+                  {tool.description ? <span style={styles.toolDescription}>{tool.description}</span> : null}
+                </span>
+                <span style={styles.toolMeta}>
+                  <span style={styles.statusBadge}>{formatCount(tool.schemaTokensEstimated)}</span>
+                  <span style={{ ...styles.statusBadge, ...(tool.exposed ? styles.statusBadgeOk : tool.allowed ? styles.statusBadgeWarn : undefined) }}>
+                    {t(tool.exposed ? 'mcpToolExposed' : tool.allowed ? 'mcpToolAllowedNotExposed' : 'mcpToolNotAllowed')}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )
+        : null}
+
+      <div style={styles.actions}>
+        <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('test', server.id)}>{t('mcpTestConnection')}</button>
+        <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('tools', server.id)}>{t('mcpRefreshTools')}</button>
+        <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('reconnect', server.id)}>{t('mcpReconnect')}</button>
+      </div>
+    </section>
+  )
+}
+
+function McpSettingsSection({ draft, disabled, rpc, refreshRevision, onUpdate, t }) {
+  const [runtime, setRuntime] = useState({ loading: true, value: undefined, error: undefined, busy: undefined })
+  const loadRuntime = useCallback(async () => {
+    setRuntime(current => ({ ...current, loading: true, error: undefined }))
+    try {
+      const value = await callMcpRpc(rpc, 'snapshot', {})
+      setRuntime({ loading: false, value, error: undefined, busy: undefined })
+    } catch (error) {
+      setRuntime({ loading: false, value: undefined, error: messageOf(error), busy: undefined })
+    }
+  }, [rpc])
+  useEffect(() => { void loadRuntime() }, [loadRuntime, refreshRevision])
+
+  const updateServer = (index, server) => {
+    onUpdate('mcpServers', draft.mcpServers.map((current, currentIndex) => currentIndex === index ? server : current))
+  }
+  const addServer = () => {
+    let index = draft.mcpServers.length + 1
+    let server = createMcpServerDraft(index)
+    const ids = new Set(draft.mcpServers.map(item => item.id))
+    while (ids.has(server.id)) server = createMcpServerDraft(++index)
+    onUpdate('mcpServers', [...draft.mcpServers, server])
+  }
+  const act = async (method, serverId) => {
+    setRuntime(current => ({ ...current, busy: `${method}:${serverId}`, error: undefined }))
+    try {
+      const action = await callMcpRpc(rpc, method, method === 'tools' ? { serverId, refresh: true } : { serverId })
+      const value = await callMcpRpc(rpc, 'snapshot', {})
+      const actionError = action?.ok === false
+        ? `${action.error?.code ? `[${action.error.code}] ` : ''}${action.error?.message ?? 'MCP connection test failed'}`
+        : undefined
+      setRuntime({ loading: false, value, error: actionError, busy: undefined })
+    } catch (error) {
+      setRuntime(current => ({ ...current, loading: false, error: messageOf(error), busy: undefined }))
+    }
+  }
+  return (
+    <details style={styles.details}>
+      <summary style={{ ...styles.detailsSummary, marginBottom: 0 }}>
+        <span style={styles.sectionTitle}>
+          <span>{t('mcpTitle')}</span>
+          <span style={styles.version} aria-label={`${t('mcpVersion')}: ${PLUGIN_VERSION}`}>v{PLUGIN_VERSION}</span>
+        </span>
+      </summary>
+      <div style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+        <label style={styles.checkboxRow}>
+          <input type="checkbox" checked={draft.mcpEnabled} disabled={disabled} onChange={event => onUpdate('mcpEnabled', event.target.checked)} />
+          <span>{t('mcpEnabled')}<br /><small style={styles.hint}>{t('mcpEnabledHint')}</small></span>
+        </label>
+        <p style={styles.statusWarn}>{t('mcpTokenCost')}</p>
+
+        <details style={{ ...styles.details, borderTop: 0, paddingTop: 0 }}>
+          <summary style={{ ...styles.detailsSummary, marginBottom: 0 }}>{t('mcpBudgets')}</summary>
+          <div style={{ ...styles.grid, marginTop: 14 }}>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-mcp-max-tools">{t('mcpMaxTools')}</label>
+              <input id="deepseekeyes-mcp-max-tools" style={styles.input} type="number" min="0" max="1000" step="1" value={draft.mcpMaxTools} disabled={disabled} onChange={event => onUpdate('mcpMaxTools', numberFrom(event))} />
+              <small style={styles.hint}>{t('mcpMaxToolsHint')}</small>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-mcp-schema-budget">{t('mcpMaxSchemaTokens')}</label>
+              <input id="deepseekeyes-mcp-schema-budget" style={styles.input} type="number" min="0" max="10000000" step="1" value={draft.mcpMaxSchemaTokens} disabled={disabled} onChange={event => onUpdate('mcpMaxSchemaTokens', numberFrom(event))} />
+              <small style={styles.hint}>{t('mcpMaxSchemaTokensHint')}</small>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-mcp-result-chars">{t('mcpMaxResultChars')}</label>
+              <input id="deepseekeyes-mcp-result-chars" style={styles.input} type="number" min="256" max="10000000" step="1" value={draft.mcpMaxResultChars} disabled={disabled} onChange={event => onUpdate('mcpMaxResultChars', numberFrom(event))} />
+              <small style={styles.hint}>{t('mcpMaxResultCharsHint')}</small>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-mcp-call-timeout">{t('mcpToolCallTimeoutMs')}</label>
+              <input id="deepseekeyes-mcp-call-timeout" style={styles.input} type="number" min="100" max="3600000" step="1" value={draft.mcpToolCallTimeoutMs} disabled={disabled} onChange={event => onUpdate('mcpToolCallTimeoutMs', numberFrom(event))} />
+            </div>
+          </div>
+          <label style={{ ...styles.checkboxRow, marginTop: 14 }}>
+            <input type="checkbox" checked={draft.mcpAudit} disabled={disabled} onChange={event => onUpdate('mcpAudit', event.target.checked)} />
+            <span>{t('mcpAudit')}<br /><small style={styles.hint}>{t('mcpAuditHint')}</small></span>
+          </label>
+          <label style={{ ...styles.checkboxRow, marginTop: 12 }}>
+            <input type="checkbox" checked={draft.mcpArtifactDir !== false} disabled={disabled} onChange={event => onUpdate('mcpArtifactDir', event.target.checked ? '' : false)} />
+            <span>{t('mcpPersistArtifacts')}</span>
+          </label>
+          <div style={{ ...styles.field, marginTop: 12 }}>
+            <label style={styles.label} htmlFor="deepseekeyes-mcp-artifact-dir">{t('mcpArtifactDir')}</label>
+            <input id="deepseekeyes-mcp-artifact-dir" style={styles.input} type="text" value={typeof draft.mcpArtifactDir === 'string' ? draft.mcpArtifactDir : ''} placeholder={t('mcpArtifactDirPlaceholder')} disabled={disabled || draft.mcpArtifactDir === false} onChange={event => onUpdate('mcpArtifactDir', event.target.value)} />
+          </div>
+        </details>
+
+        <div style={styles.serverHeader}>
+          <strong style={styles.serverHeading}>{t('mcpServer')}</strong>
+          <button type="button" style={styles.button} disabled={disabled} onClick={addServer}>{t('mcpAddServer')}</button>
+        </div>
+        {draft.mcpServers.length === 0 ? <p style={styles.hint}>{t('mcpNoServers')}</p> : null}
+        <div style={styles.serverList}>
+          {draft.mcpServers.map((server, index) => (
+            <McpServerEditor
+              key={index}
+              server={server}
+              index={index}
+              runtimeServer={runtime.value?.servers?.find(item => item.id === server.id)}
+              disabled={disabled}
+              busy={runtime.busy !== undefined}
+              onChange={value => updateServer(index, value)}
+              onRemove={() => onUpdate('mcpServers', draft.mcpServers.filter((_, currentIndex) => currentIndex !== index))}
+              onAction={(method, serverId) => { void act(method, serverId) }}
+              t={t}
+            />
+          ))}
+        </div>
+
+        <div style={styles.divider} />
+        <div style={styles.serverHeader}>
+          <strong style={styles.serverHeading}>{t('mcpHealth')}</strong>
+          <button type="button" style={styles.button} disabled={runtime.loading} onClick={() => { void loadRuntime() }}>{t('mcpRefreshTools')}</button>
+        </div>
+        {runtime.loading ? <p style={styles.statusWarn}>{t('mcpRuntimeLoading')}</p> : null}
+        {runtime.error !== undefined
+          ? <p style={styles.statusWarn}>{runtime.value === undefined ? <>{t('mcpRuntimeUnavailable')}<br /></> : null}{runtime.error}</p>
+          : null}
+        {!runtime.loading && runtime.value !== undefined
+          ? (
+            <>
+              <div style={styles.metricGrid}>
+                <McpMetric label={t('mcpServer')} value={`${formatCount(runtime.value.summary?.connectedServers)} / ${formatCount(runtime.value.summary?.enabledServers)}`} />
+                <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtime.value.summary?.exposedTools)} />
+                <McpMetric label={t('mcpSchemaTokens')} value={formatCount(runtime.value.summary?.schemaTokensEstimated)} />
+              </div>
+              {runtime.value.updatedAt ? <p style={styles.hint}>{t('mcpRuntimeUpdatedAt')}{runtime.value.updatedAt}</p> : null}
+            </>
+          )
+          : null}
+      </div>
+    </details>
+  )
+}
+
 function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
   const snapshot = useSyncExternalStore(
     listener => scope.subscribe(listener),
@@ -519,6 +1161,7 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
   const [declareVision, setDeclareVision] = useState(false)
   const [declarationDirty, setDeclarationDirty] = useState(false)
   const [usage, setUsage] = useState({ loading: true, value: undefined, error: undefined })
+  const [mcpRuntimeRefreshRevision, setMcpRuntimeRefreshRevision] = useState(0)
 
   useEffect(() => {
     if (snapshot.status === 'ready' && !dirty) setDraft(normalizeSettingsDraft(snapshot.value))
@@ -651,6 +1294,7 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
       setDirty(false)
       setDeclarationDirty(false)
       setNotice({ kind: 'ok', text: t('saved') })
+      setMcpRuntimeRefreshRevision(current => current + 1)
       await new Promise(resolve => setTimeout(resolve, 180))
       await Promise.all([loadCatalog(), loadUsage()])
     } catch (error) {
@@ -1025,6 +1669,15 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
             </div>
           </details>
 
+          <McpSettingsSection
+            draft={draft}
+            disabled={saving || !snapshot.writable}
+            rpc={usageRpc}
+            refreshRevision={mcpRuntimeRefreshRevision}
+            onUpdate={update}
+            t={t}
+          />
+
           <details style={styles.details}>
             <summary style={styles.detailsSummary}>{t('advanced')}</summary>
             <div style={styles.grid}>
@@ -1085,10 +1738,17 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
                         <UsageMetric label={t('usageContextCompactions')} value={usage.value.totals.automationContextCompactions} />
                         <UsageMetric label={t('usageInputSaved')} value={usage.value.totals.estimatedAutomationInputTokensSaved} />
                         <UsageMetric label={t('usageLimitStops')} value={usage.value.totals.automationLimitStops} />
+                        <UsageMetric label={t('usageMcpTokens')} value={usage.value.totals.derived.mcpTokens} />
+                        <UsageMetric label={t('usageMcpExternalCalls')} value={usage.value.totals.mcpExternalCalls} />
+                        <UsageMetric label={t('usageMcpSchemaInput')} value={usage.value.totals.mcpSchemaInputTokensEstimated} />
+                        <UsageMetric label={t('usageMcpResultInput')} value={usage.value.totals.mcpResultInputTokensEstimated} />
+                        <UsageMetric label={t('usageMcpContextCompactions')} value={usage.value.totals.mcpContextCompactions} />
+                        <UsageMetric label={t('usageMcpLimitStops')} value={usage.value.totals.mcpLimitStops} />
                         <UsageMetric label={t('usageVisualTurns')} value={usage.value.totals.visualTurns} />
                         <UsageMetric label={t('usageLookCalls')} value={usage.value.totals.lookCalls} />
                         <UsageMetric label={t('usageCacheHits')} value={usage.value.totals.cacheHits} />
                       </div>
+                      <p style={styles.hint}>{t('usageMcpSubsetHint')}</p>
                       <p style={styles.hint}>{t('usageFinalExcluded')}</p>
                       <p style={styles.hint}>{t('usageUpdatedAt')}{usage.value.updatedAt}</p>
                     </div>

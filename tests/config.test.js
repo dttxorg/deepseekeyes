@@ -18,12 +18,77 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.historySummaryChars, 320)
   assert.equal(config.browserHistoryLimit, 8)
   assert.equal(config.browserComputerUse, false)
+  assert.equal(config.mcpEnabled, false)
+  assert.deepEqual(config.mcpServers, [])
+  assert.equal(config.mcpMaxTools, 16)
+  assert.equal(config.mcpMaxSchemaTokens, 12_000)
+  assert.equal(config.mcpMaxResultChars, 20_000)
+  assert.equal(config.mcpToolCallTimeoutMs, 30_000)
+  assert.equal(config.mcpAudit, true)
   assert.equal(config.cacheDir, join('/test-home', '.dsh', 'deepseekeyes', 'evidence'))
   assert.equal(config.usageStats, true)
   assert.equal(config.usageStatsPath, join('/test-home', '.dsh', 'deepseekeyes', 'usage-stats.json'))
   assert.equal(config.visionAttemptLogPath, join('/test-home', '.dsh', 'deepseekeyes', 'vision-attempts.json'))
   assert.equal(config.browserArtifactsDir, join('/test-home', '.dsh', 'deepseekeyes', 'browser-runs'))
   assert.equal(config.desktopArtifactsDir, join('/test-home', '.dsh', 'deepseekeyes', 'desktop-runs'))
+  assert.equal(config.mcpArtifactDir, join('/test-home', '.dsh', 'deepseekeyes', 'mcp-artifacts'))
+})
+
+test('Streamable HTTP requires TLS except for explicit loopback hosts', () => {
+  const server = url => ({
+    id: 'web',
+    name: 'Web',
+    transport: 'streamable-http',
+    url,
+    headers: { Authorization: { env: 'MCP_AUTHORIZATION' } },
+  })
+  for (const url of [
+    'http://localhost:3000/mcp',
+    'http://worker.localhost:3000/mcp',
+    'http://127.99.1.2:3000/mcp',
+    'http://[::1]:3000/mcp',
+    'https://mcp.example.test/mcp',
+  ]) {
+    assert.doesNotThrow(() => resolveConfig({ mcpServers: [server(url)] }, {}, '/tmp'), url)
+  }
+  for (const url of [
+    'http://mcp.example.test/mcp',
+    'http://10.0.0.5/mcp',
+    'http://0.0.0.0/mcp',
+    'http://localhost.example.test/mcp',
+  ]) {
+    assert.throws(
+      () => resolveConfig({ mcpServers: [server(url)] }, {}, '/tmp'),
+      /must use https unless the hostname is explicit loopback/,
+      url,
+    )
+  }
+})
+
+test('configuration rejects common inline stdio credential option aliases', () => {
+  const server = args => ({
+    id: 'local',
+    name: 'Local',
+    transport: 'stdio',
+    command: 'node',
+    args,
+  })
+  for (const args of [
+    ['--oauth-token=plaintext'],
+    ['--pass', 'plaintext'],
+    ['--client_secret', 'plaintext'],
+    ['--api_key=plaintext'],
+    ['--access_token', 'plaintext'],
+  ]) {
+    assert.throws(
+      () => resolveConfig({ mcpServers: [server(args)] }, {}, '/tmp'),
+      /credentials must use env references/,
+      JSON.stringify(args),
+    )
+  }
+  assert.doesNotThrow(() => resolveConfig({
+    mcpServers: [server(['--auth-type', 'none', '--token_limit', '4096'])],
+  }, {}, '/tmp'))
 })
 
 test('visual token budgets accept large custom values and provider-managed output', () => {

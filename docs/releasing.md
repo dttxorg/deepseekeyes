@@ -32,8 +32,9 @@ Confirm that `package.json` and `CHANGELOG.md` contain the same version, then cr
 ## Registry verification
 
 ```bash
-npm view @dttxorg/deepseekeyes@0.5.6 name version dist.integrity dist.tarball
-npx -y @dttxorg/deepseekeyes@0.5.6 doctor
+VERSION="$(node -p 'require("./package.json").version')"
+npm view "@dttxorg/deepseekeyes@$VERSION" name version dist.integrity dist.tarball
+npx -y "@dttxorg/deepseekeyes@$VERSION" doctor
 ```
 
 Verify both commands from a fresh environment before marking the GitHub Release complete.

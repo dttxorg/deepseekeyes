@@ -28,10 +28,16 @@ import {
   renderTargetEvidence,
 } from '../src/protocol.js'
 import { applyLookTool } from '../src/look.js'
+import { applyMcpRuntime } from '../src/mcp/index.js'
+import { loadHostDshTools } from '../src/mcp/host-runtime.js'
 import { compactSessionHistory, shadowSessionImages } from '../src/session.js'
 import { installHarnessSettings, SETTINGS_NAMESPACE } from '../src/settings.js'
 import { addUsage, emptyUsage, replayWithUsage } from '../src/stream.js'
-import { collectFinalWithBudget, fitOutputBudget } from '../src/token-safety.js'
+import {
+  collectFinalWithBudget,
+  estimateToolDefinitionTokens,
+  fitOutputBudget,
+} from '../src/token-safety.js'
 import { estimateInjectedTextTokens, UsageTracker } from '../src/usage.js'
 import { installUsageRpc } from '../src/usage-rpc.js'
 import { EvidenceManager, VisionRouter } from '../src/vision.js'
@@ -185,7 +191,93 @@ route_attempts: ${JSON.stringify(attempts)}
 continuation: Continue from the adjacent DeepSeekEyes desktop state, actionResult, windows, accessibility elements, stateDelta and screenshot metadata. Pixels were preserved but were not decoded in this step; request a later targeted reread only when a pixel-only fact is required.`
 }
 
-async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, automationGuard, logger) {
+function automationUsageCategory(kind) {
+  return kind === 'mcp' ? 'upstreamMcp' : 'upstreamAutomation'
+}
+
+function codeRuntime(ctx) {
+  try {
+    return typeof ctx.get === 'function' ? ctx.get('codeRuntime') : ctx.codeRuntime
+  } catch {
+    return undefined
+  }
+}
+
+function sdkSchemasForRequest(ctx, options) {
+  if (typeof ctx.tools?.sdkSchemas !== 'function') return []
+  let scope
+  if (options.sessionId !== undefined && typeof ctx.agents?.get === 'function') {
+    try {
+      scope = ctx.agents.get(options.sessionId)
+    } catch {
+      return []
+    }
+    // A loop-built request always has a live agent. Falling back to the global
+    // catalog after that agent disappeared would over-attribute scoped tools.
+    if (scope === undefined) return []
+  }
+  try {
+    return ctx.tools.sdkSchemas(scope)
+  } catch {
+    // Usage accounting is observational and must never break a model request.
+    return []
+  }
+}
+
+async function renderCodeSdk(ctx, schemas, loadDshTools) {
+  const language = codeRuntime(ctx)?.language
+  const tools = await loadDshTools(ctx)
+  if (language === 'typescript') return tools.renderToolsSdk(schemas)
+  if (language === 'python') return tools.renderToolsSdkPy(schemas)
+  return undefined
+}
+
+async function codeMcpSchemaTokens(ctx, options, loadDshTools) {
+  if (typeof options.system !== 'string' || options.system === '') return 0
+  try {
+    const schemas = sdkSchemasForRequest(ctx, options)
+    const nonMcpSchemas = schemas.filter(
+      schema => typeof schema?.name !== 'string' || !schema.name.startsWith('mcp__'),
+    )
+    if (schemas.length === nonMcpSchemas.length) return 0
+    const rendered = await renderCodeSdk(ctx, schemas, loadDshTools)
+    const renderedWithoutMcp = await renderCodeSdk(ctx, nonMcpSchemas, loadDshTools)
+    if (rendered === undefined
+      || renderedWithoutMcp === undefined
+      || !options.system.includes(rendered)) return 0
+    const withoutMcp = options.system.replace(rendered, renderedWithoutMcp)
+    return Math.max(
+      0,
+      Math.ceil(options.system.length / 4) - Math.ceil(withoutMcp.length / 4),
+    )
+  } catch {
+    return 0
+  }
+}
+
+async function mcpSchemaTokens(ctx, options, enabled, loadDshTools) {
+  if (!enabled) return 0
+  const nativeTokens = estimateToolDefinitionTokens(
+    options.tools,
+    (_tool, name) => typeof name === 'string' && name.startsWith('mcp__'),
+  )
+  // `both` sends two distinct input surfaces: a native function definition and
+  // the generated tools:sdk text. Each consumes context, so account both; a
+  // native-only or code-only request naturally contributes zero on the absent
+  // surface.
+  return nativeTokens + await codeMcpSchemaTokens(ctx, options, loadDshTools)
+}
+
+async function* bridgeStream(
+  ctx,
+  runtime,
+  options,
+  lookManager,
+  usageTracker,
+  automationGuard,
+  logger,
+  loadDshTools,
+) {
   const { config, router, evidenceManager } = runtime
   const upstreamModel = lockedUpstreamModel(config, options.model)
   let upstreamOptions = {
@@ -209,6 +301,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
       )
     } catch (error) {
       await usageTracker.recordAutomationLimitStop(options.sessionId)
+      if (automationKind === 'mcp') await usageTracker.recordMcpLimitStop(options.sessionId)
       throw error
     }
   }
@@ -218,6 +311,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
     const bounded = boundAutomationContext(callOptions, config.automationContextMaxTokens)
     if (bounded.changed) {
       await usageTracker.recordAutomationContextCompaction(options.sessionId, bounded.savedTokens)
+      if (automationKind === 'mcp') await usageTracker.recordMcpContextCompaction(options.sessionId)
       logger.warn?.(
         `deepseekeyes: bounded ${automationKind} model context ${bounded.beforeTokens} -> ${bounded.afterTokens} `
         + `(limit=${config.automationContextMaxTokens}, droppedMessages=${bounded.droppedMessages})`,
@@ -225,8 +319,9 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
     }
     if (!bounded.withinLimit) {
       await usageTracker.recordAutomationLimitStop(options.sessionId)
+      if (automationKind === 'mcp') await usageTracker.recordMcpLimitStop(options.sessionId)
       throw new DeepSeekEyesError(
-        `Current Computer Use instruction and newest tool state require about ${bounded.afterTokens} input tokens, above automationContextMaxTokens=${config.automationContextMaxTokens}. Increase the setting or choose 0 for unlimited.`,
+        `Current ${automationKind === 'mcp' ? 'MCP' : 'Computer Use'} instruction and newest tool state require about ${bounded.afterTokens} input tokens, above automationContextMaxTokens=${config.automationContextMaxTokens}. Increase the setting or choose 0 for unlimited.`,
         'AUTOMATION_CONTEXT_LIMIT',
       )
     }
@@ -239,6 +334,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
       )
     } catch (error) {
       await usageTracker.recordAutomationLimitStop(options.sessionId)
+      if (automationKind === 'mcp') await usageTracker.recordMcpLimitStop(options.sessionId)
       throw error
     }
     if (turn.newTurn) await usageTracker.recordAutomationTurn(options.sessionId)
@@ -246,11 +342,19 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
   }
 
   const collectPreparedUpstream = async (prepared, upstreamInfo) => {
+    const schemaTokens = await mcpSchemaTokens(ctx, prepared, config.mcpEnabled, loadDshTools)
+    if (schemaTokens > 0) {
+      await usageTracker.recordMcpSchemaInput(options.sessionId, schemaTokens)
+    }
     try {
       return await collectFinalWithBudget(ctx, prepared, upstreamInfo, logger)
     } catch (error) {
       if (automationKind !== undefined && usageHasTokens(error?.usage)) {
-        await usageTracker.recordCall(options.sessionId, 'upstreamAutomation', error.usage)
+        await usageTracker.recordCall(
+          options.sessionId,
+          automationUsageCategory(automationKind),
+          error.usage,
+        )
       }
       throw error
     }
@@ -279,13 +383,21 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
         )
       : options.messages
     upstreamOptions = await prepareUpstreamCall({ ...upstreamOptions, messages })
+    const schemaTokens = await mcpSchemaTokens(ctx, upstreamOptions, config.mcpEnabled, loadDshTools)
+    if (schemaTokens > 0) {
+      await usageTracker.recordMcpSchemaInput(options.sessionId, schemaTokens)
+    }
     yield* forwardText(
       ctx,
       upstreamOptions,
       logger,
       automationKind === undefined
         ? undefined
-        : usage => usageTracker.recordCall(options.sessionId, 'upstreamAutomation', usage),
+        : usage => usageTracker.recordCall(
+            options.sessionId,
+            automationUsageCategory(automationKind),
+            usage,
+          ),
     )
     return
   }
@@ -435,7 +547,23 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
   if (baseRecords.length === 0) {
     if (desktopFallbackCount === 0) {
       await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
-      yield* forwardText(ctx, { ...upstreamOptions, messages }, logger)
+      const prepared = await prepareUpstreamCall({ ...upstreamOptions, messages })
+      const schemaTokens = await mcpSchemaTokens(ctx, prepared, config.mcpEnabled, loadDshTools)
+      if (schemaTokens > 0) {
+        await usageTracker.recordMcpSchemaInput(options.sessionId, schemaTokens)
+      }
+      yield* forwardText(
+        ctx,
+        prepared,
+        logger,
+        automationKind === undefined
+          ? undefined
+          : usage => usageTracker.recordCall(
+              options.sessionId,
+              automationUsageCategory(automationKind),
+              usage,
+            ),
+      )
       return
     }
     const upstreamInfo = await ctx.llm.resolveModelInfo(
@@ -451,7 +579,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
     addUsage(totalUsage, guarded.result.usage)
     await usageTracker.recordCall(
       options.sessionId,
-      automationKind === undefined ? 'upstreamFinal' : 'upstreamAutomation',
+      automationKind === undefined ? 'upstreamFinal' : automationUsageCategory(automationKind),
       guarded.result.usage,
     )
     await usageTracker.recordBridgeEstimate(options.sessionId, injectedEvidenceTokens)
@@ -492,7 +620,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
     if (request === undefined) {
       await usageTracker.recordCall(
         options.sessionId,
-        automationKind === undefined ? 'upstreamFinal' : 'upstreamAutomation',
+        automationKind === undefined ? 'upstreamFinal' : automationUsageCategory(automationKind),
         upstream.usage,
       )
       await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
@@ -501,7 +629,7 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
     }
     await usageTracker.recordCall(
       options.sessionId,
-      automationKind === undefined ? 'upstreamClarification' : 'upstreamAutomation',
+      automationKind === undefined ? 'upstreamClarification' : automationUsageCategory(automationKind),
       upstream.usage,
     )
     await usageTracker.recordBridgeEstimate(options.sessionId, bridgeEstimate)
@@ -556,8 +684,9 @@ async function* bridgeStream(ctx, runtime, options, lookManager, usageTracker, a
 }
 
 /** Build the live-reconfigurable plain-object LLM adapter used by the out-of-tree DSH plugin. */
-export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
+export function createDeepSeekEyesAdapter(ctx, rawConfig = {}, options = {}) {
   const logger = ctx.logger ?? console
+  const loadDshTools = options.loadDshTools ?? loadHostDshTools
   let runtime = createRuntime(ctx, rawConfig, logger)
   const usage = new UsageTracker({
     enabled: runtime.config.usageStats,
@@ -585,6 +714,11 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       state.usage.setEnabled(runtime.config.usageStats)
       state.browser?.reconfigure(runtime.config)
       state.desktop?.reconfigure(runtime.config)
+      if (state.mcp !== undefined) {
+        void state.mcp.reconfigure(runtime.config).catch((error) => {
+          logger.error?.(`deepseekeyes: MCP reconfiguration failed: ${boundedVisualFailure(error)}`)
+        })
+      }
       lastCatalogFailure = undefined
       return runtime.config
     },
@@ -637,19 +771,33 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}) {
       return visionWrappedModel(info, current.config, route)
     },
     stream(options) {
-      return bridgeStream(ctx, runtime, options, state.look, state.usage, state.automationGuard, logger)
+      return bridgeStream(
+        ctx,
+        runtime,
+        options,
+        state.look,
+        state.usage,
+        state.automationGuard,
+        logger,
+        loadDshTools,
+      )
     },
   }
 
   return state
 }
 
-export function apply(ctx, rawConfig = {}) {
-  const state = createDeepSeekEyesAdapter(ctx, rawConfig)
+export function apply(ctx, rawConfig = {}, options = {}) {
+  const state = createDeepSeekEyesAdapter(ctx, rawConfig, options)
   ctx.llm.registerAdapter([state.config.providerId], state.adapter)
   state.look = applyLookTool(ctx, state)
   state.browser = applyBrowserComputerUse(ctx, state.config)
   state.desktop = applyDesktopComputerUse(ctx, state.config)
+  state.mcp = applyMcpRuntime(ctx, state.config, {
+    usageTracker: state.usage,
+    logger: ctx.logger ?? console,
+    loadDshTools: options.loadDshTools,
+  })
 
   if (typeof ctx.llm.registerConfigurableProviders === 'function') {
     ctx.llm.registerConfigurableProviders([{
@@ -660,7 +808,7 @@ export function apply(ctx, rawConfig = {}) {
     }])
   }
   installHarnessSettings(ctx, state, rawConfig)
-  installUsageRpc(ctx, state.usage)
+  installUsageRpc(ctx, state.usage, state.mcp)
 
   if (typeof ctx.on === 'function') {
     ctx.on('llm/adapters-updated', () => {

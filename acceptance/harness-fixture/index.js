@@ -117,6 +117,14 @@ export function apply(ctx) {
       const hasLookTool = options.tools?.some(tool => tool.name === 'deepseekeyes_look') === true
       const hasLookPrompt = options.system?.includes('DeepSeekEyes preserved images') === true
       const hasComputerTool = options.tools?.some(tool => tool.name === 'computer') === true
+      const hasMcpEchoTool = options.tools?.some(tool => tool.name === 'mcp__acceptance__echo') === true
+      if (corpus.includes('MCP_STDIO_ACCEPTANCE')) {
+        if (!hasMcpEchoTool) return output('MCP_STDIO_ACCEPTANCE_TOOL_MISSING')
+        if (corpus.includes('[DeepSeekEyes MCP result]') && corpus.includes('echo:verified')) {
+          return output('MCP_STDIO_ACCEPTANCE_OK: official stdio result reached the final model.')
+        }
+        return toolCall('mcp__acceptance__echo', { text: 'verified' })
+      }
       if (corpus.includes('DESKTOP_COMPUTER_USE_ACCEPTANCE')) {
         if (!hasComputerTool) return output('DESKTOP_COMPUTER_TOOL_MISSING')
         if (corpus.includes('[DeepSeekEyes desktop state]')) {

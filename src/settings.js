@@ -18,6 +18,10 @@ import {
   DEFAULT_DESKTOP_SETTLE_MS,
   DEFAULT_DESKTOP_TIMEOUT_MS,
   DEFAULT_MAX_CLARIFICATIONS,
+  DEFAULT_MCP_MAX_RESULT_CHARS,
+  DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+  DEFAULT_MCP_MAX_TOOLS,
+  DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
   DEFAULT_HISTORY_IMAGE_LIMIT,
   DEFAULT_HISTORY_SUMMARY_CHARS,
   DEFAULT_TARGET_MAX_TOKENS,
@@ -78,7 +82,38 @@ export const SETTINGS_FIELDS = Object.freeze([
   'desktopMacDisplay',
   'desktopWindowsPowerShell',
   'desktopArtifactsDir',
+  'mcpEnabled',
+  'mcpServers',
+  'mcpMaxTools',
+  'mcpMaxSchemaTokens',
+  'mcpMaxResultChars',
+  'mcpToolCallTimeoutMs',
+  'mcpAudit',
+  'mcpArtifactDir',
 ])
+
+export const McpCredentialEnvRefConfig = z.object({
+  env: z.string().required(),
+})
+
+export const McpServerConfig = z.object({
+  id: z.string().required(),
+  name: z.string().required(),
+  enabled: z.boolean().default(true),
+  transport: z.union([
+    z.const('stdio'),
+    z.const('streamable-http'),
+  ]).default('stdio'),
+  command: z.string(),
+  args: z.array(z.string()).default([]),
+  cwd: z.string(),
+  url: z.string(),
+  env: z.dict(McpCredentialEnvRefConfig).default({}),
+  headers: z.dict(McpCredentialEnvRefConfig).default({}),
+  allowedTools: z.array(z.string()).default([]),
+  denyTools: z.array(z.string()).default([]),
+  timeoutMs: z.number().step(1).min(100).max(3_600_000),
+})
 
 /** Schemastery schema serialized by Harness and consumed by the native settings client. */
 export const SettingsConfig = z.object({
@@ -131,6 +166,14 @@ export const SettingsConfig = z.object({
   desktopMacDisplay: z.number().step(1).min(1).max(32).default(DEFAULT_DESKTOP_MAC_DISPLAY),
   desktopWindowsPowerShell: z.string(),
   desktopArtifactsDir: z.string(),
+  mcpEnabled: z.boolean().default(false),
+  mcpServers: z.array(McpServerConfig).default([]),
+  mcpMaxTools: z.number().step(1).min(0).max(1_000).default(DEFAULT_MCP_MAX_TOOLS),
+  mcpMaxSchemaTokens: z.number().step(1).min(0).max(10_000_000).default(DEFAULT_MCP_MAX_SCHEMA_TOKENS),
+  mcpMaxResultChars: z.number().step(1).min(256).max(10_000_000).default(DEFAULT_MCP_MAX_RESULT_CHARS),
+  mcpToolCallTimeoutMs: z.number().step(1).min(100).max(3_600_000).default(DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS),
+  mcpAudit: z.boolean().default(true),
+  mcpArtifactDir: z.union([z.string(), z.const(false)]),
 })
 
 /** Detach only settings-owned values from a resolved plugin configuration. */

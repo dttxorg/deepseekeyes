@@ -5,6 +5,7 @@ import { collectStream, textStream } from '../src/stream.js'
 import {
   collectFinalWithBudget,
   estimateRequestTokens,
+  estimateToolDefinitionTokens,
   fitOutputBudget,
 } from '../src/token-safety.js'
 import {
@@ -43,6 +44,19 @@ test('the 1,048,576 context / 384,000 output case is fitted below the provider b
   assert.equal(fitted.changed, true)
   assert.ok(fitted.options.maxTokens < 384_000)
   assert.ok(estimated + fitted.options.maxTokens + fitted.margin <= 1_048_576)
+})
+
+test('tool definition accounting can isolate only MCP schemas', () => {
+  const tools = [
+    { name: 'computer', parameters: { type: 'object' } },
+    { name: 'mcp__github__list_issues', parameters: { type: 'object', properties: { state: { type: 'string' } } } },
+  ]
+  const mcp = estimateToolDefinitionTokens(
+    tools,
+    (_tool, name) => name.startsWith('mcp__'),
+  )
+  assert.ok(mcp > 4)
+  assert.ok(mcp < estimateToolDefinitionTokens(tools))
 })
 
 test('an exact provider overflow retries once with the capacity reported by the provider', async () => {

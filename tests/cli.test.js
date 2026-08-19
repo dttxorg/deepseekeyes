@@ -26,6 +26,10 @@ async function writeFixturePackage(profileDirectory) {
   const required = [
     'dsh/index.js',
     'lib/client.js',
+    'src/mcp/index.js',
+    'src/mcp/host-runtime.js',
+    'src/mcp/manager.js',
+    'src/mcp/official-adapter.js',
     'src/desktop/helpers/macos.jxa',
     'src/desktop/helpers/windows.ps1',
     'cordis.patch.yml',
@@ -49,15 +53,65 @@ async function writeFixturePackage(profileDirectory) {
   }))
   await writeFile(join(root, 'package.json'), JSON.stringify({
     name: NPM_PACKAGE,
-    version: '0.4.0',
+    version: '0.6.0',
+    peerDependencies: {
+      '@deepseek-ai/dsh-mcp-client': '0.1.0-rc.6',
+      '@deepseek-ai/dsh-tools': '0.1.0-rc.6',
+    },
+    peerDependenciesMeta: {
+      '@deepseek-ai/dsh-mcp-client': { optional: true },
+      '@deepseek-ai/dsh-tools': { optional: true },
+    },
     exports: { './package.json': './package.json' },
   }))
+}
+
+async function writeRuntimePackage(root, name, version, source) {
+  const directory = join(root, ...name.split('/'))
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'package.json'), JSON.stringify({
+    name,
+    version,
+    type: 'module',
+    main: './index.js',
+  }))
+  await writeFile(join(directory, 'index.js'), source)
+}
+
+async function writeHostRuntimeFixture(dshHome, profileDirectory) {
+  const hostModules = join(dshHome, 'profiles', 'node_modules')
+  const profileModules = join(profileDirectory, 'node_modules')
+  await writeRuntimePackage(
+    hostModules,
+    '@deepseek-ai/dsh-tools',
+    '0.1.0-rc.6',
+    'export function renderToolsSdk() {} export function renderToolsSdkPy() {}',
+  )
+  await writeRuntimePackage(
+    hostModules,
+    '@deepseek-ai/dsh-mcp-client',
+    '0.1.0-rc.6',
+    'export function apply() {}',
+  )
+  await writeRuntimePackage(
+    profileModules,
+    '@deepseek-ai/dsh-tools',
+    '9.9.9-shadow',
+    'export const profileShadow = true',
+  )
+  await writeRuntimePackage(
+    profileModules,
+    '@deepseek-ai/dsh-mcp-client',
+    '9.9.9-shadow',
+    'export const profileShadow = true',
+  )
 }
 
 async function writeProfile(dshHome, { bom = false } = {}) {
   const profileDirectory = join(dshHome, 'profiles', 'web')
   await mkdir(profileDirectory, { recursive: true })
   await writeFixturePackage(profileDirectory)
+  await writeHostRuntimeFixture(dshHome, profileDirectory)
   const manifest = JSON.stringify({ dependencies: { [NPM_PACKAGE]: '0.4.0' } })
   await writeFile(join(profileDirectory, 'package.json'), `${bom ? '\uFEFF' : ''}${manifest}`)
 }
@@ -101,6 +155,8 @@ test('doctor validates the release tree and emits machine-readable JSON', async 
     assert.equal(report.packageRoot, repositoryRoot)
     assert.equal(report.checks.find(entry => entry.id === 'strict-evidence-schema')?.passed, true)
     assert.equal(report.checks.find(entry => entry.id === 'client-module-id')?.passed, true)
+    assert.equal(report.checks.find(entry => entry.id === 'official-mcp-client')?.passed, true)
+    assert.equal(report.checks.find(entry => entry.id === 'official-dsh-tools-resolvable')?.detail.includes('hostManaged=true'), true)
   } finally {
     await rm(dshHome, { recursive: true, force: true })
   }
@@ -118,6 +174,64 @@ test('doctor resolves an installed scoped profile package', async () => {
     assert.equal(report.checks.find(entry => entry.id === 'profile-manifest')?.passed, true)
     assert.equal(report.checks.find(entry => entry.id === 'scoped-package-installed')?.passed, true)
     assert.equal(report.checks.find(entry => entry.id === 'package-identity')?.passed, true)
+    assert.equal(report.checks.find(entry => entry.id === 'official-mcp-client')?.passed, true)
+    assert.match(
+      report.checks.find(entry => entry.id === 'official-dsh-tools-resolvable')?.detail ?? '',
+      /host-fallback=verified/,
+    )
+  } finally {
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
+
+test('doctor fails closed when the managed DSH Host fallback is missing', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'deepseekeyes-doctor-host-fallback-'))
+  try {
+    await writeProfile(dshHome)
+    await rm(join(
+      dshHome,
+      'profiles',
+      'node_modules',
+      '@deepseek-ai',
+      'dsh-tools',
+    ), { recursive: true, force: true })
+    const captured = captureIo()
+    const status = await runCli(['doctor', '--dsh-home', dshHome, '--json'], captured.io)
+    assert.equal(status, 1)
+    const report = JSON.parse(captured.output.join('\n'))
+    const runtime = report.checks.find(entry => entry.id === 'official-dsh-tools-resolvable')
+    assert.equal(report.passed, false)
+    assert.equal(runtime?.passed, false)
+    assert.match(runtime?.detail ?? '', /managed module fallback/)
+  } finally {
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
+
+test('doctor fails closed when the Host runtime bridge is missing from an installed package', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'deepseekeyes-doctor-host-runtime-'))
+  try {
+    await writeProfile(dshHome)
+    const hostRuntime = join(
+      dshHome,
+      'profiles',
+      'web',
+      'node_modules',
+      '@dttxorg',
+      'deepseekeyes',
+      'src',
+      'mcp',
+      'host-runtime.js',
+    )
+    await rm(hostRuntime)
+    const captured = captureIo()
+    const status = await runCli(['doctor', '--dsh-home', dshHome, '--json'], captured.io)
+    assert.equal(status, 1)
+    const report = JSON.parse(captured.output.join('\n'))
+    const fileCheck = report.checks.find(entry => entry.id === 'file:src/mcp/host-runtime.js')
+    assert.equal(report.passed, false)
+    assert.equal(fileCheck?.passed, false)
+    assert.equal(fileCheck?.detail, 'src/mcp/host-runtime.js missing')
   } finally {
     await rm(dshHome, { recursive: true, force: true })
   }

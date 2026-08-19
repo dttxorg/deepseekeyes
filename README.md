@@ -11,7 +11,7 @@
 <p align="center"><strong>Give DeepSeek sight without leaving the conversation.</strong></p>
 
 <p align="center">
-  An auditable vision and cross-platform Computer Use runtime for
+  An auditable vision, MCP and cross-platform Computer Use runtime for
   <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a>.
 </p>
 
@@ -21,6 +21,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#computer-use">Computer Use</a> ·
+  <a href="#mcp-application-layer">MCP applications</a> ·
   <a href="#token-accounting">Token accounting</a> ·
   <a href="https://x.com/lucars2026">X / @lucars2026</a>
 </p>
@@ -39,14 +40,15 @@ DeepSeek's strongest text models can reason about code, documents and interfaces
 
 No window switching. No manual transcription. No lossy screenshot relay.
 
-This is not another captioning window. It is the **DSH auditable vision and Computer Use runtime** for image evidence, Browser automation and native Windows/macOS control.
+This is not another captioning window. It is the **DSH auditable vision, Computer Use and MCP application runtime** for image evidence, structured app calls, Browser automation and native Windows/macOS control.
 
 ## See it in action
 
-These are real DeepSeek Harness captures, not product mockups. They show the two complete loops DeepSeekEyes adds to a normal DeepSeek conversation:
+These are real DeepSeek Harness captures, not product mockups. The captures show the image and Browser loops; the MCP tool loop is documented separately below:
 
 - **Image understanding:** paste an image → the configured multimodal model reads the original pixels → DeepSeek receives validated evidence and answers in the same task.
 - **Browser control:** ask DeepSeek to open a page → Browser Computer Use observes, opens, scrolls and clicks → every action returns a fresh state so DeepSeek can verify the result or recover from a missing target.
+- **Structured app calls:** enable an MCP server and select only the required tools → DeepSeek calls the application in the background → DeepSeekEyes bounds, hashes and audits the result → DeepSeek verifies the requested outcome from returned or read-back evidence.
 
 <table>
   <tr>
@@ -82,11 +84,12 @@ These are real DeepSeek Harness captures, not product mockups. They show the two
 | **One conversation** | Image → vision evidence → DeepSeek reasoning → optional visual follow-up all happen inside the current Harness task. |
 | **Original pixels stay authoritative** | User images are not resized, converted or recompressed. Every reread references the original content-addressed attachment. |
 | **The models can communicate** | DeepSeek can request a precise region or detail instead of depending on one oversized first description. |
-| **No surprise text overhead** | Pure-text turns keep the direct model path: no visual call, no Computer Use tool and no DeepSeekEyes usage entry. |
+| **No surprise text overhead** | With optional automation and MCP disabled—the default—pure-text turns keep the direct model path with no visual call or tool schema. MCP schema/result estimates become visible when tools are explicitly exposed. |
 | **The eye is verified** | Static image-capability metadata is followed by an optional randomized 3×3 pixel probe. A text-only model cannot silently pose as the eye. |
 | **Routes fail over visibly** | Ordered visual routes, health TTL, circuit cooldown and bounded attempts are persisted without prompt/image contents. |
 | **Evidence is a contract** | One public JSON Schema drives strict Ajv validation; bounded local canonicalization repairs only known structure/scalar formats and audits every change. |
 | **Automation is built in** | Browser Computer Use plus native Windows/macOS desktop control can observe, act, verify and preserve evidence. |
+| **Structured hands are built in** | The MCP control center connects stdio or Streamable HTTP servers while exposing only an explicit tool allowlist. |
 | **Usage is visible** | The native settings card separates exact Provider usage, estimated bridge input and normal final-answer usage. |
 
 ## Quick start
@@ -153,6 +156,7 @@ Historical images are compacted into bounded SHA-256 pointers. They cause no aut
 | Browser Computer Use | ✅ | Open, observe, click, type, select, wait, assert, report and close. |
 | Windows desktop Computer Use | ✅ | Window capture + UI Automation elements/actions + user32 input. |
 | macOS desktop Computer Use | ✅ | Window capture + Accessibility elements/actions + CoreGraphics input. |
+| MCP application tools | ✅ | Harness-native stdio/Streamable HTTP **tool** client, bounded captured catalog, allowlists, health, hard result admission, bounded previews, atomic image admission and audit. Remote Streamable HTTP requires `https://`; plaintext HTTP is loopback-only. MCP Resources/Prompts are not bridged in 0.6. |
 | Lossless oversized screenshots | ✅ | Recompressed without pixel changes, then tiled only when the Host's 5 MB limit requires it. |
 | Local Token accounting | ✅ | Exact Provider usage plus clearly labelled bridge estimates. |
 | Public visual eval | ✅ | Screenshot, dense text, chart, UI and prompt-injection cases with accuracy/latency/Token output. |
@@ -200,17 +204,50 @@ If every bounded visual route fails for a `computer` screenshot, the original PN
 
 Computer Use model calls are isolated from unrelated long-task history by a default **32,768-token automation context budget**. Only the model-facing copy is bounded: the newest direct user instruction, atomic tool-call/result tail, full DSH task, screenshots and reports remain preserved. A second guard stops after 32 final-model calls for one user instruction. Both limits accept custom values and explicit `0` unlimited mode. Ordinary text and non-automation image turns never enter this guard.
 
+## MCP application layer
+
+DeepSeekEyes 0.6 adds the missing product layer around DSH's official `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` and matching `@deepseek-ai/dsh-tools@0.1.0-rc.6` renderer API. Both are loaded from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback and canonicalized to the Host installation instead of being installed as duplicate plugin dependencies; even a profile-local shadow cannot split Cordis or tool-scheduler identity. Configure it under the default-collapsed **MCP apps and tools** section—no manual `cordis.patch.yml` entry is required.
+
+- Connect local **stdio** servers or remote **Streamable HTTP** endpoints. Remote endpoints must use `https://`; `http://` is accepted only for an explicit loopback hostname/address such as `localhost`, `127.0.0.1` or `[::1]`.
+- Test a real transport/tools-list round trip, force a fresh transport generation for discovery, and reconnect from the settings card. Status polling reuses a successful health result for 30 seconds, then performs one shared live probe instead of trusting stale captured tools.
+- Store only credential **environment-variable references**: stdio `env` entries and Streamable HTTP headers name variables from the `dsh web` process environment; plaintext tokens, credential-bearing arguments and credential-bearing URLs are rejected.
+- Expose zero tools by default; each new allowlist starts empty, and a deny selector always wins over an allow selector.
+- Reject a persistent captured catalog atomically if it exceeds 256 tools, 1,000,000 measured schema characters, 4,000,000 UTF-8 schema bytes, schema depth 64 or 100,000 schema nodes. A previously non-empty generation becoming empty is withdrawn and marked unverified until a matching live probe confirms that zero tools is the server's real healthy state.
+- Enforce the separate `mcpMaxTools` exposure budget and estimated Schema Token budget after capture, before any allowlisted definition reaches a model request. Raising that exposure budget does not relax the fixed capture limits.
+- Isolate schemas and MCP guidance to the DeepSeekEyes virtual Provider. Non-DeepSeekEyes prompt assembly strips both, and wrong-Provider or agentless execution is rejected again before the external call.
+- Carry nested Code Mode MCP outcomes through the Harness Host's `deferContext()` channel as a trusted plugin-authored `mcp-context` message. Every successful or failed sub-call contributes a compact status/hash marker; image outcomes carry only immutable Harness attachment references, never inline base64. The next model continuation is therefore classified as MCP automation and enters the same context/call guards and `upstreamMcp` accounting. Native MCP calls already render their own result and do not add this duplicate context. A Code Mode Host without that channel fails before the external call with `MCP_RESULT_CONTEXT_UNAVAILABLE`.
+- Suspend all MCP exposure before asynchronous stop or reconfiguration cleanup starts. Schemas and guidance remain absent while any old transport is closing, and only the validated replacement generation is republished after cleanup, so a slow or failed close cannot leave stale tools callable.
+- Admit every successful adapter result through fixed hard limits **before** DeepSeekEyes canonicalization, base64 decoding, attachment writes or artifact persistence: depth 64, 50,000 nodes, 4,096 content blocks, 16 Mi characters of aggregate non-image strings, 8 images, 28 MiB encoded image data, 20 MiB decoded image data and 20 MiB other binary data.
+- Apply `mcpMaxResultChars` only after that admission as the model-preview budget. Oversized or non-text canonical JSON from the admitted adapter value is written to a private SHA-256-addressed local artifact by default. A write/rename failure rejects the result and always attempts to remove its temporary file without replacing the original error. With `mcpArtifactDir: false`, no complete artifact/reference is claimed: delivered images are labelled as attachments and omitted raw image/audio/resource blocks are labelled as not retained.
+- Submit all image blocks in one `ctx.attachments.saveImages()` batch so the current Harness Host owns count, aggregate-byte, media and raster admission. Older saveImage-only Hosts use a bounded compatibility path that validates the whole batch before sequential writes. Returned attachments then enter the normal original-pixel visual evidence loop.
+- Keep error audit content correlation-only: stable/redacted error code plus SHA-256 of the error message, without persisting the message itself.
+
+MCP is the preferred hand for an application with a structured server/API and usually works without bringing its window to the foreground. Browser Computer Use remains the fallback for websites without MCP; Desktop Computer Use remains the fallback for UI-only native applications.
+
+Every enabled tool schema consumes model context even when the tool is not called. DeepSeekEyes therefore keeps MCP off with no configured servers by default, starts each new allowlist empty, shows the live schema estimate, and applies the existing automation context/call guards to MCP continuations.
+
+The 0.6 `automationMaxCallsPerTurn` guard counts final-model continuation requests; it does **not** cap how many MCP sub-calls one `run_code` execution can issue. The current ToolRuntime supplies concurrency control and per-call timeout, while DeepSeekEyes does not yet add a cumulative per-run external-call limit or wire a separate approval prompt for every sub-call. Default-off MCP, empty allowlists, narrow credentials and server-side rate limits reduce this exposure but are not a count limit. The P1 roadmap item is `mcpMaxExternalCallsPerRun` (recommended default `64`, explicit `0` unlimited), enforced before each managed external call.
+
+First connection: add the server, enter only credential environment-variable names, save, run **Test connection**, refresh discovery, select the exact tools required, save again, and use the `DeepSeekEyes` route in the conversation. The runtime will not expose a discovered tool merely because the server connected.
+
+The 0.6 boundary is deliberately narrower than “all of MCP”: it bridges server **tools** only. MCP Resources and Prompts, interactive OAuth, and a general background UI driver are not provided. Background operation therefore requires a server that exposes the needed operation as a tool and accepts credentials through process-environment references; apps without such a server still use Browser or Desktop Computer Use. A successful tool response is evidence, not proof that an external state changed, so the agent must inspect the bounded result or call a read tool to verify writes.
+
+The pinned official rc.6 client and MCP SDK decode the transport response before the result reaches DeepSeekEyes. For every response whose `content` is an array, rc.6 walks the blocks and joins their extracted text **before** it checks `isError`; a successful call discards that temporary joined string and returns the blocks, while a failed call throws the string as an exception. The fixed admission limits above therefore govern only the successful adapter value **after** that dependency boundary. DeepSeekEyes bounds and redacts an already-created upstream exception before surfacing it, but does not claim to bound the SDK's earlier network decode or this pre-admission extract/join allocation.
+
+The same dependency boundary applies to discovery: rc.6 completely drains and validates all `tools/list` pages and builds its in-memory definition map before calling DeepSeekEyes' CaptureRegistry. The fixed catalog limits atomically bound what DeepSeekEyes subsequently retains, sorts and exposes, but they cannot pre-limit the bytes of one network page, the number of cursor pages or rc.6's temporary pre-capture map.
+
 ## Token accounting
 
 The native plugin card exposes **Token usage statistics** without making a statistics model call.
 
 | Counter | Meaning |
 | :-- | :-- |
-| **Exact additional Tokens** | Provider-reported pixel probe, initial read, targeted reread, visual clarifications and every DeepSeek call caused by Browser/Desktop Computer Use. |
+| **Exact additional Tokens** | Provider-reported pixel probe, initial read, targeted reread, visual clarifications and every DeepSeek call caused by Browser/Desktop/MCP tool use. |
 | **Estimated bridge input** | Evidence/protocol/tool text injected by the plugin, estimated with the Harness fixed-density rule. |
 | **Estimated plugin total** | Exact additional usage plus estimated bridge input. |
 | **Final model visual-turn usage** | The single ordinary visual-turn final answer is recorded separately; automation final-model calls are included above. |
 | **Automation protection** | Protected user instructions, context compactions, limit stops and estimated replay input avoided. |
+| **MCP attribution** | External call count, final-model `upstreamMcp` usage, schema-input estimate, result-input estimate, MCP compactions and MCP limit stops. Code Mode success/failure contexts keep nested sub-calls on this path. Schema/result estimates are subsets of Provider input usage and are not added twice; `both` mode estimates the native definition and generated `tools:sdk` declaration as two real input surfaces. |
 | **Operational counters** | Visual turns, original-image rereads and vision-cache hits. |
 
 Statistics refresh/reset uses the loopback-only `/deepseekeyes` RPC. Data is atomically stored at `$DSH_HOME/deepseekeyes/usage-stats.json` with mode `0600` and a 50-session detail limit. A temporary write failure keeps counting in memory and does not interrupt the user's turn.
@@ -247,6 +284,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
 | Desktop | `desktopComputerUse`, `desktopVisualMode`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |
+| MCP | `mcpEnabled`, `mcpServers`, allow/deny tools, `mcpMaxTools`, `mcpMaxSchemaTokens`, `mcpMaxResultChars`, timeout, audit and artifact directory |
 | Usage | `usageStats`, `usageStatsPath` |
 
 See the [complete Chinese configuration reference](README.zh-CN.md#配置字段) for every field and default.
@@ -266,6 +304,8 @@ npm audit --omit=dev
 The release is continuously checked on Ubuntu, macOS and Windows. Native helper parsing/compilation and desktop observation run on their respective CI hosts.
 
 Run a real multimodal Provider against the public suite with `npm run eval:live`; see [`evals/README.md`](evals/README.md). The committed fixture-oracle result validates 5 cases and 30 assertions while remaining explicitly separate from a model benchmark.
+
+The settings API and client slots are verified against DeepSeek Harness `0.1.0-rc.6`; MCP 0.6 declares exact optional Host peers for `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` and `@deepseek-ai/dsh-tools@0.1.0-rc.6`, resolves those modules only from DSH's managed Host fallback, and keeps matching development pins behind explicit source-test seams. Integration tests exercise temporary SDK servers over both real stdio and real loopback Streamable HTTP lifecycles, while clean-profile and profile-shadow acceptance prove that no duplicate core runtime enters or overrides the installed runtime. This is protocol acceptance, not a claim that an arbitrary external server or certificate has been tested. Node.js `>=22.19` is required.
 
 ## Runtime documentation
 

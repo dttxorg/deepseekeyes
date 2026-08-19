@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto'
 import {
   BROWSER_STATE_PREFIX,
   DESKTOP_STATE_PREFIX,
+  MCP_CONTEXT_PREFIX,
   activeMessageStart,
 } from './content.js'
 import { DeepSeekEyesError } from './error.js'
 import { estimateRequestTokens } from './token-safety.js'
 
-export const AUTOMATION_KINDS = Object.freeze(['browser', 'desktop'])
+export const AUTOMATION_KINDS = Object.freeze(['browser', 'desktop', 'mcp'])
 
 function blocksContainText(blocks, prefix) {
   if (!Array.isArray(blocks)) return false
@@ -17,27 +18,41 @@ function blocksContainText(blocks, prefix) {
   )
 }
 
-function automationKindInBlocks(blocks) {
+function isMcpContextMessage(message) {
+  return message?.source?.kind === 'plugin'
+    && message.source.plugin === 'deepseekeyes'
+    && message.source.form === 'mcp-context'
+    && blocksContainText(message.content, MCP_CONTEXT_PREFIX)
+}
+
+function automationKindInBlocks(blocks, { allowMcpContext = false } = {}) {
   if (!Array.isArray(blocks)) return undefined
   for (const block of blocks) {
+    if (allowMcpContext && block?.type === 'text' && block.text.startsWith(MCP_CONTEXT_PREFIX)) return 'mcp'
     if (block?.type !== 'tool-result') continue
+    if (typeof block.toolName === 'string' && block.toolName.startsWith('mcp__')) {
+      return 'mcp'
+    }
     if (block.toolName === 'computer' && blocksContainText(block.content, DESKTOP_STATE_PREFIX)) {
       return 'desktop'
     }
     if (block.toolName === 'browser' && blocksContainText(block.content, BROWSER_STATE_PREFIX)) {
       return 'browser'
     }
-    const nested = automationKindInBlocks(block.content)
+    const nested = automationKindInBlocks(block.content, { allowMcpContext })
     if (nested !== undefined) return nested
   }
   return undefined
 }
 
-/** Identify only a current DeepSeekEyes Browser/Desktop tool result, never stale history text. */
+/** Identify only a current DeepSeekEyes Browser/Desktop/MCP tool result, never stale history text. */
 export function activeAutomationKind(messages) {
   const start = activeMessageStart(messages)
   for (let index = start; index < (messages?.length ?? 0); index += 1) {
-    const kind = automationKindInBlocks(messages[index]?.content)
+    const message = messages[index]
+    const kind = automationKindInBlocks(message?.content, {
+      allowMcpContext: isMcpContextMessage(message),
+    })
     if (kind !== undefined) return kind
   }
   return undefined
@@ -82,8 +97,18 @@ function messageGroups(messages, start) {
     if (messageHasToolCall(messages[index])
       && index + 1 < messages.length
       && messageHasToolResult(messages[index + 1])) {
-      groups.push([messages[index], messages[index + 1]])
-      index += 1
+      const group = [messages[index], messages[index + 1]]
+      let cursor = index + 2
+      // DSH appends deferred Code Mode contexts after the outer run_code
+      // result. Keep every trusted MCP marker/image context atomic with that
+      // call/result pair so bounding can never retain metadata while silently
+      // dropping the actual result it describes.
+      while (cursor < messages.length && isMcpContextMessage(messages[cursor])) {
+        group.push(messages[cursor])
+        cursor += 1
+      }
+      groups.push(group)
+      index = cursor - 1
     } else {
       groups.push([messages[index]])
     }
@@ -193,7 +218,7 @@ export class AutomationTurnGuard {
     const current = this.state(sessionId, taskId)
     if (maximumCalls !== 0 && current.value.calls >= maximumCalls) {
       throw new DeepSeekEyesError(
-        `Computer Use reached the configured ${maximumCalls} model calls for this user instruction. Send a new instruction to continue, increase automationMaxCallsPerTurn, or set it to 0 for unlimited.`,
+        `DeepSeekEyes automation reached the configured ${maximumCalls} model calls for this user instruction. Send a new instruction to continue, increase automationMaxCallsPerTurn, or set it to 0 for unlimited.`,
         'AUTOMATION_CALL_LIMIT',
       )
     }

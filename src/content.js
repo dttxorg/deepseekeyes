@@ -5,6 +5,7 @@ export const BROWSER_STATE_PREFIX = '[DeepSeekEyes browser state]\n'
 export const BROWSER_HISTORY_PREFIX = '[DeepSeekEyes browser history]\n'
 export const DESKTOP_STATE_PREFIX = '[DeepSeekEyes desktop state]\n'
 export const DESKTOP_HISTORY_PREFIX = '[DeepSeekEyes desktop history]\n'
+export const MCP_CONTEXT_PREFIX = '[DeepSeekEyes MCP context]\n'
 
 export function contentHasImage(content) {
   return Array.isArray(content) && content.some((block) =>
@@ -338,7 +339,7 @@ export function rewriteMessageForRetention(
 }
 
 /** Create one ephemeral plugin-produced user message for an internal model call. */
-export function pluginUserMessage(content, summary) {
+export function pluginUserMessage(content, summary, form = 'notice') {
   return {
     id: randomUUID(),
     role: 'user',
@@ -346,7 +347,7 @@ export function pluginUserMessage(content, summary) {
     source: {
       kind: 'plugin',
       plugin: 'deepseekeyes',
-      form: 'notice',
+      form,
       summary: summary.slice(0, 120),
     },
   }

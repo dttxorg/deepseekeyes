@@ -30,6 +30,14 @@ test('usage tracker separates exact plugin overhead from final model usage', asy
     outputTokens: 100,
     cacheReadTokens: 30_000,
   })
+  await tracker.recordCall('session-a', 'upstreamMcp', {
+    inputTokens: 4_000,
+    outputTokens: 50,
+    cacheReadTokens: 3_500,
+  })
+  await tracker.recordMcpExternalCall('session-a', { schemaTokens: 600, resultTokens: 90 })
+  await tracker.recordMcpContextCompaction('session-a')
+  await tracker.recordMcpLimitStop('session-a')
   await tracker.recordCall('session-a', 'upstreamFinal', {
     inputTokens: 120,
     outputTokens: 40,
@@ -44,14 +52,20 @@ test('usage tracker separates exact plugin overhead from final model usage', asy
   assert.equal(snapshot.totals.derived.visionTokens, 162)
   assert.equal(snapshot.totals.derived.upstreamClarificationTokens, 88)
   assert.equal(snapshot.totals.derived.automationTokens, 62_100)
-  assert.equal(snapshot.totals.derived.exactAdditionalTokens, 62_350)
+  assert.equal(snapshot.totals.derived.mcpTokens, 7_550)
+  assert.equal(snapshot.totals.derived.exactAdditionalTokens, 69_900)
   assert.equal(snapshot.totals.derived.estimatedBridgeInputTokens, 25)
-  assert.equal(snapshot.totals.derived.estimatedAdditionalTokens, 62_375)
+  assert.equal(snapshot.totals.derived.estimatedAdditionalTokens, 69_925)
   assert.equal(snapshot.totals.derived.finalModelVisualTurnTokens, 160)
   assert.equal(snapshot.totals.derived.exactAdditionalUsage.reasoningTokens, 1)
   assert.equal(snapshot.totals.automationTurns, 1)
   assert.equal(snapshot.totals.automationContextCompactions, 1)
   assert.equal(snapshot.totals.estimatedAutomationInputTokensSaved, 450_000)
+  assert.equal(snapshot.totals.mcpExternalCalls, 1)
+  assert.equal(snapshot.totals.mcpSchemaInputTokensEstimated, 600)
+  assert.equal(snapshot.totals.mcpResultInputTokensEstimated, 90)
+  assert.equal(snapshot.totals.mcpContextCompactions, 1)
+  assert.equal(snapshot.totals.mcpLimitStops, 1)
   assert.equal(snapshot.sessions[0].sessionId, 'session-a')
   assert.equal(snapshot.accounting.finalModelVisualTurnUsageExcludedFromAdditional, true)
   assert.equal(snapshot.accounting.automationModelUsageIncludedInAdditional, true)
@@ -72,7 +86,7 @@ test('usage tracker persists, bounds sessions, disables writes, and resets', asy
   let snapshot = await reopened.snapshot()
   assert.deepEqual(snapshot.sessions.map(entry => entry.sessionId), ['c', 'b'])
   assert.equal(snapshot.totals.derived.exactAdditionalTokens, 12)
-  assert.equal(JSON.parse(await readFile(file, 'utf8')).schemaVersion, 1)
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).schemaVersion, 2)
 
   reopened.setEnabled(false)
   await reopened.recordCall('c', 'visionBase', { inputTokens: 99, outputTokens: 99 })
@@ -90,6 +104,28 @@ test('bridge estimate follows the DSH fixed-density heuristic', () => {
   assert.equal(estimateInjectedTextTokens('12345678'), 6)
   assert.equal(estimateInjectedTextTokens('12345678', { message: true }), 10)
   assert.equal(estimateInjectedTextTokens('', { message: true }), 0)
+})
+
+test('usage tracker migrates schema v1 without dropping historical totals', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'deepseekeyes-usage-v1-'))
+  const file = join(directory, 'usage.json')
+  await import('node:fs/promises').then(({ writeFile }) => writeFile(file, JSON.stringify({
+    schemaVersion: 1,
+    startedAt: '2026-08-15T00:00:00.000Z',
+    updatedAt: '2026-08-15T00:00:00.000Z',
+    totals: {
+      visualTurns: 1,
+      calls: { visionBase: 1 },
+      usage: { visionBase: { inputTokens: 7, outputTokens: 3 } },
+    },
+    sessions: [],
+  })))
+  const tracker = new UsageTracker({ file })
+  const snapshot = await tracker.snapshot()
+  assert.equal(snapshot.schemaVersion, 2)
+  assert.equal(snapshot.totals.visualTurns, 1)
+  assert.equal(snapshot.totals.derived.visionTokens, 10)
+  assert.equal(snapshot.totals.mcpExternalCalls, 0)
 })
 
 test('persistence failure keeps accounting live in memory and recovers on a later write', async () => {

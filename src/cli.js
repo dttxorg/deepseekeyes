@@ -3,10 +3,13 @@ import { spawn } from 'node:child_process'
 import { access, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { loadHostDshMcpClient, loadHostDshTools } from './mcp/host-runtime.js'
 
 export const NPM_PACKAGE = '@dttxorg/deepseekeyes'
 export const DSH_PACKAGE = '@deepseek-ai/dsh'
 export const MINIMUM_NODE = Object.freeze([22, 19, 0])
+const DSH_RC_VERSION = '0.1.0-rc.6'
 
 function parsedVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(value)
@@ -40,7 +43,7 @@ function parseArguments(argv) {
 }
 
 export function cliUsage() {
-  return `DeepSeekEyes — auditable vision and Computer Use runtime for DeepSeek Harness
+  return `DeepSeekEyes — auditable vision, MCP and Computer Use runtime for DeepSeek Harness
 
 Usage:
   deepseekeyes install [--profile web] [--version latest] [--dry-run]
@@ -184,6 +187,10 @@ async function doctor(options, io) {
       'dsh/index.js',
       'lib/client.js',
       'schemas/visual-evidence.schema.json',
+      'src/mcp/index.js',
+      'src/mcp/host-runtime.js',
+      'src/mcp/manager.js',
+      'src/mcp/official-adapter.js',
       'src/desktop/helpers/macos.jxa',
       'src/desktop/helpers/windows.ps1',
       'cordis.patch.yml',
@@ -193,6 +200,97 @@ async function doctor(options, io) {
         checks.push(check(`file:${relative}`, true, relative))
       } catch {
         checks.push(check(`file:${relative}`, false, `${relative} missing`))
+      }
+    }
+    if (manifest !== undefined) {
+      const expected = DSH_RC_VERSION
+      const actual = manifest.peerDependencies?.['@deepseek-ai/dsh-mcp-client']
+      const mcpHostManaged = manifest.dependencies?.['@deepseek-ai/dsh-mcp-client'] === undefined
+        && manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-mcp-client']?.optional === true
+      checks.push(check(
+        'official-mcp-client',
+        actual === expected && mcpHostManaged,
+        `@deepseek-ai/dsh-mcp-client hostPeer=${actual ?? 'missing'}; expected=${expected}; hostManaged=${mcpHostManaged}`,
+      ))
+      const declaredTools = manifest.peerDependencies?.['@deepseek-ai/dsh-tools']
+      const toolsHostManaged = manifest.dependencies?.['@deepseek-ai/dsh-tools'] === undefined
+        && manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-tools']?.optional === true
+      checks.push(check(
+        'official-dsh-tools-declared',
+        declaredTools === expected && toolsHostManaged,
+        `@deepseek-ai/dsh-tools hostPeer=${declaredTools ?? 'missing'}; expected=${expected}; hostManaged=${toolsHostManaged}`,
+      ))
+      if (actual === expected && declaredTools === expected && mcpHostManaged && toolsHostManaged) {
+        let sourceTree = false
+        try {
+          await access(join(packageRoot, 'scripts', 'verify-package.mjs'))
+          sourceTree = true
+        } catch {}
+        try {
+          let tools
+          let mcpClient
+          let toolsManifest
+          let clientManifest
+          let origin
+          if (sourceTree) {
+            const packageRequire = createRequire(join(packageRoot, 'package.json'))
+            toolsManifest = JSON.parse(await readFile(
+              packageRequire.resolve('@deepseek-ai/dsh-tools/package.json'),
+              'utf8',
+            ))
+            clientManifest = JSON.parse(await readFile(
+              packageRequire.resolve('@deepseek-ai/dsh-mcp-client/package.json'),
+              'utf8',
+            ))
+            tools = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-tools')).href)
+            mcpClient = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-mcp-client')).href)
+            origin = 'source-dev-dependencies'
+          } else {
+            const hostContext = { dshHomePath: (...segments) => join(dshHome, ...segments) }
+            ;[tools, mcpClient] = await Promise.all([
+              loadHostDshTools(hostContext),
+              loadHostDshMcpClient(hostContext),
+            ])
+            toolsManifest = JSON.parse(await readFile(join(
+              dshHome,
+              'profiles',
+              'node_modules',
+              '@deepseek-ai',
+              'dsh-tools',
+              'package.json',
+            ), 'utf8'))
+            clientManifest = JSON.parse(await readFile(join(
+              dshHome,
+              'profiles',
+              'node_modules',
+              '@deepseek-ai',
+              'dsh-mcp-client',
+              'package.json',
+            ), 'utf8'))
+            origin = 'host-fallback'
+          }
+          const exportsReady = typeof tools.renderToolsSdk === 'function'
+            && typeof tools.renderToolsSdkPy === 'function'
+            && typeof mcpClient.apply === 'function'
+          if (toolsManifest.version !== expected || clientManifest.version !== expected || !exportsReady) {
+            throw new Error(
+              `runtime tools=${toolsManifest.version}; client=${clientManifest.version}; expected=${expected}; exports=${exportsReady}`,
+            )
+          }
+          checks.push(check(
+            'official-dsh-tools-resolvable',
+            true,
+            `hostManaged=true; ${origin}=verified; runtime imports are anchored to the managed Host fallback`,
+          ))
+        } catch (error) {
+          checks.push(check('official-dsh-tools-resolvable', false, error.message))
+        }
+      } else {
+        checks.push(check(
+          'official-dsh-tools-resolvable',
+          false,
+          'official MCP runtime must remain Host-managed to preserve DSH service and scheduler identity',
+        ))
       }
     }
     try {

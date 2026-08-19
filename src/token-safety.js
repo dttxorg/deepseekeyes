@@ -23,6 +23,20 @@ function estimateBlocks(blocks) {
   return tokens
 }
 
+function toolDefinitionName(tool) {
+  return tool?.name ?? tool?.function?.name
+}
+
+/** Estimate the model-input share contributed by selected tool definitions. */
+export function estimateToolDefinitionTokens(tools, predicate = () => true) {
+  const selected = Array.isArray(tools)
+    ? tools.filter(tool => predicate(tool, toolDefinitionName(tool)))
+    : []
+  return selected.length === 0
+    ? 0
+    : Math.ceil(JSON.stringify(selected).length / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+}
+
 /** Mirrors Harness' fixed request-pressure heuristic for proactive output fitting. */
 export function estimateRequestTokens(options) {
   const messageTokens = (options.messages ?? []).reduce(
@@ -32,9 +46,7 @@ export function estimateRequestTokens(options) {
   const systemTokens = options.system === undefined
     ? 0
     : Math.ceil(options.system.length / CHARS_PER_TOKEN) + ROLE_OVERHEAD
-  const toolTokens = options.tools === undefined || options.tools.length === 0
-    ? 0
-    : Math.ceil(JSON.stringify(options.tools).length / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+  const toolTokens = estimateToolDefinitionTokens(options.tools)
   return messageTokens + systemTokens + toolTokens
 }
 

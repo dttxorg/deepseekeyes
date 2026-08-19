@@ -1,3 +1,6 @@
+import { mcpArgsContainInlineCredentials } from './mcp/credential-policy.js'
+import { mcpHttpUrlUsesSecureTransport } from './mcp/url-policy.js'
+
 const SETTINGS_FIELDS = Object.freeze([
   'upstreamProvider',
   'upstreamModel',
@@ -44,6 +47,14 @@ const SETTINGS_FIELDS = Object.freeze([
   'desktopMacDisplay',
   'desktopWindowsPowerShell',
   'desktopArtifactsDir',
+  'mcpEnabled',
+  'mcpServers',
+  'mcpMaxTools',
+  'mcpMaxSchemaTokens',
+  'mcpMaxResultChars',
+  'mcpToolCallTimeoutMs',
+  'mcpAudit',
+  'mcpArtifactDir',
 ])
 
 const OPTIONAL_ROUTE_FIELDS = new Set([
@@ -55,7 +66,131 @@ const OPTIONAL_ROUTE_FIELDS = new Set([
   'browserExecutablePath',
   'desktopWindowsPowerShell',
   'desktopArtifactsDir',
+  'mcpArtifactDir',
 ])
+
+const MCP_SERVER_ID = /^[A-Za-z0-9_-]{1,32}$/
+const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+const CREDENTIAL_QUERY = /(?:api[-_]?key|authorization|credential|password|secret|signature|token)/i
+
+function normalizedStringList(value) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean))]
+}
+
+function normalizedReferenceMap(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, reference]) => typeof key === 'string'
+      && typeof reference === 'object' && reference !== null && !Array.isArray(reference)
+      && typeof reference.env === 'string')
+    .map(([key, reference]) => [key.trim(), { env: reference.env.trim() }])
+    .filter(([key]) => key !== ''))
+}
+
+export function createMcpServerDraft(index = 1) {
+  return {
+    id: `server-${index}`,
+    name: `MCP Server ${index}`,
+    enabled: true,
+    transport: 'stdio',
+    command: '',
+    args: [],
+    cwd: '',
+    url: '',
+    env: {},
+    headers: {},
+    allowedTools: [],
+    denyTools: [],
+    timeoutMs: undefined,
+  }
+}
+
+export function nextMcpReferenceEntry(value = {}, { header = false } = {}) {
+  const entries = Object.entries(value ?? {})
+  const keys = new Set(entries.map(([key]) => key))
+  const environments = new Set(entries.map(([, reference]) => reference?.env))
+  const baseKey = header ? 'Authorization' : 'TOKEN'
+  const baseEnv = header ? 'MCP_AUTHORIZATION' : 'MCP_TOKEN'
+  let suffix = 1
+  while (true) {
+    const key = suffix === 1 ? baseKey : `${baseKey}${header ? '-' : '_'}${suffix}`
+    const env = suffix === 1 ? baseEnv : `${baseEnv}_${suffix}`
+    if (!keys.has(key) && !environments.has(env)) return { key, reference: { env } }
+    suffix += 1
+  }
+}
+
+const MCP_GLOB_SPECIAL = /[.+^${}()|[\]\\]/g
+
+function mcpSelectorExpression(selector) {
+  return new RegExp(`^${String(selector).replace(MCP_GLOB_SPECIAL, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`)
+}
+
+function mcpToolSelectorNames(server, tool) {
+  const rawName = String(tool?.name ?? tool?.rawName ?? tool?.publicName ?? '')
+  const publicName = String(tool?.publicName ?? rawName)
+  return new Set([
+    rawName,
+    publicName,
+    `${server.id}/${rawName}`,
+    `${server.name}/${rawName}`,
+    `${server.id}/${publicName}`,
+    `${server.name}/${publicName}`,
+  ])
+}
+
+export function mcpToolMatchesSelector(server, tool, selector) {
+  const expression = mcpSelectorExpression(selector)
+  return [...mcpToolSelectorNames(server, tool)].some(name => expression.test(name))
+}
+
+export function mcpToolAllowedInDraft(server, tool) {
+  if (server.denyTools.some(selector => mcpToolMatchesSelector(server, tool, selector))) return false
+  return server.allowedTools.some(selector => mcpToolMatchesSelector(server, tool, selector))
+}
+
+export function updateMcpToolSelection(server, tool, selected) {
+  const rawName = String(tool?.name ?? tool?.rawName ?? tool?.publicName ?? '')
+  const exactNames = mcpToolSelectorNames(server, tool)
+  const isExactToolSelector = selector => !/[?*]/.test(selector) && exactNames.has(selector)
+  if (!selected) {
+    const allowedTools = server.allowedTools.filter(selector => !isExactToolSelector(selector))
+    const denyTools = server.denyTools.some(selector => mcpToolMatchesSelector(server, tool, selector))
+      ? server.denyTools
+      : [...server.denyTools, rawName]
+    return { ...server, allowedTools, denyTools }
+  }
+
+  const denyTools = server.denyTools.filter(selector => !isExactToolSelector(selector))
+  const allowedTools = server.allowedTools.some(selector => mcpToolMatchesSelector(server, tool, selector))
+    ? server.allowedTools
+    : [...server.allowedTools, rawName]
+  return { ...server, allowedTools, denyTools }
+}
+
+export function normalizeMcpServer(value = {}, index = 0) {
+  const fallback = createMcpServerDraft(index + 1)
+  return {
+    id: typeof value.id === 'string' ? value.id.trim() : fallback.id,
+    name: typeof value.name === 'string' ? value.name.trim() : fallback.name,
+    enabled: value.enabled !== false,
+    transport: value.transport === 'streamable-http' ? 'streamable-http' : 'stdio',
+    command: typeof value.command === 'string' ? value.command.trim() : '',
+    args: normalizedStringList(value.args),
+    cwd: typeof value.cwd === 'string' ? value.cwd.trim() : '',
+    url: typeof value.url === 'string' ? value.url.trim() : '',
+    env: normalizedReferenceMap(value.env),
+    headers: normalizedReferenceMap(value.headers),
+    allowedTools: normalizedStringList(value.allowedTools),
+    denyTools: normalizedStringList(value.denyTools),
+    timeoutMs: Number.isInteger(value.timeoutMs) ? value.timeoutMs : undefined,
+  }
+}
 
 export function valueAt(root, path) {
   let current = root
@@ -119,6 +254,18 @@ export function normalizeSettingsDraft(value = {}) {
     desktopMacDisplay: Number.isInteger(value.desktopMacDisplay) ? value.desktopMacDisplay : 1,
     desktopWindowsPowerShell: typeof value.desktopWindowsPowerShell === 'string' ? value.desktopWindowsPowerShell : '',
     desktopArtifactsDir: typeof value.desktopArtifactsDir === 'string' ? value.desktopArtifactsDir : '',
+    mcpEnabled: value.mcpEnabled === true,
+    mcpServers: Array.isArray(value.mcpServers)
+      ? value.mcpServers.map((server, index) => normalizeMcpServer(server, index))
+      : [],
+    mcpMaxTools: Number.isInteger(value.mcpMaxTools) ? value.mcpMaxTools : 16,
+    mcpMaxSchemaTokens: Number.isInteger(value.mcpMaxSchemaTokens) ? value.mcpMaxSchemaTokens : 12_000,
+    mcpMaxResultChars: Number.isInteger(value.mcpMaxResultChars) ? value.mcpMaxResultChars : 20_000,
+    mcpToolCallTimeoutMs: Number.isInteger(value.mcpToolCallTimeoutMs) ? value.mcpToolCallTimeoutMs : 30_000,
+    mcpAudit: value.mcpAudit !== false,
+    mcpArtifactDir: value.mcpArtifactDir === false
+      ? false
+      : typeof value.mcpArtifactDir === 'string' ? value.mcpArtifactDir : '',
   }
 }
 
@@ -155,10 +302,75 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
   }
   if (typeof draft.browserLocale !== 'string' || draft.browserLocale.trim() === '') return 'browserLocaleRequired'
   if (!['auto', 'always', 'manual'].includes(draft.desktopVisualMode)) return 'desktopVisualModeInvalid'
+  if (!Array.isArray(draft.mcpServers)) return 'mcpServersInvalid'
+  const serverIds = new Set()
+  const serverNames = new Set()
+  for (const server of draft.mcpServers) {
+    if (typeof server.id !== 'string' || !MCP_SERVER_ID.test(server.id)) return 'mcpServerIdInvalid'
+    const normalizedId = server.id.toLowerCase()
+    if (serverIds.has(normalizedId)) return 'mcpServerIdDuplicate'
+    serverIds.add(normalizedId)
+    if (typeof server.name !== 'string' || server.name.trim() === '') return 'mcpServerNameRequired'
+    const normalizedName = server.name.trim().toLocaleLowerCase('en-US')
+    if (serverNames.has(normalizedName)) return 'mcpServerNameDuplicate'
+    serverNames.add(normalizedName)
+    if (!['stdio', 'streamable-http'].includes(server.transport)) return 'mcpServerTransportInvalid'
+    if (server.transport === 'stdio' && (typeof server.command !== 'string' || server.command.trim() === '')) {
+      return 'mcpServerCommandRequired'
+    }
+    if (!Array.isArray(server.args) || server.args.some(argument => typeof argument !== 'string')) {
+      return 'mcpServerArgsInvalid'
+    }
+    if (server.transport === 'stdio' && mcpArgsContainInlineCredentials(server.args)) {
+      return 'mcpServerArgsCredential'
+    }
+    if (server.transport === 'stdio'
+      && ((typeof server.url === 'string' && server.url !== '') || Object.keys(server.headers ?? {}).length > 0)) {
+      return 'mcpServerTransportFields'
+    }
+    if (server.transport === 'streamable-http') {
+      if ((typeof server.command === 'string' && server.command !== '')
+        || (typeof server.cwd === 'string' && server.cwd !== '')
+        || server.args.length > 0 || Object.keys(server.env ?? {}).length > 0) {
+        return 'mcpServerTransportFields'
+      }
+      try {
+        const url = new URL(server.url)
+        if (!['http:', 'https:'].includes(url.protocol)) return 'mcpServerUrlInvalid'
+        if (!mcpHttpUrlUsesSecureTransport(url)) return 'mcpServerUrlHttpsRequired'
+        if (url.username !== '' || url.password !== ''
+          || [...url.searchParams.keys()].some(key => CREDENTIAL_QUERY.test(key))) {
+          return 'mcpServerUrlCredential'
+        }
+      } catch {
+        return 'mcpServerUrlInvalid'
+      }
+    }
+    if (server.timeoutMs !== undefined
+      && (!Number.isInteger(server.timeoutMs) || server.timeoutMs < 100 || server.timeoutMs > 3_600_000)) {
+      return 'mcpServerTimeoutMsRange'
+    }
+    if (typeof server.env !== 'object' || server.env === null || Array.isArray(server.env)
+      || Object.entries(server.env).some(([key, reference]) => !ENVIRONMENT_NAME.test(key)
+        || typeof reference !== 'object' || reference === null
+        || typeof reference.env !== 'string' || !ENVIRONMENT_NAME.test(reference.env))) {
+      return 'mcpServerEnvInvalid'
+    }
+    if (typeof server.headers !== 'object' || server.headers === null || Array.isArray(server.headers)
+      || Object.entries(server.headers).some(([key, reference]) => !HTTP_HEADER_NAME.test(key)
+        || typeof reference !== 'object' || reference === null
+        || typeof reference.env !== 'string' || !ENVIRONMENT_NAME.test(reference.env))) {
+      return 'mcpServerHeadersInvalid'
+    }
+    if (!Array.isArray(server.allowedTools) || !Array.isArray(server.denyTools)) return 'mcpServerToolsInvalid'
+    const denied = new Set(server.denyTools)
+    if (server.allowedTools.some(tool => denied.has(tool))) return 'mcpServerToolsConflict'
+  }
   const tokenRanges = [
     ['baseMaxTokens', 512],
     ['targetMaxTokens', 256],
     ['automationContextMaxTokens', 4_096],
+    ['mcpMaxSchemaTokens', 256],
   ]
   for (const [field, minimum] of tokenRanges) {
     if (draft[field] !== 0 && (!Number.isSafeInteger(draft[field]) || draft[field] < minimum)) {
@@ -187,6 +399,9 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
     ['desktopMaxWindows', 1, 200],
     ['desktopMaxElements', 20, 500],
     ['desktopMacDisplay', 1, 32],
+    ['mcpMaxTools', 0, 1_000],
+    ['mcpMaxResultChars', 256, 10_000_000],
+    ['mcpToolCallTimeoutMs', 100, 3_600_000],
   ]
   for (const [field, minimum, maximum] of ranges) {
     if (!Number.isInteger(draft[field]) || draft[field] < minimum || draft[field] > maximum) {

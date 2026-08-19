@@ -1,6 +1,6 @@
 {
   "name": "@dttxorg/deepseekeyes",
-  "version": "0.5.9",
+  "version": "0.6.0",
   "description": "Auditable vision and cross-platform Computer Use runtime for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",
@@ -32,6 +32,7 @@
   ],
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
+    "test:mcp": "node --test \"tests/mcp-*.test.js\" tests/harness-mcp-acceptance.test.js tests/harness-mcp-http-acceptance.test.js",
     "test:browser": "node acceptance/browser-live.mjs",
     "test:coverage": "node --test --experimental-test-coverage \"tests/*.test.js\"",
     "check": "npm run build:client && node scripts/verify-package.mjs && npm run eval:fixture && npm test",
@@ -64,7 +65,9 @@
     "dsh-plugin",
     "vision-bridge",
     "auditable-ai",
-    "prompt-injection"
+    "prompt-injection",
+    "mcp",
+    "model-context-protocol"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -92,7 +95,29 @@
     "playwright-core": "1.61.1"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-invariants": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-scope": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-timeout": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "esbuild": "0.28.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-mcp-client": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "bin": {
     "deepseekeyes": "./bin/deepseekeyes.js"

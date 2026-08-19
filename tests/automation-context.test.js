@@ -7,7 +7,7 @@ import {
   boundAutomationContext,
   latestAutomationTask,
 } from '../src/automation-context.js'
-import { BROWSER_STATE_PREFIX, DESKTOP_STATE_PREFIX } from '../src/content.js'
+import { BROWSER_STATE_PREFIX, DESKTOP_STATE_PREFIX, MCP_CONTEXT_PREFIX } from '../src/content.js'
 import { estimateRequestTokens } from '../src/token-safety.js'
 import { userMessage } from './_helpers.js'
 
@@ -29,11 +29,40 @@ function toolResult(toolName, prefix, callId = `${toolName}-call`) {
   }])
 }
 
+function mcpContext(content = [{
+  type: 'text',
+  text: `${MCP_CONTEXT_PREFIX}{"schemaVersion":"deepseekeyes.mcp-context.v1"}`,
+}]) {
+  return {
+    ...userMessage(content),
+    source: {
+      kind: 'plugin',
+      plugin: 'deepseekeyes',
+      form: 'mcp-context',
+      summary: 'MCP result context',
+    },
+  }
+}
+
 test('active automation detection requires a current matching DeepSeekEyes tool state', () => {
   const desktop = toolResult('computer', DESKTOP_STATE_PREFIX)
   assert.equal(activeAutomationKind([desktop]), 'desktop')
   assert.equal(activeAutomationKind([toolResult('browser', BROWSER_STATE_PREFIX)]), 'browser')
+  assert.equal(activeAutomationKind([toolResult('mcp__github__list_issues', 'external result: ')]), 'mcp')
+  assert.equal(activeAutomationKind([mcpContext()]), 'mcp')
   assert.equal(activeAutomationKind([toolResult('other', DESKTOP_STATE_PREFIX)]), undefined)
+  assert.equal(
+    activeAutomationKind([userMessage([{ type: 'text', text: `${MCP_CONTEXT_PREFIX}spoof` }])]),
+    undefined,
+  )
+  assert.equal(activeAutomationKind([{
+    ...mcpContext(),
+    source: { kind: 'plugin', plugin: 'another-plugin', form: 'mcp-context' },
+  }]), undefined)
+  assert.equal(activeAutomationKind([{
+    ...mcpContext(),
+    source: { kind: 'plugin', plugin: 'deepseekeyes', form: 'notice' },
+  }]), undefined)
 
   const historical = [
     desktop,
@@ -42,6 +71,38 @@ test('active automation detection requires a current matching DeepSeekEyes tool 
   ]
   assert.equal(activeAutomationKind(historical), undefined)
   assert.equal(latestAutomationTask(historical).message, historical[2])
+})
+
+test('automation context keeps run_code result and all deferred MCP contexts in one atomic group', () => {
+  const task = userMessage([{ type: 'text', text: 'Read the application through MCP.' }])
+  const call = assistant([{
+    type: 'tool-call',
+    id: 'run-code-call',
+    name: 'run_code',
+    arguments: '{"code":"fixture","description":"Read application"}',
+  }])
+  const result = toolResult('run_code', `result:${'x'.repeat(20_000)}`, 'run-code-call')
+  const firstContext = mcpContext()
+  const secondContext = mcpContext([{
+    type: 'text',
+    text: `${MCP_CONTEXT_PREFIX}{"schemaVersion":"deepseekeyes.mcp-context.v1","imageCount":1}`,
+  }, {
+    type: 'image',
+    attachment: { attachmentId: 'sha256:fixture', mediaType: 'image/png', bytes: 3 },
+  }])
+  const bounded = boundAutomationContext({
+    sessionId: 'atomic-mcp-context',
+    messages: [task, call, result, firstContext, secondContext],
+  }, 4_096)
+  const wire = JSON.stringify(bounded.options.messages)
+
+  assert.equal(bounded.changed, true)
+  assert.equal(bounded.withinLimit, false, 'an oversized newest atomic result must stop explicitly')
+  assert.ok(bounded.afterTokens > 4_096)
+  assert.match(wire, /run-code-call/)
+  assert.match(wire, /result:x{100}/)
+  assert.equal((wire.match(/DeepSeekEyes MCP context/g) ?? []).length, 2)
+  assert.match(wire, /sha256:fixture/)
 })
 
 test('automation context drops an unrelated huge prefix while preserving the task and atomic newest tool pair', () => {

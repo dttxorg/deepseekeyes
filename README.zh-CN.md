@@ -188,7 +188,7 @@ observe(scope=desktop) 发现窗口
 - `windowRef` / `elementRef` 从原生身份生成；同一对象跨观察保持稳定。只读 `observe` 可直接复用当前 `windowRef`，所有 ref 变更动作仍必须携带同一次最新结果的 `stateId`，避免对过期界面执行操作。
 - 每个结果都会返回 `semanticStatus`。macOS 会优先选择当前聚焦/主窗口及可用尺寸窗口，而不是应用列表中的微型辅助窗；Accessibility 控件同时受 `desktopMaxElements` 和 Helper 时间预算约束，状态会给出 `truncated`、`limitReason` 与耗时，不再为 Electron 的完整控件树阻塞到超时。当状态为 `sparse`、`empty` 或 `disabled` 时，模型会立即改用当前无损截图坐标，而不是反复查询缺失控件。
 - 默认 `desktopVisualMode: auto`：完整语义观察和已确认成功的动作直接走文本快路径，**不会调用视觉模型**。`observe`、`launch`、`wait` 遇到稀疏/空/关闭的语义树时仍自动交付像素；任意动作也可显式传入 `includeScreenshot: true`。`always` 保留逐步完整读图审计，`manual` 只响应显式读图请求。
-- 无论本轮是否把像素交给模型，每一步都会捕获并保存完整无损 PNG；省略图片块只减少模型调用，不删除、不缩放、不转码原始截图。结果中的 `visualDelivery` 会说明是否读图及原因，`timings` 会列出原生往返、语义收集、截图处理和工具总耗时。
+- 无论本轮是否把像素交给模型，每一步都会捕获并保存完整无损 PNG；省略图片块只减少模型调用，不删除、不缩放、不转码原始截图。运行时会读取当前 Harness 的单图字节、单边尺寸、解码像素、图片数量和总字节限制；即使 5K/超宽屏 PNG 压缩后小于 5 MB，只要单边超过 Host 上限也会按坐标无损分块，不再把整张超宽图交给附件层后报错。结果中的 `visualDelivery` 会说明是否读图及原因，`timings` 会列出原生往返、语义收集、截图处理和工具总耗时。
 - 已知目标默认继续返回窗口级截图；`scope=desktop` 可显式回到全桌面发现。窗口截图坐标以返回图片左上角为原点，Helper 会映射回系统全局坐标。
 - Windows 通过 PowerShell、UI Automation、`user32`、`SendInput` 和 `System.Drawing` 控制与截图；macOS 通过 JXA、Accessibility、CoreGraphics、System Events 和 `screencapture` 完成同一闭环。
 - Windows PowerShell 5.1 的输入/输出固定为 UTF-8；点击、拖动与移动坐标先把最新截图原点和相对坐标强制转成标量，再调用 `user32`。因此负坐标/多显示器/窗口级截图不会再触发 `[System.Object[]] op_Addition`，且本地化错误信息保持可读。
@@ -196,7 +196,7 @@ observe(scope=desktop) 发现窗口
 - `stateDelta` 按完整像素哈希判断截图变化，并分别记录窗口与控件的 added/removed/changed，避免 PNG 编码变化被误判为 UI 变化。
 - 每一步原始 PNG 和最终 JSON 报告默认写入 `$DSH_HOME/deepseekeyes/desktop-runs/`。
 
-Harness 单图片附件存在 5 MB 边界。桌面截图先做**像素无损** PNG 重压；若仍超限，插件按明确的 `x/y/width/height` 坐标拆成若干无损 PNG 图块，在同一次工具结果中全部交给视觉桥接。该过程不缩放、不转 JPEG；状态同时记录原始 PNG SHA-256、完整像素 SHA-256、每块像素 SHA-256 和附件 SHA-256。配置证据目录时，原始编码 PNG 也会完整保留。
+Harness 同时存在单图字节、单边尺寸、解码像素、图片数量和消息总字节边界。桌面截图先做**像素无损** PNG 重压，再针对当前 Host 返回的全部边界按明确的 `x/y/width/height` 坐标拆成无损 PNG 图块，在同一次工具结果中交给视觉桥接。该过程不缩放、不转 JPEG；状态同时记录原始 PNG SHA-256、完整像素 SHA-256、每块像素 SHA-256 和附件 SHA-256。配置证据目录时，原始编码 PNG 也会完整保留。
 
 Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或桌面系统提示，也不会截图、调用视觉模型或增加普通对话的 Token 开销。启用后的默认自动模式只在像素确实必要时读图；历史桌面状态独立按 `desktopHistoryLimit` 压缩，默认只保留最近 8 个短摘要，不重复携带旧截图和完整窗口列表。
 
@@ -228,7 +228,7 @@ DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有�
 
 Schema 估算按实际请求面计算：Native 模式计算原生函数定义，Code Mode 计算生成的 `tools:sdk` 声明，`both` 模式同时发送两者，因此估算值是这两个真实输入面的合计，而不是重复记账。
 
-0.6 的 `automationMaxCallsPerTurn` 只限制最终模型的继续请求，**不限制**单次 `run_code` 内可以高速发起多少个 MCP 子调用。当前 ToolRuntime 提供并发控制与单次调用 timeout，但 DeepSeekEyes 尚未增加每次 run 的累计外部调用上限，也没有为每个子调用接入独立 approval 提示。MCP 默认关闭、allowlist 默认空、最小凭据和 Server 侧限流只能降低风险，不等于次数上限。P1 路线项是 `mcpMaxExternalCallsPerRun`：建议默认 `64`、显式 `0` 表示不限，并在每次 managed 外部调用前执行。
+`automationMaxCallsPerTurn` 限制最终模型的继续请求；`mcpMaxExternalCallsPerRun` 另外限制单次 `run_code` 内的 MCP 子调用，默认 64 次，并在每次 transport dispatch 之前原子计数，下一次调用会以 `MCP_EXTERNAL_CALL_LIMIT_REACHED` 停止。显式设为 `0` 表示不限。ToolRuntime 并发与单次 timeout 仍是独立边界；高风险写操作 approval 仍由应用/Host 策略负责，因此应保持最小 allowlist、最小凭据并用读取工具回查写入结果。
 
 首次连接顺序：添加 Server → 只填写凭据的环境变量名 → 保存 → **测试连接** → 刷新工具 → 只勾选任务所需工具 → 再次保存 → 在对话中使用 `DeepSeekEyes` 路由。Server 连接成功并不会自动把发现的工具全部暴露给模型。
 
@@ -361,6 +361,7 @@ defaultInput: [text, image]
     mcpMaxTools: 16
     mcpMaxSchemaTokens: 12000
     mcpMaxResultChars: 20000
+    mcpMaxExternalCallsPerRun: 64
     mcpToolCallTimeoutMs: 30000
     mcpAudit: true
 ```
@@ -470,6 +471,7 @@ $DSH_HOME/deepseekeyes/evidence/
 | `mcpMaxTools` | `16` | capture 后跨 Server 最多暴露工具数；`0` 只取消暴露预算，固定 256-tool/catalog 复杂度上限仍生效，允许列表仍默认空 |
 | `mcpMaxSchemaTokens` | `12000` | 所有已暴露 MCP 工具的 Schema Token 预算；`0` 表示不限制 |
 | `mcpMaxResultChars` | `20000` | 固定原始结果硬准入之后的单次模型 preview 字符上限；超出后返回预览、哈希及可用时的本地产物引用 |
+| `mcpMaxExternalCallsPerRun` | `64` | 单次 `run_code` 最多发出的 MCP 外部调用数；在 transport 前计数，`0` 表示不限制 |
 | `mcpToolCallTimeoutMs` | `30000` | MCP 工具全局默认超时；Server 可单独覆盖 |
 | `mcpAudit` | `true` | 是否记录只含 Server/工具/状态/耗时/错误码/哈希的审计摘要 |
 | `mcpArtifactDir` | DSH/Home 路径 | 超长规范结果目录；设为 `false` 时不落盘完整结果 |

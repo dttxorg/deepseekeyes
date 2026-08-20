@@ -75,6 +75,7 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.match(JSON.stringify(json), /mcpEnabled/)
   assert.match(JSON.stringify(json), /mcpServers/)
   assert.match(JSON.stringify(json), /mcpMaxSchemaTokens/)
+  assert.match(JSON.stringify(json), /mcpMaxExternalCallsPerRun/)
   assert.match(JSON.stringify(json), /mcpToolCallTimeoutMs/)
 
   const base = settingsBase(validateSettings({ activeProbe: false }, { cacheDir: false }, {}))
@@ -102,6 +103,7 @@ test('Harness settings schema is serializable and keeps plugin identity outside 
   assert.equal(base.mcpMaxTools, 16)
   assert.equal(base.mcpMaxSchemaTokens, 12_000)
   assert.equal(base.mcpMaxResultChars, 20_000)
+  assert.equal(base.mcpMaxExternalCallsPerRun, 64)
   assert.equal(base.mcpToolCallTimeoutMs, 30_000)
   assert.equal(base.mcpAudit, true)
   assert.equal('cacheDir' in base, false)

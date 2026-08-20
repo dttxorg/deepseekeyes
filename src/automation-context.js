@@ -25,21 +25,37 @@ function isMcpContextMessage(message) {
     && blocksContainText(message.content, MCP_CONTEXT_PREFIX)
 }
 
-function automationKindInBlocks(blocks, { allowMcpContext = false } = {}) {
+function automationKindForTool(name) {
+  if (typeof name !== 'string') return undefined
+  if (name.startsWith('mcp__')) return 'mcp'
+  if (name === 'computer') return 'desktop'
+  if (name === 'browser') return 'browser'
+  return undefined
+}
+
+function collectToolCalls(blocks, calls) {
+  if (!Array.isArray(blocks)) return
+  for (const block of blocks) {
+    if (block?.type === 'tool-call') {
+      const kind = automationKindForTool(block.name)
+      if (kind !== undefined && typeof block.id === 'string') calls.set(block.id, kind)
+    }
+    if (Array.isArray(block?.content)) collectToolCalls(block.content, calls)
+  }
+}
+
+function automationKindInBlocks(blocks, { allowMcpContext = false, calls = new Map() } = {}) {
   if (!Array.isArray(blocks)) return undefined
   for (const block of blocks) {
     if (allowMcpContext && block?.type === 'text' && block.text.startsWith(MCP_CONTEXT_PREFIX)) return 'mcp'
     if (block?.type !== 'tool-result') continue
-    if (typeof block.toolName === 'string' && block.toolName.startsWith('mcp__')) {
-      return 'mcp'
-    }
-    if (block.toolName === 'computer' && blocksContainText(block.content, DESKTOP_STATE_PREFIX)) {
-      return 'desktop'
-    }
-    if (block.toolName === 'browser' && blocksContainText(block.content, BROWSER_STATE_PREFIX)) {
-      return 'browser'
-    }
-    const nested = automationKindInBlocks(block.content, { allowMcpContext })
+    const kind = automationKindForTool(block.toolName) ?? calls.get(block.toolCallId)
+    if (kind === 'mcp') return 'mcp'
+    if (kind === 'desktop'
+      && (block.isError === true || blocksContainText(block.content, DESKTOP_STATE_PREFIX))) return 'desktop'
+    if (kind === 'browser'
+      && (block.isError === true || blocksContainText(block.content, BROWSER_STATE_PREFIX))) return 'browser'
+    const nested = automationKindInBlocks(block.content, { allowMcpContext, calls })
     if (nested !== undefined) return nested
   }
   return undefined
@@ -48,10 +64,19 @@ function automationKindInBlocks(blocks, { allowMcpContext = false } = {}) {
 /** Identify only a current DeepSeekEyes Browser/Desktop/MCP tool result, never stale history text. */
 export function activeAutomationKind(messages) {
   const start = activeMessageStart(messages)
+  const calls = new Map()
+  // DSH places the current tool result after the assistant tool-call message,
+  // while activeMessageStart intentionally begins after that assistant. Include
+  // only the immediately preceding assistant so an error can be correlated
+  // without reviving older completed automation history.
+  for (let index = Math.max(0, start - 1); index < (messages?.length ?? 0); index += 1) {
+    collectToolCalls(messages[index]?.content, calls)
+  }
   for (let index = start; index < (messages?.length ?? 0); index += 1) {
     const message = messages[index]
     const kind = automationKindInBlocks(message?.content, {
       allowMcpContext: isMcpContextMessage(message),
+      calls,
     })
     if (kind !== undefined) return kind
   }

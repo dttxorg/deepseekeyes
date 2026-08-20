@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { DESKTOP_STATE_PREFIX } from '../content.js'
 import { DeepSeekEyesError, errorMessage } from '../error.js'
 import { createDesktopDriver } from './driver.js'
-import { losslessDesktopPngTiles } from './png-tiles.js'
+import {
+  DEFAULT_DESKTOP_ATTACHMENT_LIMIT,
+  DEFAULT_DESKTOP_MAX_DIMENSION,
+  DEFAULT_DESKTOP_MAX_PIXELS,
+  DEFAULT_DESKTOP_MAX_TILES,
+  DEFAULT_DESKTOP_MESSAGE_LIMIT,
+  losslessDesktopPngTiles,
+} from './png-tiles.js'
 import { desktopActionNeedsState, reportableDesktopArgs } from './protocol.js'
 
 function sha256(value) {
@@ -26,6 +33,25 @@ function pngSize(buffer) {
     throw new DeepSeekEyesError('native desktop screenshot has invalid dimensions', 'DESKTOP_SCREENSHOT_INVALID')
   }
   return { width, height }
+}
+
+function positiveHostLimit(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback
+}
+
+function desktopAttachmentLimits(ctx) {
+  const host = ctx.attachments?.imageLimits ?? {}
+  const maxTotalBytes = positiveHostLimit(host.maxMessageImageBytes, DEFAULT_DESKTOP_MESSAGE_LIMIT)
+  return {
+    maxBytes: Math.min(
+      positiveHostLimit(host.maxImageBytes, DEFAULT_DESKTOP_ATTACHMENT_LIMIT),
+      maxTotalBytes,
+    ),
+    maxDimension: positiveHostLimit(host.maxImageDimension, DEFAULT_DESKTOP_MAX_DIMENSION),
+    maxPixels: positiveHostLimit(host.maxImagePixels, DEFAULT_DESKTOP_MAX_PIXELS),
+    maxTiles: positiveHostLimit(host.maxImagesPerMessage, DEFAULT_DESKTOP_MAX_TILES),
+    maxTotalBytes,
+  }
 }
 
 function valueOf(value, lower, upper) {
@@ -537,7 +563,7 @@ export class DesktopSession {
     const screenshot = native.screenshot
     const dimensions = pngSize(screenshot)
     const digest = sha256(screenshot)
-    const tiled = losslessDesktopPngTiles(screenshot)
+    const tiled = losslessDesktopPngTiles(screenshot, desktopAttachmentLimits(this.ctx))
     if (tiled.width !== dimensions.width || tiled.height !== dimensions.height) {
       throw new DeepSeekEyesError('desktop screenshot dimensions changed during lossless tiling', 'DESKTOP_SCREENSHOT_INVALID')
     }

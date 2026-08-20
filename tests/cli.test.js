@@ -131,8 +131,60 @@ test('install and upgrade expose argument-safe one-line dry runs', async () => {
     assert.deepEqual(captured.errors, [])
     assert.equal(captured.output.length, 1)
     assert.match(captured.output[0], new RegExp(`^DEEPSEEKEYES_${command.toUpperCase()}=`))
-    assert.match(captured.output[0], /npx(?:\.cmd)? -y --package=@deepseek-ai\/dsh dsh plugin/)
+    assert.match(captured.output[0], /dsh(?:\.cmd)? plugin/)
     assert.match(captured.output[0], /--profile "qa profile" add @dttxorg\/deepseekeyes@0\.4\.0$/)
+  }
+})
+
+test('upgrade prefers an installed dsh binary instead of nesting npm exec', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'deepseekeyes-cli-direct-'))
+  try {
+    const captured = captureIo()
+    const calls = []
+    captured.io.run = async (executable, args, environment) => {
+      calls.push({ executable, args, dshHome: environment.DSH_HOME })
+      return 0
+    }
+    const status = await runCli([
+      'upgrade', '--profile', 'web', '--version', '0.6.1', '--dsh-home', dshHome,
+    ], captured.io)
+    assert.equal(status, 0)
+    assert.equal(calls.length, 1)
+    assert.match(calls[0].executable, /^dsh(?:\.cmd)?$/)
+    assert.deepEqual(calls[0].args, [
+      'plugin', '--profile', 'web', 'add', '@dttxorg/deepseekeyes@0.6.1',
+    ])
+    assert.equal(calls[0].dshHome, dshHome)
+    assert.equal(captured.output.some(line => line.includes('npx')), false)
+  } finally {
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
+
+test('install falls back to one non-nested npx dsh invocation only when dsh is absent', async () => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'deepseekeyes-cli-fallback-'))
+  try {
+    const captured = captureIo()
+    const calls = []
+    captured.io.run = async (executable, args) => {
+      calls.push({ executable, args })
+      if (calls.length === 1) throw Object.assign(new Error('missing dsh'), { code: 'ENOENT' })
+      return 0
+    }
+    const status = await runCli([
+      'install', '--profile', 'web', '--version', '0.6.1', '--dsh-home', dshHome,
+    ], captured.io)
+    assert.equal(status, 0)
+    assert.equal(calls.length, 2)
+    assert.match(calls[0].executable, /^dsh(?:\.cmd)?$/)
+    assert.match(calls[1].executable, /^npx(?:\.cmd)?$/)
+    assert.deepEqual(calls[1].args, [
+      '-y', '--package=@deepseek-ai/dsh', 'dsh', 'plugin',
+      '--profile', 'web', 'add', '@dttxorg/deepseekeyes@0.6.1',
+    ])
+    assert.equal(captured.output.some(line => line.startsWith('DEEPSEEKEYES_INSTALL_FALLBACK=')), true)
+  } finally {
+    await rm(dshHome, { recursive: true, force: true })
   }
 })
 

@@ -205,6 +205,49 @@ test('MCP unknown annotations present as edit and failures remain hash-only audi
   await manager.stop()
 })
 
+test('MCP Code Mode enforces the cumulative external-call limit before transport dispatch', async () => {
+  const ctx = mockContext()
+  const factory = fakeFactory([tools[0]])
+  let limitStops = 0
+  const manager = new McpManager(
+    ctx,
+    config({ mcpMaxExternalCallsPerRun: 2 }, { allowedTools: ['search'] }),
+    {
+      adapterFactory: factory,
+      usageTracker: {
+        async recordMcpExternalCall() {},
+        async recordMcpLimitStop() { limitStops += 1 },
+      },
+    },
+  )
+  await manager.start()
+  const tool = ctx.tools.get('mcp__fixture__search')
+  const parent = {}
+  const contexts = []
+  const exec = {
+    agent: { id: 'session-limited', options: { provider: 'deepseekeyes' } },
+    parent,
+    deferContext(value) { contexts.push(value) },
+    signal: new AbortController().signal,
+  }
+  await tool.execute({ query: 'one' }, exec)
+  await tool.execute({ query: 'two' }, exec)
+  await assert.rejects(
+    tool.execute({ query: 'three' }, exec),
+    error => error.code === 'MCP_EXTERNAL_CALL_LIMIT_REACHED'
+      && error.message.includes('configured 2 external calls'),
+  )
+  assert.equal(factory.state.calls.length, 2)
+  assert.equal(limitStops, 1)
+  assert.equal(contexts.length, 3)
+  assert.match(contexts[2].content[0].text, /MCP_EXTERNAL_CALL_LIMIT_REACHED/)
+
+  const anotherRun = { ...exec, parent: {}, deferContext() {} }
+  await tool.execute({ query: 'new-run' }, anotherRun)
+  assert.equal(factory.state.calls.length, 3)
+  await manager.stop()
+})
+
 test('MCP manager rejects an oversized raw result before attachment writes and reports zero result tokens', async () => {
   const ctx = mockContext()
   const factory = fakeFactory([{ name: 'oversized', inputSchema: { type: 'object' } }])

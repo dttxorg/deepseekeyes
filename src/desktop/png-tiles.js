@@ -3,6 +3,10 @@ import { deflateSync, inflateSync } from 'node:zlib'
 import { DeepSeekEyesError } from '../error.js'
 
 export const DEFAULT_DESKTOP_ATTACHMENT_LIMIT = 4_750_000
+export const DEFAULT_DESKTOP_MAX_DIMENSION = 2_000
+export const DEFAULT_DESKTOP_MAX_PIXELS = 40_000_000
+export const DEFAULT_DESKTOP_MAX_TILES = 20
+export const DEFAULT_DESKTOP_MESSAGE_LIMIT = 100 * 1024 * 1024
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 const COLOR_CHANNELS = new Map([[0, 1], [2, 3], [4, 2], [6, 4]])
@@ -164,9 +168,58 @@ function crop(tile, x, y, width, height) {
   }
 }
 
-function fitTile(tile, maximum, output) {
+function positiveInteger(value, fallback, name) {
+  if (value === undefined) return fallback
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`desktop PNG ${name} must be a positive safe integer`)
+  }
+  return value
+}
+
+function tileLimits(input) {
+  const options = typeof input === 'number' ? { maxBytes: input } : input ?? {}
+  if (typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('desktop PNG tile limits must be a byte limit or options object')
+  }
+  const limits = {
+    maxBytes: positiveInteger(
+      options.maxBytes,
+      DEFAULT_DESKTOP_ATTACHMENT_LIMIT,
+      'per-image byte limit',
+    ),
+    maxDimension: positiveInteger(
+      options.maxDimension,
+      DEFAULT_DESKTOP_MAX_DIMENSION,
+      'per-side pixel limit',
+    ),
+    maxPixels: positiveInteger(
+      options.maxPixels,
+      DEFAULT_DESKTOP_MAX_PIXELS,
+      'decoded-pixel limit',
+    ),
+    maxTiles: positiveInteger(
+      options.maxTiles,
+      DEFAULT_DESKTOP_MAX_TILES,
+      'image-count limit',
+    ),
+    maxTotalBytes: positiveInteger(
+      options.maxTotalBytes,
+      DEFAULT_DESKTOP_MESSAGE_LIMIT,
+      'aggregate image-byte limit',
+    ),
+  }
+  if (limits.maxBytes < 64 * 1024) {
+    throw new RangeError('desktop PNG attachment limit must be an integer of at least 65536 bytes')
+  }
+  return limits
+}
+
+function fitTile(tile, limits, output) {
   const data = encodeTile(tile)
-  if (data.length <= maximum) {
+  if (data.length <= limits.maxBytes
+    && tile.width <= limits.maxDimension
+    && tile.height <= limits.maxDimension
+    && tile.width * tile.height <= limits.maxPixels) {
     output.push({
       x: tile.x,
       y: tile.y,
@@ -182,24 +235,35 @@ function fitTile(tile, maximum, output) {
   }
   if (tile.width >= tile.height && tile.width > 1) {
     const firstWidth = Math.floor(tile.width / 2)
-    fitTile(crop(tile, 0, 0, firstWidth, tile.height), maximum, output)
-    fitTile(crop(tile, firstWidth, 0, tile.width - firstWidth, tile.height), maximum, output)
+    fitTile(crop(tile, 0, 0, firstWidth, tile.height), limits, output)
+    fitTile(crop(tile, firstWidth, 0, tile.width - firstWidth, tile.height), limits, output)
     return
   }
   const firstHeight = Math.floor(tile.height / 2)
-  fitTile(crop(tile, 0, 0, tile.width, firstHeight), maximum, output)
-  fitTile(crop(tile, 0, firstHeight, tile.width, tile.height - firstHeight), maximum, output)
+  fitTile(crop(tile, 0, 0, tile.width, firstHeight), limits, output)
+  fitTile(crop(tile, 0, firstHeight, tile.width, tile.height - firstHeight), limits, output)
 }
 
-/** Recompress without pixel loss, then split only when a single image still exceeds the Host limit. */
-export function losslessDesktopPngTiles(buffer, maximum = DEFAULT_DESKTOP_ATTACHMENT_LIMIT) {
-  if (!Number.isSafeInteger(maximum) || maximum < 64 * 1024) {
-    throw new RangeError('desktop PNG attachment limit must be an integer of at least 65536 bytes')
-  }
+/** Recompress without pixel loss, then split against every Host image-admission limit. */
+export function losslessDesktopPngTiles(buffer, options = DEFAULT_DESKTOP_ATTACHMENT_LIMIT) {
+  const limits = tileLimits(options)
   const decoded = decodeDesktopPng(buffer)
   const root = { ...decoded, x: 0, y: 0 }
   const tiles = []
-  fitTile(root, maximum, tiles)
+  fitTile(root, limits, tiles)
+  if (tiles.length > limits.maxTiles) {
+    throw new DeepSeekEyesError(
+      `desktop screenshot requires ${tiles.length} lossless tiles but the Host accepts ${limits.maxTiles}`,
+      'DESKTOP_SCREENSHOT_TILE_COUNT_LIMIT',
+    )
+  }
+  const totalBytes = tiles.reduce((sum, tile) => sum + tile.data.length, 0)
+  if (totalBytes > limits.maxTotalBytes) {
+    throw new DeepSeekEyesError(
+      `desktop screenshot lossless tiles require ${totalBytes} bytes but the Host accepts ${limits.maxTotalBytes}`,
+      'DESKTOP_SCREENSHOT_TOTAL_BYTES_LIMIT',
+    )
+  }
   return {
     width: decoded.width,
     height: decoded.height,
@@ -207,6 +271,7 @@ export function losslessDesktopPngTiles(buffer, maximum = DEFAULT_DESKTOP_ATTACH
     channels: decoded.channels,
     sourceSha256: createHash('sha256').update(buffer).digest('hex'),
     sourcePixelSha256: createHash('sha256').update(decoded.pixels).digest('hex'),
+    limits,
     tiles,
   }
 }

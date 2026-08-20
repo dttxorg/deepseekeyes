@@ -73,6 +73,31 @@ test('active automation detection requires a current matching DeepSeekEyes tool 
   assert.equal(latestAutomationTask(historical).message, historical[2])
 })
 
+test('failed Computer Use results remain automation even when DSH omits toolName', () => {
+  const call = assistant([{
+    type: 'tool-call',
+    id: 'desktop-error-call',
+    name: 'computer',
+    arguments: '{"action":"observe"}',
+  }])
+  const failed = userMessage([{
+    type: 'tool-result',
+    toolCallId: 'desktop-error-call',
+    content: [{ type: 'text', text: 'Error: Image exceeds the configured per-side pixel limit.' }],
+    isError: true,
+  }])
+  assert.equal(activeAutomationKind([call, failed]), 'desktop')
+  assert.equal(activeAutomationKind([failed]), undefined, 'an unmatched error must not activate the guard')
+
+  const browserCall = assistant([{
+    type: 'tool-call', id: 'browser-error-call', name: 'browser', arguments: '{}',
+  }])
+  const browserFailure = userMessage([{
+    type: 'tool-result', toolCallId: 'browser-error-call', content: [], isError: true,
+  }])
+  assert.equal(activeAutomationKind([browserCall, browserFailure]), 'browser')
+})
+
 test('automation context keeps run_code result and all deferred MCP contexts in one atomic group', () => {
   const task = userMessage([{ type: 'text', text: 'Read the application through MCP.' }])
   const call = assistant([{

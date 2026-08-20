@@ -23,6 +23,7 @@ test('configuration resolves Harness defaults and a private evidence path', () =
   assert.equal(config.mcpMaxTools, 16)
   assert.equal(config.mcpMaxSchemaTokens, 12_000)
   assert.equal(config.mcpMaxResultChars, 20_000)
+  assert.equal(config.mcpMaxExternalCallsPerRun, 64)
   assert.equal(config.mcpToolCallTimeoutMs, 30_000)
   assert.equal(config.mcpAudit, true)
   assert.equal(config.cacheDir, join('/test-home', '.dsh', 'deepseekeyes', 'evidence'))
@@ -118,6 +119,19 @@ test('automation spend guard supports a recommended bound, custom values, and ex
   assert.equal(custom.automationMaxCallsPerTurn, 96)
   assert.throws(() => resolveConfig({ automationContextMaxTokens: 4_095 }, {}, '/tmp'), /at least 4096/)
   assert.throws(() => resolveConfig({ automationMaxCallsPerTurn: 10_001 }, {}, '/tmp'), /0 through 10000/)
+})
+
+test('MCP Code Mode external-call guard supports a default, custom value, environment and unlimited mode', () => {
+  assert.equal(resolveConfig({}, {}, '/tmp').mcpMaxExternalCallsPerRun, 64)
+  assert.equal(resolveConfig({ mcpMaxExternalCallsPerRun: 7 }, {}, '/tmp').mcpMaxExternalCallsPerRun, 7)
+  assert.equal(resolveConfig({ mcpMaxExternalCallsPerRun: 0 }, {}, '/tmp').mcpMaxExternalCallsPerRun, 0)
+  assert.equal(resolveConfig({}, {
+    DEEPSEEKEYES_MCP_MAX_EXTERNAL_CALLS_PER_RUN: '96',
+  }, '/tmp').mcpMaxExternalCallsPerRun, 96)
+  assert.throws(
+    () => resolveConfig({ mcpMaxExternalCallsPerRun: 10_001 }, {}, '/tmp'),
+    /1 through 10000/,
+  )
 })
 
 test('configuration accepts environment-selected Harness vision route', () => {

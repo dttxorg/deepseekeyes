@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 - 2026-08-20
+
+- Split desktop screenshots against the active Harness attachment service's byte, per-side dimension, decoded-pixel, image-count and aggregate-byte limits instead of using compressed byte size alone. Compressible 5K/ultra-wide screens now remain exact lossless PNG tiles rather than failing DSH rc.8's 2,000px side admission.
+- Keep failed Browser/Desktop tool results inside the automation call guard by correlating DSH tool-result IDs with the immediately preceding tool call even when an error block omits `toolName`; repeated native failures therefore stop at the configured model-call limit instead of bypassing Token protection.
+- Add `mcpMaxExternalCallsPerRun` with default `64` and explicit `0` unlimited, enforced atomically before each nested Code Mode MCP transport dispatch and attributed to MCP limit-stop statistics.
+- Prefer the already installed `dsh` executable for one-line install/upgrade/migration commands and fall back to one non-nested `npx --package=@deepseek-ai/dsh` invocation only when `dsh` is absent, removing the npm-exec-inside-npm-exec hang.
+- Add rc.8 acceptance for native multimodal passthrough, future-turn pixel shadowing, stdio MCP, Token accounting and macOS Desktop Computer Use on high-resolution displays.
+
 ## 0.6.0 - 2026-08-19
 
 - Make MCP artifact permission verification cross-platform: assert the real `0700`/`0600` contract on POSIX and rely on the per-user DSH Home or explicitly configured directory ACL on Windows instead of interpreting Node's synthesized POSIX mode bits as NTFS permissions.

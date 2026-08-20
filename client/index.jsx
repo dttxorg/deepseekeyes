@@ -229,6 +229,8 @@ const zh = {
   mcpMaxSchemaTokensHint: '超出预算的工具不会进入模型上下文；0 表示不限制。',
   mcpMaxResultChars: '单次结果字符上限',
   mcpMaxResultCharsHint: '超长结果只传预览、哈希和本地引用，避免上下文膨胀。',
+  mcpMaxExternalCallsPerRun: '单次 Code Mode 外部调用上限',
+  mcpMaxExternalCallsPerRunHint: '在每次 MCP 子调用真正发出前计数；默认 64，0 表示不限制。',
   mcpToolCallTimeoutMs: '工具调用全局超时（毫秒）',
   mcpAudit: '记录 MCP 审计摘要',
   mcpAuditHint: '只记录 Server、工具、状态、耗时、错误码及哈希，不保存密钥或完整参数/结果。',
@@ -511,6 +513,8 @@ const en = {
   mcpMaxSchemaTokensHint: 'Tools beyond this budget never enter model context. Zero is unlimited.',
   mcpMaxResultChars: 'Result character limit',
   mcpMaxResultCharsHint: 'Long results provide only a preview, hash, and local reference to prevent context growth.',
+  mcpMaxExternalCallsPerRun: 'Code Mode external calls per run',
+  mcpMaxExternalCallsPerRunHint: 'Counted before each MCP sub-call is sent. Default 64; zero is unlimited.',
   mcpToolCallTimeoutMs: 'Global tool-call timeout (ms)',
   mcpAudit: 'Record MCP audit summaries',
   mcpAuditHint: 'Stores server, tool, status, duration, error code and hashes—not secrets or full arguments/results.',
@@ -1089,6 +1093,11 @@ function McpSettingsSection({ draft, disabled, rpc, refreshRevision, onUpdate, t
               <label style={styles.label} htmlFor="deepseekeyes-mcp-result-chars">{t('mcpMaxResultChars')}</label>
               <input id="deepseekeyes-mcp-result-chars" style={styles.input} type="number" min="256" max="10000000" step="1" value={draft.mcpMaxResultChars} disabled={disabled} onChange={event => onUpdate('mcpMaxResultChars', numberFrom(event))} />
               <small style={styles.hint}>{t('mcpMaxResultCharsHint')}</small>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="deepseekeyes-mcp-external-calls">{t('mcpMaxExternalCallsPerRun')}</label>
+              <input id="deepseekeyes-mcp-external-calls" style={styles.input} type="number" min="0" max="10000" step="1" value={draft.mcpMaxExternalCallsPerRun} disabled={disabled} onChange={event => onUpdate('mcpMaxExternalCallsPerRun', numberFrom(event))} />
+              <small style={styles.hint}>{t('mcpMaxExternalCallsPerRunHint')}</small>
             </div>
             <div style={styles.field}>
               <label style={styles.label} htmlFor="deepseekeyes-mcp-call-timeout">{t('mcpToolCallTimeoutMs')}</label>

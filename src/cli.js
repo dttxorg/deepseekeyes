@@ -80,6 +80,49 @@ async function run(executable, args, environment) {
   })
 }
 
+function directDshCommand() {
+  return process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
+}
+
+function npxDshCommand() {
+  return process.platform === 'win32' ? 'npx.cmd' : 'npx'
+}
+
+function dshInvocation(mode, pluginArgs) {
+  if (mode === 'direct') {
+    return { executable: directDshCommand(), args: ['plugin', ...pluginArgs] }
+  }
+  return {
+    executable: npxDshCommand(),
+    args: ['-y', `--package=${DSH_PACKAGE}`, 'dsh', 'plugin', ...pluginArgs],
+  }
+}
+
+function commandMissing(error) {
+  return error?.code === 'ENOENT'
+}
+
+async function executeDshPlugin(pluginArgs, environment, io, label, preferredMode) {
+  const execute = typeof io.run === 'function' ? io.run : run
+  const modes = preferredMode === undefined ? ['direct', 'npx'] : [preferredMode]
+  for (const mode of modes) {
+    const invocation = dshInvocation(mode, pluginArgs)
+    io.out(`${label}${mode === 'npx' && preferredMode === undefined ? '_FALLBACK' : ''}=${
+      commandLine(invocation.executable, invocation.args)
+    }`)
+    try {
+      return {
+        code: await execute(invocation.executable, invocation.args, environment),
+        mode,
+      }
+    } catch (error) {
+      if (mode === 'direct' && preferredMode === undefined && commandMissing(error)) continue
+      throw error
+    }
+  }
+  throw new Error('DeepSeek Harness command resolution exhausted')
+}
+
 async function profileManifest(dshHome, profile) {
   const profileDirectory = join(dshHome, 'profiles', profile)
   const file = join(profileDirectory, 'package.json')
@@ -102,37 +145,41 @@ function legacyInstalled(manifest) {
 }
 
 async function installOrUpgrade(command, options, io) {
-  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const dshArgs = [
-    '-y',
-    `--package=${DSH_PACKAGE}`,
-    'dsh',
-    'plugin',
+  const pluginArgs = [
     '--profile',
     options.profile,
     'add',
     `${NPM_PACKAGE}@${options.version}`,
   ]
-  io.out(`DEEPSEEKEYES_${command.toUpperCase()}=${commandLine(npx, dshArgs)}`)
-  if (options.dryRun) return 0
+  if (options.dryRun) {
+    const invocation = dshInvocation('direct', pluginArgs)
+    io.out(`DEEPSEEKEYES_${command.toUpperCase()}=${commandLine(invocation.executable, invocation.args)}`)
+    return 0
+  }
   const environment = {
     ...process.env,
     ...(options.dshHome === undefined ? {} : { DSH_HOME: resolve(options.dshHome) }),
   }
-  const code = await run(npx, dshArgs, environment)
-  if (code !== 0) return code
+  const installed = await executeDshPlugin(
+    pluginArgs,
+    environment,
+    io,
+    `DEEPSEEKEYES_${command.toUpperCase()}`,
+  )
+  if (installed.code !== 0) return installed.code
 
   const dshHome = resolve(options.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh'))
   try {
     const profile = await profileManifest(dshHome, options.profile)
     if (legacyInstalled(profile.manifest)) {
-      const removeArgs = [
-        '-y', `--package=${DSH_PACKAGE}`, 'dsh',
-        'plugin', '--profile', options.profile, 'remove', 'deepseekeyes',
-      ]
-      io.out(`DEEPSEEKEYES_MIGRATE=${commandLine(npx, removeArgs)}`)
-      const removeCode = await run(npx, removeArgs, environment)
-      if (removeCode !== 0) return removeCode
+      const removed = await executeDshPlugin(
+        ['--profile', options.profile, 'remove', 'deepseekeyes'],
+        environment,
+        io,
+        'DEEPSEEKEYES_MIGRATE',
+        installed.mode,
+      )
+      if (removed.code !== 0) return removed.code
     }
   } catch {
     // The DSH command owns profile creation and reports its own installation errors.

@@ -60,6 +60,7 @@ test('MCP settings default off, expose no tools, and emit minimal nested server 
   assert.equal(defaults.mcpMaxTools, 16)
   assert.equal(defaults.mcpMaxSchemaTokens, 12_000)
   assert.equal(defaults.mcpMaxResultChars, 20_000)
+  assert.equal(defaults.mcpMaxExternalCallsPerRun, 64)
   assert.equal(defaults.mcpToolCallTimeoutMs, 30_000)
   assert.equal(defaults.mcpAudit, true)
 
@@ -116,6 +117,8 @@ test('MCP settings normalize credential references and reject unsafe or expensiv
   assert.equal(settingsDraftFailure({ ...base, mcpMaxSchemaTokens: 0 }), undefined)
   assert.equal(settingsDraftFailure({ ...base, mcpMaxSchemaTokens: 255 }), 'mcpMaxSchemaTokensRange')
   assert.equal(settingsDraftFailure({ ...base, mcpMaxTools: 1_001 }), 'mcpMaxToolsRange')
+  assert.equal(settingsDraftFailure({ ...base, mcpMaxExternalCallsPerRun: 10_001 }), 'mcpMaxExternalCallsPerRunRange')
+  assert.equal(settingsDraftFailure({ ...base, mcpMaxExternalCallsPerRun: 0 }), undefined)
   assert.equal(settingsDraftFailure({ ...base, mcpToolCallTimeoutMs: 99 }), 'mcpToolCallTimeoutMsRange')
   assert.equal(settingsDraftFailure({
     ...base,

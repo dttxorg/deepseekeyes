@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   DEFAULT_MCP_MAX_RESULT_CHARS,
   DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+  DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
   DEFAULT_MCP_MAX_TOOLS,
   DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
   MCP_SERVER_ID_PATTERN,
@@ -14,6 +15,7 @@ import { mcpHttpUrlUsesSecureTransport } from './mcp/url-policy.js'
 export {
   DEFAULT_MCP_MAX_RESULT_CHARS,
   DEFAULT_MCP_MAX_SCHEMA_TOKENS,
+  DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
   DEFAULT_MCP_MAX_TOOLS,
   DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
   MCP_TRANSPORTS,
@@ -773,6 +775,17 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       DEFAULT_MCP_MAX_RESULT_CHARS,
       256,
       10_000_000,
+    ),
+    mcpMaxExternalCallsPerRun: integerOrUnlimitedValue(
+      input.mcpMaxExternalCallsPerRun
+        ?? environmentInteger(
+          environment.DEEPSEEKEYES_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
+          'DEEPSEEKEYES_MCP_MAX_EXTERNAL_CALLS_PER_RUN',
+        ),
+      'mcpMaxExternalCallsPerRun',
+      DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
+      1,
+      10_000,
     ),
     mcpToolCallTimeoutMs: integerValue(
       input.mcpToolCallTimeoutMs

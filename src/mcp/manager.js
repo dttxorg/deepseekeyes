@@ -210,6 +210,7 @@ export class McpManager {
     this.disposePrompt = undefined
     this.disposeAssemblyFilter = undefined
     this.healthInFlight = undefined
+    this.externalCallsByCodeRun = new Map()
   }
 
   enqueue(work) {
@@ -526,6 +527,32 @@ export class McpManager {
     }
   }
 
+  async consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall) {
+    const maximum = this.config.mcpMaxExternalCallsPerRun
+    if (maximum === 0 || exec.parent === undefined) return
+    const parent = exec.parent
+    if (!this.externalCallsByCodeRun.has(parent)) {
+      this.externalCallsByCodeRun.set(parent, 0)
+      exec.signal?.addEventListener?.('abort', () => {
+        this.externalCallsByCodeRun.delete(parent)
+      }, { once: true })
+    }
+    const used = this.externalCallsByCodeRun.get(parent) ?? 0
+    if (used >= maximum) {
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id
+      try {
+        await this.usageTracker?.recordMcpLimitStop?.(sessionId)
+      } catch (error) {
+        this.logger.warn?.(`deepseekeyes: MCP limit accounting failed: ${boundedSafeError(error)}`)
+      }
+      rejectBeforeCall(
+        `MCP Code Mode run reached the configured ${maximum} external calls before ${publicName}; increase mcpMaxExternalCallsPerRun or set it to 0 for unlimited`,
+        'MCP_EXTERNAL_CALL_LIMIT_REACHED',
+      )
+    }
+    this.externalCallsByCodeRun.set(parent, used + 1)
+  }
+
   async executeManaged(serverId, publicName, args, exec = {}) {
     this.assertRoute(exec)
     if (exec.parent !== undefined && typeof exec.deferContext !== 'function') {
@@ -566,6 +593,7 @@ export class McpManager {
       }
       if (!allowed) rejectBeforeCall(`MCP tool ${publicName} was not approved`, 'MCP_TOOL_NOT_APPROVED')
     }
+    await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
     const started = Date.now()
     let bounded
     let failure
@@ -1007,6 +1035,7 @@ export class McpManager {
         maxTools: this.config.mcpMaxTools,
         maxSchemaTokens: this.config.mcpMaxSchemaTokens,
         maxResultChars: this.config.mcpMaxResultChars,
+        maxExternalCallsPerRun: this.config.mcpMaxExternalCallsPerRun,
         toolCallTimeoutMs: this.config.mcpToolCallTimeoutMs,
       },
       servers,
@@ -1033,6 +1062,7 @@ export class McpManager {
         for (const runtime of runtimes) await this.closeRuntime(runtime)
         for (const serverId of [...this.cleanupFailures.keys()]) await this.retryCleanup(serverId)
       } finally {
+        this.externalCallsByCodeRun.clear()
         this.started = false
         this.exposureSuspended = false
         this.syncExposure()

@@ -17,7 +17,7 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 Restart `dsh web` once after installation or upgrade. The installer migrates the old unscoped `deepseekeyes` profile dependency after the scoped package is added successfully.
 
-DeepSeekEyes 0.6 MCP integration is verified with DeepSeek Harness `0.1.0-rc.6` and resolves the official runtime pair `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` plus `@deepseek-ai/dsh-tools@0.1.0-rc.6` only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the exact optional Host-peer declarations, the managed Host entries and their exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
+DeepSeekEyes 0.6.x is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries and exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
 
 ## An MCP server connects but exposes no tools
 
@@ -102,7 +102,11 @@ An older Host that exposes only `saveImage()` uses the Host's advertised limits 
 
 ## MCP causes unexpected Token growth
 
-An exposed tool definition consumes input context on every model request even when the tool is not called. Keep per-server allowlists narrow, leave MCP off outside structured-application tasks, and use `mcpMaxTools` plus `mcpMaxSchemaTokens` as hard exposure budgets. MCP continuations share `automationContextMaxTokens` and `automationMaxCallsPerTurn`; both support an explicit `0` unlimited value, which removes the corresponding guard.
+An exposed tool definition consumes input context on every model request even when the tool is not called. Keep per-server allowlists narrow, leave MCP off outside structured-application tasks, and use `mcpMaxTools` plus `mcpMaxSchemaTokens` as hard exposure budgets. MCP continuations share `automationContextMaxTokens` and `automationMaxCallsPerTurn`; nested Code Mode calls are separately bounded by `mcpMaxExternalCallsPerRun` (default 64). All three accept explicit `0` unlimited mode.
+
+## A 5K or ultra-wide desktop screenshot reports a per-side pixel limit
+
+Upgrade to 0.6.1 or later. Older builds split only when compressed PNG bytes crossed the attachment limit, so a highly compressible 5120px screenshot could remain one file and then fail DSH rc.8's per-side admission. Current builds read the active attachment service's byte, dimension, decoded-pixel, image-count and aggregate-byte limits, split losslessly before `saveImage()`, and preserve coordinate metadata plus full/tile pixel hashes. A remaining `DESKTOP_SCREENSHOT_TILE_COUNT_LIMIT` or `DESKTOP_SCREENSHOT_TOTAL_BYTES_LIMIT` means the exact lossless screenshot cannot fit the Host's advertised message limits; observe a target window instead of the full desktop.
 
 The Schema estimate follows the request actually sent. Native mode counts the native function definition, Code Mode counts the generated `tools:sdk` declaration, and `both` mode counts both surfaces; the larger `both` value is expected and is not an accidental duplicate of one surface.
 

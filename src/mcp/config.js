@@ -10,6 +10,7 @@ export const DEFAULT_MCP_MAX_TOOLS = 16
 export const DEFAULT_MCP_MAX_SCHEMA_TOKENS = 12_000
 export const DEFAULT_MCP_MAX_RESULT_CHARS = 20_000
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 30_000
+export const DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN = 64
 export const DEFAULT_MCP_AUDIT_LIMIT = 200
 export const MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 export const MCP_TRANSPORTS = Object.freeze(['stdio', 'streamable-http'])
@@ -275,6 +276,14 @@ export function normalizeMcpConfig(input = {}, { home = homedir(), strict = fals
       DEFAULT_MCP_MAX_RESULT_CHARS,
       256,
       10_000_000,
+    ),
+    mcpMaxExternalCallsPerRun: integerValue(
+      source.mcpMaxExternalCallsPerRun,
+      'mcpMaxExternalCallsPerRun',
+      DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
+      1,
+      10_000,
+      { zero: true },
     ),
     mcpToolCallTimeoutMs: toolCallTimeoutMs,
     mcpAudit: booleanValue(source.mcpAudit, 'mcpAudit', true),

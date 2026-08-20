@@ -22,7 +22,7 @@ DeepSeekEyes separates original DSH attachments, derived visual evidence, MCP re
 
 On Windows, `$DSH_HOME` normally resolves to `%USERPROFILE%\.dsh`; on macOS/Linux it normally resolves to `~/.dsh`. When the environment variable is absent, DeepSeekEyes uses the same `~/.dsh` fallback as Harness. Explicit DSH configuration takes precedence.
 
-The 200-entry MCP audit ring is retention, not enforcement. In 0.6, `automationMaxCallsPerTurn` limits final-model continuations and does not cap MCP sub-calls inside one `run_code`; ToolRuntime concurrency/timeouts do not create a cumulative per-run quota. The planned P1 `mcpMaxExternalCallsPerRun` control (recommended `64`, explicit `0` unlimited) is not present in this release.
+The 200-entry MCP audit ring is retention, not enforcement. `automationMaxCallsPerTurn` limits final-model continuations, while `mcpMaxExternalCallsPerRun` enforces the separate default 64-call quota inside one `run_code` before transport dispatch. Its per-run counter is in memory only and is removed when the Host run signal aborts; explicit `0` is unlimited. ToolRuntime concurrency/timeouts remain independent.
 
 ## What is excluded from the route-attempt log
 

@@ -140,6 +140,7 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.match(source, /id="deepseekeyes-mcp-max-tools"/)
   assert.match(source, /id="deepseekeyes-mcp-schema-budget"/)
   assert.match(source, /id="deepseekeyes-mcp-result-chars"/)
+  assert.match(source, /id="deepseekeyes-mcp-external-calls"/)
   assert.match(source, /id="deepseekeyes-mcp-call-timeout"/)
   assert.match(source, /'\/deepseekeyes\/mcp'/)
   assert.match(source, /method === 'snapshot' \? 'mcp\.status'/)

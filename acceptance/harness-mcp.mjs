@@ -90,6 +90,7 @@ for (const marker of [
   'deepseekeyes-mcp-max-tools',
   'deepseekeyes-mcp-schema-budget',
   'deepseekeyes-mcp-result-chars',
+  'deepseekeyes-mcp-external-calls',
   'deepseekeyes-mcp-call-timeout',
   'deepseekeyes-mcp-artifact-dir',
   'deepseekeyes-mcp-id-',
@@ -113,6 +114,7 @@ assert.deepEqual(initial.value.mcpServers, [])
 assert.equal(initial.value.mcpMaxTools, 16)
 assert.equal(initial.value.mcpMaxSchemaTokens, 12_000)
 assert.equal(initial.value.mcpMaxResultChars, 20_000)
+assert.equal(initial.value.mcpMaxExternalCallsPerRun, 64)
 assert.equal(initial.value.mcpToolCallTimeoutMs, 30_000)
 assert.equal(initial.value.mcpAudit, true)
 
@@ -242,6 +244,7 @@ try {
       servers: initial.value.mcpServers.length,
       maxTools: initial.value.mcpMaxTools,
       maxSchemaTokens: initial.value.mcpMaxSchemaTokens,
+      maxExternalCallsPerRun: initial.value.mcpMaxExternalCallsPerRun,
     },
     nestedMcpServers: true,
     guiFieldsAndRpc: true,

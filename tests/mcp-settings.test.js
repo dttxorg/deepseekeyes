@@ -41,6 +41,7 @@ test('MCP defaults are disabled, bounded, serializable, and stored under DSH_HOM
   assert.equal(config.mcpMaxTools, 16)
   assert.equal(config.mcpMaxSchemaTokens, 12_000)
   assert.equal(config.mcpMaxResultChars, 20_000)
+  assert.equal(config.mcpMaxExternalCallsPerRun, 64)
   assert.equal(config.mcpToolCallTimeoutMs, 30_000)
   assert.equal(config.mcpAudit, true)
   assert.equal(
@@ -58,6 +59,7 @@ test('MCP scalar environment overrides are validated without accepting server de
     DEEPSEEKEYES_MCP_MAX_TOOLS: '32',
     DEEPSEEKEYES_MCP_MAX_SCHEMA_TOKENS: '65536',
     DEEPSEEKEYES_MCP_MAX_RESULT_CHARS: '250000',
+    DEEPSEEKEYES_MCP_MAX_EXTERNAL_CALLS_PER_RUN: '48',
     DEEPSEEKEYES_MCP_TOOL_CALL_TIMEOUT_MS: '90000',
     DEEPSEEKEYES_MCP_AUDIT: 'false',
     DEEPSEEKEYES_MCP_ARTIFACT_DIR: '/private/mcp-artifacts',
@@ -67,6 +69,7 @@ test('MCP scalar environment overrides are validated without accepting server de
   assert.equal(config.mcpMaxTools, 32)
   assert.equal(config.mcpMaxSchemaTokens, 65_536)
   assert.equal(config.mcpMaxResultChars, 250_000)
+  assert.equal(config.mcpMaxExternalCallsPerRun, 48)
   assert.equal(config.mcpToolCallTimeoutMs, 90_000)
   assert.equal(config.mcpAudit, false)
   assert.equal(config.mcpArtifactDir, '/private/mcp-artifacts')
@@ -81,9 +84,14 @@ test('MCP scalar environment overrides are validated without accepting server de
     /256 through 1000000/,
   )
 
-  const unlimited = resolveConfig({ mcpMaxTools: 0, mcpMaxSchemaTokens: 0 }, {}, '/tmp')
+  const unlimited = resolveConfig({
+    mcpMaxTools: 0,
+    mcpMaxSchemaTokens: 0,
+    mcpMaxExternalCallsPerRun: 0,
+  }, {}, '/tmp')
   assert.equal(unlimited.mcpMaxTools, 0)
   assert.equal(unlimited.mcpMaxSchemaTokens, 0)
+  assert.equal(unlimited.mcpMaxExternalCallsPerRun, 0)
   assert.throws(() => resolveConfig({ mcpMaxTools: 1_001 }, {}, '/tmp'), /1 through 1000/)
   assert.throws(
     () => resolveConfig({ mcpMaxResultChars: 10_000_001 }, {}, '/tmp'),
@@ -102,6 +110,7 @@ test('MCP stdio and Streamable HTTP servers resolve into deeply immutable allowl
     mcpMaxTools: 64,
     mcpMaxSchemaTokens: 200_000,
     mcpMaxResultChars: 1_000_000,
+    mcpMaxExternalCallsPerRun: 128,
     mcpToolCallTimeoutMs: 120_000,
     mcpAudit: false,
     mcpArtifactDir: false,
@@ -121,6 +130,7 @@ test('MCP stdio and Streamable HTTP servers resolve into deeply immutable allowl
     env: 'DEEPSEEKEYES_TEST_GITHUB_AUTHORIZATION',
   })
   assert.equal(config.mcpArtifactDir, undefined)
+  assert.equal(config.mcpMaxExternalCallsPerRun, 128)
   assert.equal(Object.isFrozen(config.mcpServers), true)
   assert.equal(Object.isFrozen(config.mcpServers[0]), true)
   assert.equal(Object.isFrozen(config.mcpServers[0].allowedTools), true)
@@ -237,6 +247,7 @@ test('Harness MCP settings use real nested arrays and retain runtime validation'
   assert.match(serialized, /streamable-http/)
   assert.match(serialized, /allowedTools/)
   assert.match(serialized, /mcpMaxSchemaTokens/)
+  assert.match(serialized, /mcpMaxExternalCallsPerRun/)
   assert.match(JSON.stringify(McpServerConfig.toJSON()), /"type":"object"/)
 
   const section = SettingsConfig({
@@ -245,6 +256,7 @@ test('Harness MCP settings use real nested arrays and retain runtime validation'
     mcpMaxTools: 24,
     mcpMaxSchemaTokens: 50_000,
     mcpMaxResultChars: 75_000,
+    mcpMaxExternalCallsPerRun: 12,
     mcpToolCallTimeoutMs: 60_000,
     mcpAudit: false,
     mcpArtifactDir: '/settings/mcp-artifacts',
@@ -257,6 +269,7 @@ test('Harness MCP settings use real nested arrays and retain runtime validation'
   assert.equal(resolved.mcpMaxTools, 24)
   assert.equal(resolved.mcpMaxSchemaTokens, 50_000)
   assert.equal(resolved.mcpMaxResultChars, 75_000)
+  assert.equal(resolved.mcpMaxExternalCallsPerRun, 12)
   assert.equal(resolved.mcpToolCallTimeoutMs, 60_000)
   assert.equal(resolved.mcpAudit, false)
   assert.equal(resolved.mcpArtifactDir, '/settings/mcp-artifacts')

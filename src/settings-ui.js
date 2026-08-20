@@ -52,6 +52,7 @@ const SETTINGS_FIELDS = Object.freeze([
   'mcpMaxTools',
   'mcpMaxSchemaTokens',
   'mcpMaxResultChars',
+  'mcpMaxExternalCallsPerRun',
   'mcpToolCallTimeoutMs',
   'mcpAudit',
   'mcpArtifactDir',
@@ -261,6 +262,9 @@ export function normalizeSettingsDraft(value = {}) {
     mcpMaxTools: Number.isInteger(value.mcpMaxTools) ? value.mcpMaxTools : 16,
     mcpMaxSchemaTokens: Number.isInteger(value.mcpMaxSchemaTokens) ? value.mcpMaxSchemaTokens : 12_000,
     mcpMaxResultChars: Number.isInteger(value.mcpMaxResultChars) ? value.mcpMaxResultChars : 20_000,
+    mcpMaxExternalCallsPerRun: Number.isInteger(value.mcpMaxExternalCallsPerRun)
+      ? value.mcpMaxExternalCallsPerRun
+      : 64,
     mcpToolCallTimeoutMs: Number.isInteger(value.mcpToolCallTimeoutMs) ? value.mcpToolCallTimeoutMs : 30_000,
     mcpAudit: value.mcpAudit !== false,
     mcpArtifactDir: value.mcpArtifactDir === false
@@ -404,6 +408,7 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes', upstrea
     ['desktopMacDisplay', 1, 32],
     ['mcpMaxTools', 0, 1_000],
     ['mcpMaxResultChars', 256, 10_000_000],
+    ['mcpMaxExternalCallsPerRun', 0, 10_000],
     ['mcpToolCallTimeoutMs', 100, 3_600_000],
   ]
   for (const [field, minimum, maximum] of ranges) {

@@ -472,7 +472,12 @@ test('bounded MCP results spill an exact hash-addressed artifact without exposin
   assert.deepEqual(JSON.parse(await readFile(result.artifact.path, 'utf8')), {
     content: [{ text: `start-${'x'.repeat(512_000)}-end`, type: 'text' }],
   })
-  assert.equal((await stat(result.artifact.path)).mode & 0o077, 0)
+  const artifactStat = await stat(result.artifact.path)
+  assert.equal(artifactStat.isFile(), true)
+  // Node's mode bits on Windows are synthesized and do not describe NTFS
+  // ACLs. POSIX runners can verify the exact 0600 contract; Windows files
+  // inherit the ACL of DSH_HOME (or the explicitly configured artifactDir).
+  if (process.platform !== 'win32') assert.equal(artifactStat.mode & 0o077, 0)
 })
 
 test('artifact fallback preserves EISDIR and always removes its temporary file', async () => {

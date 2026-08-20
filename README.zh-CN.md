@@ -218,7 +218,7 @@ DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有�
 - Code Mode 内层 MCP 调用通过 Harness Host 的 `deferContext()` 通道追加可信的插件 `mcp-context` 消息。每次成功或失败的子调用都携带紧凑状态/哈希标记；图片只携带不可变 Harness attachment 引用，不内联 base64。下一次模型继续因此会识别为 MCP 自动化并进入相同的上下文/调用次数保护与 `upstreamMcp` 统计。Native MCP 结果已经原生展示，不重复追加该上下文；Code Mode Host 缺少此通道时会在外部调用前以 `MCP_RESULT_CONTEXT_UNAVAILABLE` 失败；
 - stop 或重新配置在等待异步清理前先暂停全部 MCP 暴露；旧 transport 关闭期间 Schema 与提示持续撤销，只有完成清理并验证的新 generation 才重新发布，慢速或失败的 close 不会留下仍可调用的旧工具；
 - 每个成功 adapter 结果会在 DeepSeekEyes 规范化、base64 解码、附件写入和产物落盘**之前**经过固定硬准入：深度 64、节点 50,000、content blocks 4,096、非图片字符串合计 16 Mi 字符、图片 8 张、图片编码数据 28 MiB、图片解码数据 20 MiB、其他二进制数据 20 MiB；
-- `mcpMaxResultChars` 只控制硬准入之后交给模型的 preview。通过准入的 adapter 值若过长或含非文本内容，默认把规范 JSON 按 SHA-256 私有落盘；写入或 rename 失败会拒绝该结果，并在不覆盖原始错误的前提下始终尝试清理临时文件；设置 `mcpArtifactDir: false` 后不会声称存在完整产物或引用，已交付图片会标为模型附件，未保留的原始 image/audio/resource block 会明确标为未保留；
+- `mcpMaxResultChars` 只控制硬准入之后交给模型的 preview。通过准入的 adapter 值若过长或含非文本内容，默认把规范 JSON 按 SHA-256 私有落盘；POSIX 系统的 Server 目录/文件使用 `0700`/`0600`，Windows 则继承每用户 DSH Home 或显式产物目录的 ACL，因为 Node 返回的 POSIX mode 位不代表 NTFS 权限；写入或 rename 失败会拒绝该结果，并在不覆盖原始错误的前提下始终尝试清理临时文件；设置 `mcpArtifactDir: false` 后不会声称存在完整产物或引用，已交付图片会标为模型附件，未保留的原始 image/audio/resource block 会明确标为未保留；
 - MCP 图片优先一次性提交给 Harness 的 `ctx.attachments.saveImages()`，由 Host 原子完成数量、总字节、媒体类型与图像解码准入；只有旧版 saveImage-only Host 才进入有界兼容路径，在逐张写入前先校验完整批次。返回的内容寻址附件再进入现有原图视觉证据与细节追问链。
 - 错误审计只保留稳定/脱敏错误码与错误消息 SHA-256，不落盘错误消息原文。
 

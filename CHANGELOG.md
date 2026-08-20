@@ -2,6 +2,7 @@
 
 ## 0.6.0 - 2026-08-19
 
+- Make MCP artifact permission verification cross-platform: assert the real `0700`/`0600` contract on POSIX and rely on the per-user DSH Home or explicitly configured directory ACL on Windows instead of interpreting Node's synthesized POSIX mode bits as NTFS permissions.
 - Detect DSH rc.8 upstream models that explicitly declare image input and expose them as `Native Vision` routes without requiring a separate visual Provider.
 - Forward the current original `ImageBlock` unchanged to a native multimodal upstream, skip all secondary vision/evidence calls, and shadow only the future model-facing session surface after success so later text turns do not replay pixels.
 - Add a `nativeVisualTurns` usage counter; native image calls remain final-model usage while vision-model tokens, bridge estimates and exact plugin overhead remain zero.

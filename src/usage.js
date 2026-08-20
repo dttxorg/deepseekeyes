@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export const USAGE_STATS_SCHEMA_VERSION = 2
+export const USAGE_STATS_SCHEMA_VERSION = 3
 export const DEFAULT_USAGE_SESSION_LIMIT = 50
 
 const USAGE_FIELDS = Object.freeze([
@@ -42,6 +42,7 @@ function zeroUsageByCategory() {
 function zeroAggregate() {
   return {
     visualTurns: 0,
+    nativeVisualTurns: 0,
     automationTurns: 0,
     automationContextCompactions: 0,
     automationLimitStops: 0,
@@ -135,6 +136,7 @@ function validAggregate(input) {
   const aggregate = zeroAggregate()
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return aggregate
   aggregate.visualTurns = nonnegativeInteger(input.visualTurns)
+  aggregate.nativeVisualTurns = nonnegativeInteger(input.nativeVisualTurns)
   aggregate.automationTurns = nonnegativeInteger(input.automationTurns)
   aggregate.automationContextCompactions = nonnegativeInteger(input.automationContextCompactions)
   aggregate.automationLimitStops = nonnegativeInteger(input.automationLimitStops)
@@ -155,7 +157,7 @@ function validAggregate(input) {
 }
 
 function validState(input, now, sessionLimit) {
-  if (![1, USAGE_STATS_SCHEMA_VERSION].includes(input?.schemaVersion)) return zeroState(now)
+  if (![1, 2, USAGE_STATS_SCHEMA_VERSION].includes(input?.schemaVersion)) return zeroState(now)
   const fallback = zeroState(now)
   const sessions = Array.isArray(input.sessions)
     ? input.sessions
@@ -178,6 +180,9 @@ function validState(input, now, sessionLimit) {
 
 function applyDelta(aggregate, delta) {
   if (delta.visualTurns !== undefined) aggregate.visualTurns += nonnegativeInteger(delta.visualTurns)
+  if (delta.nativeVisualTurns !== undefined) {
+    aggregate.nativeVisualTurns += nonnegativeInteger(delta.nativeVisualTurns)
+  }
   if (delta.automationTurns !== undefined) aggregate.automationTurns += nonnegativeInteger(delta.automationTurns)
   if (delta.automationContextCompactions !== undefined) {
     aggregate.automationContextCompactions += nonnegativeInteger(delta.automationContextCompactions)
@@ -287,6 +292,10 @@ export class UsageTracker {
     return this.mutate(sessionId, { visualTurns: 1 })
   }
 
+  recordNativeVisualTurn(sessionId) {
+    return this.mutate(sessionId, { visualTurns: 1, nativeVisualTurns: 1 })
+  }
+
   recordAutomationTurn(sessionId) {
     return this.mutate(sessionId, { automationTurns: 1 })
   }
@@ -392,6 +401,7 @@ export class UsageTracker {
         mcpResultInput: 'estimated-4-characters-per-token-plus-tool-result-structure',
         mcpEstimatesAreSubsetsOfProviderInputUsage: true,
         finalModelVisualTurnUsageExcludedFromAdditional: true,
+        nativeVisionPassThroughUsesNoSecondVisionCall: true,
         automationModelUsageIncludedInAdditional: true,
         reasoningTokensAreOutputSubdivision: true,
       },

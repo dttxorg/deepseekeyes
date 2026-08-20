@@ -36,7 +36,7 @@ test('MCP runtime anchors DSH core imports to the managed Host fallback despite 
     await mkdir(directory, { recursive: true })
     await writeFile(join(directory, 'package.json'), JSON.stringify({
       name,
-      version: '0.1.0-rc.6',
+      version: '0.1.0-rc.8',
       type: 'module',
       main: './index.js',
     }))

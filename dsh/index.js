@@ -60,6 +60,20 @@ function visionWrappedModel(info, config, route) {
   }
 }
 
+function nativeVisionWrappedModel(info, config) {
+  return {
+    ...info,
+    provider: config.providerId,
+    name: `${info.name ?? info.id} · Native Vision`,
+    description: `Native image input: ${config.upstreamProvider}/${info.id} · DeepSeekEyes adds Computer Use, MCP and audit without a second vision call`,
+    inputModalities: ['text', 'image'],
+  }
+}
+
+function acceptsNativeImages(info) {
+  return Array.isArray(info?.inputModalities) && info.inputModalities.includes('image')
+}
+
 function lockedUpstreamModel(config, requestedModel) {
   if (config.upstreamModel !== undefined
     && requestedModel !== undefined
@@ -360,7 +374,75 @@ async function* bridgeStream(
     }
   }
 
+  const upstreamInfo = await ctx.llm.resolveModelInfo(
+    config.upstreamProvider,
+    upstreamModel,
+    options.signal,
+  )
+
   await assertAutomationAvailable()
+  if (acceptsNativeImages(upstreamInfo)) {
+    const hasImages = messagesHaveImages(options.messages)
+    const activeBlocks = hasImages ? activeImageBlocks(options.messages) : []
+    const preservedByAttachment = new Map()
+    const preservedEntries = []
+
+    // DSH rc.8+ can forward image blocks through a configured upstream
+    // adapter. Keep the current request untouched, then replace future model
+    // history with bounded attachment pointers so pixels are not replayed.
+    for (const block of activeBlocks) {
+      const reference = await evidenceManager.referenceFor(block, options.signal)
+      const summary = `Delivered directly to native multimodal route ${config.upstreamProvider}/${upstreamModel ?? upstreamInfo.id}; no DeepSeekEyes vision-model call was made.`
+      const key = attachmentKey(block.attachment)
+      preservedByAttachment.set(
+        key,
+        renderPreservedImageReference({ source: reference.source, summary }, config.historySummaryChars),
+      )
+      preservedEntries.push({
+        imageSha256: reference.source.sha256,
+        attachment: block.attachment,
+        summary,
+      })
+    }
+
+    if (hasImages) await usageTracker.recordNativeVisualTurn(options.sessionId)
+    const prepared = await prepareUpstreamCall(upstreamOptions)
+    const schemaTokens = await mcpSchemaTokens(ctx, prepared, config.mcpEnabled, loadDshTools)
+    if (schemaTokens > 0) {
+      await usageTracker.recordMcpSchemaInput(options.sessionId, schemaTokens)
+    }
+    yield* forwardText(
+      ctx,
+      prepared,
+      logger,
+      automationKind !== undefined
+        ? usage => usageTracker.recordCall(
+            options.sessionId,
+            automationUsageCategory(automationKind),
+            usage,
+          )
+        : hasImages
+          ? usage => usageTracker.recordCall(options.sessionId, 'upstreamFinal', usage)
+          : undefined,
+    )
+
+    if (preservedByAttachment.size > 0) {
+      const shadowed = shadowSessionImages(
+        ctx,
+        options.sessionId,
+        preservedByAttachment,
+        logger,
+      )
+      lookManager?.remember(shadowed.agent, preservedEntries)
+      compactSessionHistory(ctx, options.sessionId, {
+        historyImageLimit: config.historyImageLimit,
+        browserHistoryLimit: config.browserHistoryLimit,
+        desktopHistoryLimit: config.desktopHistoryLimit,
+      }, logger)
+    }
+    return
+  }
+
   if (!messagesHaveImages(options.messages)) {
     const needsCompaction = messagesNeedHistoryCompaction(options.messages)
     if (needsCompaction) {
@@ -566,11 +648,6 @@ async function* bridgeStream(
       )
       return
     }
-    const upstreamInfo = await ctx.llm.resolveModelInfo(
-      config.upstreamProvider,
-      upstreamModel,
-      options.signal,
-    )
     const prepared = await prepareUpstreamCall({
       ...upstreamOptions,
       messages,
@@ -600,12 +677,6 @@ async function* bridgeStream(
     estimateInjectedTextTokens(system) - estimateInjectedTextTokens(options.system ?? ''),
   )
   let injectedTargetTokens = 0
-  const upstreamInfo = await ctx.llm.resolveModelInfo(
-    config.upstreamProvider,
-    upstreamModel,
-    options.signal,
-  )
-
   for (let clarificationCount = 0; ; clarificationCount += 1) {
     const prepared = await prepareUpstreamCall({
       ...upstreamOptions,
@@ -738,36 +809,35 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}, options = {}) {
     },
     async listModels() {
       const current = runtime
+      const models = (await ctx.llm.listModels(current.config.upstreamProvider))
+        .filter(model => current.config.upstreamModel === undefined
+          || model.id === current.config.upstreamModel)
+      const hasTextOnlyModels = models.some(model => !acceptsNativeImages(model))
       let route
-      try {
+      if (hasTextOnlyModels) try {
         route = await current.router.resolve()
         lastCatalogFailure = undefined
       } catch (error) {
         const message = errorMessage(error)
         if (message !== lastCatalogFailure) {
-          logger.warn?.(`deepseekeyes: virtual model catalog is empty: ${message}`)
+          logger.warn?.(`deepseekeyes: text-only virtual models are unavailable: ${message}`)
           lastCatalogFailure = message
         }
-        return []
+      } else {
+        lastCatalogFailure = undefined
       }
-      const models = await ctx.llm.listModels(current.config.upstreamProvider)
-      return models
-        .filter(model => !model.inputModalities?.includes('image'))
-        .filter(model => current.config.upstreamModel === undefined
-          || model.id === current.config.upstreamModel)
-        .map(model => visionWrappedModel(model, current.config, route))
+      return models.flatMap(model => acceptsNativeImages(model)
+        ? [nativeVisionWrappedModel(model, current.config)]
+        : route === undefined
+          ? []
+          : [visionWrappedModel(model, current.config, route)])
     },
     async resolveModel(_provider, model, signal) {
       const current = runtime
-      const route = await current.router.resolve(signal)
       const upstreamModel = lockedUpstreamModel(current.config, model)
       const info = await ctx.llm.resolveModelInfo(current.config.upstreamProvider, upstreamModel, signal)
-      if (info.inputModalities?.includes('image')) {
-        throw new DeepSeekEyesError(
-          `upstream model ${current.config.upstreamProvider}/${model} already accepts images and does not need DeepSeekEyes`,
-          'UPSTREAM_ALREADY_MULTIMODAL',
-        )
-      }
+      if (acceptsNativeImages(info)) return nativeVisionWrappedModel(info, current.config)
+      const route = await current.router.resolve(signal)
       return visionWrappedModel(info, current.config, route)
     },
     stream(options) {

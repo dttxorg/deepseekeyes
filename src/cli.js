@@ -9,7 +9,7 @@ import { loadHostDshMcpClient, loadHostDshTools } from './mcp/host-runtime.js'
 export const NPM_PACKAGE = '@dttxorg/deepseekeyes'
 export const DSH_PACKAGE = '@deepseek-ai/dsh'
 export const MINIMUM_NODE = Object.freeze([22, 19, 0])
-const DSH_RC_VERSION = '0.1.0-rc.6'
+const DSH_HOST_RANGE = '>=0.1.0-rc.6 <0.2.0'
 
 function parsedVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(value)
@@ -22,6 +22,14 @@ function versionAtLeast(actual, minimum) {
     if (actual[index] < minimum[index]) return false
   }
   return true
+}
+
+function dshHostVersionCompatible(value) {
+  const match = /^0\.1\.(\d+)(?:-rc\.(\d+))?$/.exec(String(value))
+  if (match === null) return false
+  const patch = Number(match[1])
+  if (patch > 0 || match[2] === undefined) return true
+  return Number(match[2]) >= 6
 }
 
 function parseArguments(argv) {
@@ -203,7 +211,7 @@ async function doctor(options, io) {
       }
     }
     if (manifest !== undefined) {
-      const expected = DSH_RC_VERSION
+      const expected = DSH_HOST_RANGE
       const actual = manifest.peerDependencies?.['@deepseek-ai/dsh-mcp-client']
       const mcpHostManaged = manifest.dependencies?.['@deepseek-ai/dsh-mcp-client'] === undefined
         && manifest.peerDependenciesMeta?.['@deepseek-ai/dsh-mcp-client']?.optional === true
@@ -272,7 +280,9 @@ async function doctor(options, io) {
           const exportsReady = typeof tools.renderToolsSdk === 'function'
             && typeof tools.renderToolsSdkPy === 'function'
             && typeof mcpClient.apply === 'function'
-          if (toolsManifest.version !== expected || clientManifest.version !== expected || !exportsReady) {
+          if (!dshHostVersionCompatible(toolsManifest.version)
+            || !dshHostVersionCompatible(clientManifest.version)
+            || !exportsReady) {
             throw new Error(
               `runtime tools=${toolsManifest.version}; client=${clientManifest.version}; expected=${expected}; exports=${exportsReady}`,
             )

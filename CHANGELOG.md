@@ -2,8 +2,12 @@
 
 ## 0.6.0 - 2026-08-19
 
-- Load the official MCP client and Tool SDK renderers from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback, canonicalizing the resolved entry so a profile-local shadow cannot split Cordis or tool-scheduler identity; exact optional rc.6 Host peers and source-only development pins remain enforced.
-- Add a lifecycle-managed MCP application layer around the official `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` and matching `@deepseek-ai/dsh-tools@0.1.0-rc.6`, including local stdio and remote Streamable HTTP transports, health checks, tool refresh and reconnect controls. Remote Streamable HTTP requires HTTPS; plaintext HTTP is accepted only for explicit loopback hosts/addresses.
+- Detect DSH rc.8 upstream models that explicitly declare image input and expose them as `Native Vision` routes without requiring a separate visual Provider.
+- Forward the current original `ImageBlock` unchanged to a native multimodal upstream, skip all secondary vision/evidence calls, and shadow only the future model-facing session surface after success so later text turns do not replay pixels.
+- Add a `nativeVisualTurns` usage counter; native image calls remain final-model usage while vision-model tokens, bridge estimates and exact plugin overhead remain zero.
+- Verify the source tree against DSH rc.8 while accepting managed MCP Host peers across `>=0.1.0-rc.6 <0.2.0`.
+- Load the official MCP client and Tool SDK renderers from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback, canonicalizing the resolved entry so a profile-local shadow cannot split Cordis or tool-scheduler identity; compatible optional Host peers and rc.8 source-test pins remain enforced.
+- Add a lifecycle-managed MCP application layer around the official `@deepseek-ai/dsh-mcp-client` and matching `@deepseek-ai/dsh-tools`, including local stdio and remote Streamable HTTP transports, health checks, tool refresh and reconnect controls. Remote Streamable HTTP requires HTTPS; plaintext HTTP is accepted only for explicit loopback hosts/addresses.
 - Back health with live transport/tools-list probes: test connection is independent, refresh replaces the transport generation, 30-second status freshness is single-flight, and a cleared/failed generation withdraws exposure instead of reporting stale tools as healthy.
 - Add atomic post-client catalog admission at 256 tools, 1,000,000 measured schema characters, 4,000,000 UTF-8 schema bytes, depth 64 and 100,000 schema nodes; over-limit/invalid generations publish no prefix, and non-empty-to-zero transitions require a matching live probe before becoming healthy.
 - Add a Harness-native, default-collapsed MCP settings control center for creating, enabling and testing servers, inspecting discovered tools and health, and selecting an explicit per-server tool allowlist without editing `cordis.patch.yml`.
@@ -20,8 +24,8 @@
 - Add privacy-reduced in-memory MCP call auditing with server/tool identity, risk class, status, latency and argument/result hashes; failures retain only a stable/redacted code and message SHA-256 while excluding error text, credentials and complete arguments/results.
 - Extend the automation context and per-instruction call guards to MCP continuations, and attribute MCP final-model usage, external calls, Schema/result input estimates, compactions and limit stops without double-counting estimates in Provider totals.
 - Add MCP architecture, retention, security and troubleshooting documentation plus real official-client integration coverage for Cordis lifecycle and tool discovery/call/probe/refresh/disposal over both temporary stdio and loopback Streamable HTTP SDK servers.
-- Document the dependency boundary: official rc.6/MCP SDK transport decode and unconditional extract/join for array-valued `content` happen before the `isError` branch and before DeepSeekEyes can apply its subsequent successful-value admission or error redaction.
-- Document the discovery dependency boundary: official rc.6 drains/validates every `tools/list` page and builds its definition map before CaptureRegistry, so the fixed catalog limits bound persistent post-client state but not one page's wire bytes, cursor count or the temporary upstream map.
+- Document the dependency boundary: official Host Client/MCP SDK transport decode and unconditional extract/join for array-valued `content` happen before the `isError` branch and before DeepSeekEyes can apply its subsequent successful-value admission or error redaction.
+- Document the discovery dependency boundary: the official Host Client drains/validates every `tools/list` page and builds its definition map before CaptureRegistry, so the fixed catalog limits bound persistent post-client state but not one page's wire bytes, cursor count or the temporary upstream map.
 - Document the 0.6 capability boundary: MCP Tools only, with Resources/Prompts and interactive OAuth deferred; external write verification and server privileges remain application concerns.
 
 ## 0.5.9 - 2026-08-19

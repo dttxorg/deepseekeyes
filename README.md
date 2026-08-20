@@ -82,6 +82,7 @@ These are real DeepSeek Harness captures, not product mockups. The captures show
 | Requirement | What DeepSeekEyes does |
 | :-- | :-- |
 | **One conversation** | Image → vision evidence → DeepSeek reasoning → optional visual follow-up all happen inside the current Harness task. |
+| **Native vision is not charged twice** | On DSH rc.8+, an upstream model that explicitly declares image input receives the original `ImageBlock` directly. DeepSeekEyes skips its secondary vision route and records a native-bypass turn. |
 | **Original pixels stay authoritative** | User images are not resized, converted or recompressed. Every reread references the original content-addressed attachment. |
 | **The models can communicate** | DeepSeek can request a precise region or detail instead of depending on one oversized first description. |
 | **No surprise text overhead** | With optional automation and MCP disabled—the default—pure-text turns keep the direct model path with no visual call or tool schema. MCP schema/result estimates become visible when tools are explicitly exposed. |
@@ -123,6 +124,8 @@ Ask normally:
 > Read this screenshot, identify the failure, and tell me the next action.
 
 DeepSeekEyes automatically reads the new image, gives DeepSeek structured evidence, and preserves the original for later targeted questions.
+
+If the selected upstream model already declares `inputModalities: [text, image]`, DeepSeekEyes automatically uses **native vision passthrough** instead: the current original `ImageBlock` is sent directly to that model, no background vision call or evidence prompt is created, and the model picker labels the route `Native Vision`. After the response, only the future model-facing session surface is replaced with a bounded SHA-256 attachment pointer; the append-only event and original attachment bytes remain intact. The usage panel exposes **Native vision bypass turns**, while vision-model tokens and estimated bridge input stay zero for that path.
 
 ## How it works
 
@@ -206,7 +209,7 @@ Computer Use model calls are isolated from unrelated long-task history by a defa
 
 ## MCP application layer
 
-DeepSeekEyes 0.6 adds the missing product layer around DSH's official `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` and matching `@deepseek-ai/dsh-tools@0.1.0-rc.6` renderer API. Both are loaded from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback and canonicalized to the Host installation instead of being installed as duplicate plugin dependencies; even a profile-local shadow cannot split Cordis or tool-scheduler identity. Configure it under the default-collapsed **MCP apps and tools** section—no manual `cordis.patch.yml` entry is required.
+DeepSeekEyes 0.6 adds the missing product layer around DSH's official `@deepseek-ai/dsh-mcp-client` and matching `@deepseek-ai/dsh-tools` renderer API. Both are loaded from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback and canonicalized to the Host installation instead of being installed as duplicate plugin dependencies; even a profile-local shadow cannot split Cordis or tool-scheduler identity. Configure it under the default-collapsed **MCP apps and tools** section—no manual `cordis.patch.yml` entry is required.
 
 - Connect local **stdio** servers or remote **Streamable HTTP** endpoints. Remote endpoints must use `https://`; `http://` is accepted only for an explicit loopback hostname/address such as `localhost`, `127.0.0.1` or `[::1]`.
 - Test a real transport/tools-list round trip, force a fresh transport generation for discovery, and reconnect from the settings card. Status polling reuses a successful health result for 30 seconds, then performs one shared live probe instead of trusting stale captured tools.
@@ -232,9 +235,9 @@ First connection: add the server, enter only credential environment-variable nam
 
 The 0.6 boundary is deliberately narrower than “all of MCP”: it bridges server **tools** only. MCP Resources and Prompts, interactive OAuth, and a general background UI driver are not provided. Background operation therefore requires a server that exposes the needed operation as a tool and accepts credentials through process-environment references; apps without such a server still use Browser or Desktop Computer Use. A successful tool response is evidence, not proof that an external state changed, so the agent must inspect the bounded result or call a read tool to verify writes.
 
-The pinned official rc.6 client and MCP SDK decode the transport response before the result reaches DeepSeekEyes. For every response whose `content` is an array, rc.6 walks the blocks and joins their extracted text **before** it checks `isError`; a successful call discards that temporary joined string and returns the blocks, while a failed call throws the string as an exception. The fixed admission limits above therefore govern only the successful adapter value **after** that dependency boundary. DeepSeekEyes bounds and redacts an already-created upstream exception before surfacing it, but does not claim to bound the SDK's earlier network decode or this pre-admission extract/join allocation.
+The verified official Host client and MCP SDK decode the transport response before the result reaches DeepSeekEyes. For every response whose `content` is an array, the client walks the blocks and joins their extracted text **before** it checks `isError`; a successful call discards that temporary joined string and returns the blocks, while a failed call throws the string as an exception. The fixed admission limits above therefore govern only the successful adapter value **after** that dependency boundary. DeepSeekEyes bounds and redacts an already-created upstream exception before surfacing it, but does not claim to bound the SDK's earlier network decode or this pre-admission extract/join allocation.
 
-The same dependency boundary applies to discovery: rc.6 completely drains and validates all `tools/list` pages and builds its in-memory definition map before calling DeepSeekEyes' CaptureRegistry. The fixed catalog limits atomically bound what DeepSeekEyes subsequently retains, sorts and exposes, but they cannot pre-limit the bytes of one network page, the number of cursor pages or rc.6's temporary pre-capture map.
+The same dependency boundary applies to discovery: the verified Host client completely drains and validates all `tools/list` pages and builds its in-memory definition map before calling DeepSeekEyes' CaptureRegistry. The fixed catalog limits atomically bound what DeepSeekEyes subsequently retains, sorts and exposes, but they do not pre-limit the bytes of one network page, the number of cursor pages or the client's temporary pre-capture map.
 
 ## Token accounting
 
@@ -248,7 +251,7 @@ The native plugin card exposes **Token usage statistics** without making a stati
 | **Final model visual-turn usage** | The single ordinary visual-turn final answer is recorded separately; automation final-model calls are included above. |
 | **Automation protection** | Protected user instructions, context compactions, limit stops and estimated replay input avoided. |
 | **MCP attribution** | External call count, final-model `upstreamMcp` usage, schema-input estimate, result-input estimate, MCP compactions and MCP limit stops. Code Mode success/failure contexts keep nested sub-calls on this path. Schema/result estimates are subsets of Provider input usage and are not added twice; `both` mode estimates the native definition and generated `tools:sdk` declaration as two real input surfaces. |
-| **Operational counters** | Visual turns, original-image rereads and vision-cache hits. |
+| **Operational counters** | Visual turns, native-vision bypass turns, original-image rereads and vision-cache hits. A native bypass records the ordinary final-model usage but adds zero secondary-vision or bridge overhead. |
 
 Statistics refresh/reset uses the loopback-only `/deepseekeyes` RPC. Data is atomically stored at `$DSH_HOME/deepseekeyes/usage-stats.json` with mode `0600` and a 50-session detail limit. A temporary write failure keeps counting in memory and does not interrupt the user's turn.
 
@@ -305,7 +308,7 @@ The release is continuously checked on Ubuntu, macOS and Windows. Native helper 
 
 Run a real multimodal Provider against the public suite with `npm run eval:live`; see [`evals/README.md`](evals/README.md). The committed fixture-oracle result validates 5 cases and 30 assertions while remaining explicitly separate from a model benchmark.
 
-The settings API and client slots are verified against DeepSeek Harness `0.1.0-rc.6`; MCP 0.6 declares exact optional Host peers for `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` and `@deepseek-ai/dsh-tools@0.1.0-rc.6`, resolves those modules only from DSH's managed Host fallback, and keeps matching development pins behind explicit source-test seams. Integration tests exercise temporary SDK servers over both real stdio and real loopback Streamable HTTP lifecycles, while clean-profile and profile-shadow acceptance prove that no duplicate core runtime enters or overrides the installed runtime. This is protocol acceptance, not a claim that an arbitrary external server or certificate has been tested. Node.js `>=22.19` is required.
+The settings API, native image route and client slots are verified against DeepSeek Harness `0.1.0-rc.8`. MCP 0.6 accepts the compatible Host peer range `>=0.1.0-rc.6 <0.2.0` for `@deepseek-ai/dsh-mcp-client` and `@deepseek-ai/dsh-tools`, resolves those modules only from DSH's managed Host fallback, and pins rc.8 for reproducible source tests. Integration tests exercise temporary SDK servers over both real stdio and real loopback Streamable HTTP lifecycles, while clean-profile and profile-shadow acceptance prove that no duplicate core runtime enters or overrides the installed runtime. This is protocol acceptance, not a claim that an arbitrary external server or certificate has been tested. Node.js `>=22.19` is required.
 
 ## Runtime documentation
 

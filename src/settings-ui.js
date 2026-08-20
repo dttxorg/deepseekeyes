@@ -287,13 +287,16 @@ export function settingsPathOps(currentValue, draft) {
   return ops
 }
 
-export function settingsDraftFailure(draft, providerId = 'deepseekeyes') {
+export function settingsDraftFailure(draft, providerId = 'deepseekeyes', upstreamNativeVision = false) {
   if (typeof draft.upstreamProvider !== 'string' || draft.upstreamProvider.trim() === '') {
     return 'upstreamRequired'
   }
   if (draft.upstreamProvider === providerId) return 'recursiveUpstream'
   if (draft.visionModel !== '' && draft.visionProvider === '') return 'visionProviderRequired'
-  if (!draft.autoDetectVision && draft.visionProvider === '' && draft.visionRoutePriority.trim() === '') {
+  if (!upstreamNativeVision
+    && !draft.autoDetectVision
+    && draft.visionProvider === ''
+    && draft.visionRoutePriority.trim() === '') {
     return 'visionRouteRequired'
   }
   if (draft.visionRoutePriority !== '') {

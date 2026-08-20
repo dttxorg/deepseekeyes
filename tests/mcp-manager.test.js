@@ -1179,7 +1179,11 @@ test('real DSH Code Mode ferries every MCP marker and image attachment through r
     assert.equal(JSON.stringify(failureContext).includes('secret-token'), false)
     const dispatches = events.filter(event => event.name === 'tool/code-dispatch')
     assert.equal(dispatches.length, 3)
-    assert.equal(dispatches[1].value.content.some(block => block.type === 'image'), true)
+    assert.equal(
+      dispatches[1].value.content.some(block => block.type === 'image'),
+      false,
+      'Code Mode binding stays JSON-only; the one deferred MCP context owns the image',
+    )
     assert.equal(dispatches[2].value.isError, true)
 
     const imageDefinition = ctx.tools.get('mcp__fixture__image', agent)

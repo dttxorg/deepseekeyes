@@ -78,6 +78,7 @@ DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉、Comput
 | 你关心的问题 | DeepSeekEyes 的处理方式 |
 | :-- | :-- |
 | 图片会不会在转交时失真？ | 用户原图不缩放、不转格式、不重压；每次追问重新引用原始内容寻址附件。 |
+| DSH 原生视觉会不会重复扣两次？ | 在 rc.8+ 中，最终模型显式声明图片输入时，插件直接把原始 `ImageBlock` 交给它并跳过后台视觉模型，同时单独记录“原生视觉旁路轮次”。 |
 | 第一次视觉描述不够怎么办？ | DeepSeek 可以携带图片 SHA-256、精确问题和可选区域继续向视觉模型追问。 |
 | 视觉模型选错了怎么办？ | 先检查图片能力声明，再通过随机 3×3 色块探针验证它确实读取了像素。 |
 | 主视觉模型出错怎么办？ | 按配置优先级执行有界故障转移，失败路由进入冷却期，每次 attempts 都写入本地审计记录。 |
@@ -100,6 +101,8 @@ DeepSeekEyes 不是另一个看图窗口，而是 **DSH 可审计视觉、Comput
 ```
 
 插件不保存 API Key，也不实现另一套供应商客户端。视觉调用全部经过 `ctx.llm`，因此直接复用 Harness 模型页面已经配置的端点、模型和凭据。
+
+当最终回答模型本身已经声明 `inputModalities: [text, image]` 时，DeepSeekEyes 会自动进入**原生视觉旁路**：本轮原始 `ImageBlock` 直接交给该模型，模型选择器显示 `Native Vision`，不再调用第二个视觉模型，也不注入证据提示。回答结束后，插件只把后续模型可见的会话表面替换成有界的 SHA-256 附件引用；追加式原始事件和附件字节保持不变。Token 面板会增加“原生视觉旁路轮次”，而这条路径的视觉模型 Token、估算桥接输入和精确插件额外 Token 均保持为零。
 
 ## 可审计视觉路由与严格 Schema（0.4）
 
@@ -203,7 +206,7 @@ macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为
 
 ## MCP 应用执行层 0.6（默认关闭）
 
-DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有设置界面。DeepSeekEyes 0.6 只从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` 与匹配的 `@deepseek-ai/dsh-tools@0.1.0-rc.6`，并将入口 canonicalize 到 Host 真实安装路径；即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
+DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有设置界面。DeepSeekEyes 0.6 只从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client` 与匹配的 `@deepseek-ai/dsh-tools`，并将入口 canonicalize 到 Host 真实安装路径；即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
 
 - 增删、启停本机 `stdio` 或远端 `Streamable HTTP` Server；远端必须使用 `https://`，只有 `localhost`、`127.0.0.1`、`[::1]` 等显式 loopback 主机/地址可以使用 `http://`；
 - 测试真实 transport/tools-list 往返、查看健康状态/延迟/最近错误、强制新 transport generation 刷新工具并重新连接；状态轮询在 30 秒内复用已验证结果，过期后只发起一个共享实时探针，不把旧工具缓存当健康；
@@ -231,9 +234,9 @@ Schema 估算按实际请求面计算：Native 模式计算原生函数定义，
 
 0.6 的真实边界不是“完整 MCP 平台”：当前只桥接 Server 的 **Tools**，不桥接 MCP Resources/Prompts，也不提供交互式 OAuth 或通用后台 UI 驱动。后台操作要求目标应用已经提供所需 MCP Tool，并通过进程环境变量引用完成认证；没有 MCP Server 的应用仍需使用 Browser/Desktop Computer Use。工具返回成功只是证据，不等于外部状态一定已改变；写操作后仍应检查有界结果，或再调用读取工具验证。
 
-固定的原始结果准入位于依赖边界之后：官方 rc.6 Client 与 MCP SDK 会先完成 transport 响应解码；只要响应的 `content` 是数组，rc.6 就会在检查 `isError` **之前**遍历内容块并拼接提取出的文本。成功路径随后丢弃这个临时字符串并返回内容块，失败路径则把它作为异常抛出。所以上述硬限制只约束依赖边界之后交给 DeepSeekEyes 的成功 adapter 值；插件会对已经生成的上游异常先限长、再脱敏后显示，但不宣称限制 SDK 更早的网络解码或这次准入前的提取/拼接分配。
+固定的原始结果准入位于依赖边界之后：已验证的官方 Host Client 与 MCP SDK 会先完成 transport 响应解码；只要响应的 `content` 是数组，Client 就会在检查 `isError` **之前**遍历内容块并拼接提取出的文本。成功路径随后丢弃这个临时字符串并返回内容块，失败路径则把它作为异常抛出。所以上述硬限制只约束依赖边界之后交给 DeepSeekEyes 的成功 adapter 值；插件会对已经生成的上游异常先限长、再脱敏后显示，但不宣称限制 SDK 更早的网络解码或这次准入前的提取/拼接分配。
 
-目录准入也位于依赖边界之后：rc.6 会先完整 drain/validate 全部 `tools/list` 分页并构建内存 definition Map，之后才逐项调用 DeepSeekEyes CaptureRegistry。固定 catalog 上限会原子限制插件随后持久 capture、排序与暴露的 generation，但无法前置限制单页网络响应字节、cursor 页数或 rc.6 的临时 pre-capture Map。
+目录准入也位于依赖边界之后：已验证的 Host Client 会先完整 drain/validate 全部 `tools/list` 分页并构建内存 definition Map，之后才逐项调用 DeepSeekEyes CaptureRegistry。固定 catalog 上限会原子限制插件随后持久 capture、排序与暴露的 generation，但不会前置限制单页网络响应字节、cursor 页数或 Client 的临时 pre-capture Map。
 
 ## 安装、升级与 doctor
 
@@ -294,7 +297,7 @@ DeepSeekEyes 的 GUI 数据写入 Harness 自己的 `settings.yaml` namespace；
 2. **估算桥接输入**：插件注入给最终模型的结构化视觉证据、协议和工具结果。Provider 通常只返回整次请求输入量，无法拆出插件片段，因此这里按 Harness 的固定密度规则估算；
 3. **最终回答模型用量**：普通图文轮次唯一一次最终调用单独记录，不计入“插件额外消耗”；Computer Use 为规划下一步而产生的最终模型调用会计入额外消耗。
 
-面板同时显示自动化 DeepSeek Token、MCP DeepSeek Token、MCP 外部调用、Schema 输入估算、结果输入估算、MCP 上下文保护/停止次数、视觉轮次、原图按需读取和视觉缓存命中。Schema 与结果估算属于 Provider 输入用量的可归因子集，不会再次加进精确总数。刷新、清零和读取统计只调用本机回环 RPC `/deepseekeyes`，不会创建会话消息、工具 Schema 或模型请求。默认关闭 MCP/Computer Use 的普通纯文字轮次仍走原有直通路径。
+面板同时显示自动化 DeepSeek Token、MCP DeepSeek Token、MCP 外部调用、Schema 输入估算、结果输入估算、MCP 上下文保护/停止次数、视觉轮次、原生视觉旁路轮次、原图按需读取和视觉缓存命中。原生旁路只记录正常最终模型用量，第二视觉模型与桥接额外消耗均为零。Schema 与结果估算属于 Provider 输入用量的可归因子集，不会再次加进精确总数。刷新、清零和读取统计只调用本机回环 RPC `/deepseekeyes`，不会创建会话消息、工具 Schema 或模型请求。默认关闭 MCP/Computer Use 的普通纯文字轮次仍走原有直通路径。
 
 累计数据默认原子写入：
 
@@ -497,7 +500,7 @@ npm run check
 npm pack --dry-run
 ```
 
-设置接口和 Client 插槽按 DeepSeek Harness `0.1.0-rc.6` 验证；MCP 0.6 为 `@deepseek-ai/dsh-mcp-client@0.1.0-rc.6` 与 `@deepseek-ai/dsh-tools@0.1.0-rc.6` 声明精确的可选 Host peer，运行时通过活动 DSH Loader 取用，匹配的开发依赖只服务于源码测试。临时 SDK Server 覆盖真实 stdio 与真实 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。实现参考的上游源码提交为 `47f943859bef60e4160492346772ded9b24f765a`。Node.js 版本要求为 `>=22.19`。
+设置接口、原生图片路由和 Client 插槽按 DeepSeek Harness `0.1.0-rc.8` 验证；MCP 0.6 为 `@deepseek-ai/dsh-mcp-client` 与 `@deepseek-ai/dsh-tools` 声明兼容的可选 Host peer 范围 `>=0.1.0-rc.6 <0.2.0`，运行时从 DSH 管理的 Host fallback 取用，并把源码测试依赖精确固定在 rc.8。临时 SDK Server 覆盖真实 stdio 与真实 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。Node.js 版本要求为 `>=22.19`。
 
 ## 卸载
 

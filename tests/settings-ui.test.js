@@ -31,6 +31,7 @@ test('GUI draft emits minimal live settings mutations and validates routing cons
     { op: 'set', path: ['maxClarifications'], value: 5 },
   ])
   assert.equal(settingsDraftFailure({ ...draft, autoDetectVision: false }), 'visionRouteRequired')
+  assert.equal(settingsDraftFailure({ ...draft, autoDetectVision: false }, 'deepseekeyes', true), undefined)
   assert.equal(settingsDraftFailure({ ...draft, upstreamProvider: 'deepseekeyes' }), 'recursiveUpstream')
   assert.equal(settingsDraftFailure({ ...current, baseMaxTokens: 500 }), 'baseMaxTokensRange')
   assert.equal(settingsDraftFailure({ ...current, baseMaxTokens: 0, targetMaxTokens: 0 }), undefined)

@@ -147,6 +147,77 @@ test('text-only turns delegate directly without spending a visual call', async (
   assert.deepEqual(usage.sessions, [])
 })
 
+test('native multimodal upstream bypasses the second vision call and preserves the exact ImageBlock', async () => {
+  const ctx = mockContext()
+  let upstreamCalls = 0
+  let forwarded
+  ctx.llm.addProvider(
+    'deepseek-native',
+    [{
+      id: 'deepseek-vision-exp',
+      name: 'DeepSeek Vision Experimental',
+      inputModalities: ['text', 'image'],
+    }],
+    options => {
+      upstreamCalls += 1
+      forwarded = options
+      return textStream('native visual answer', {
+        inputTokens: 120,
+        outputTokens: 8,
+        cacheReadTokens: 20,
+      })
+    },
+  )
+  const state = apply(ctx, {
+    upstreamProvider: 'deepseek-native',
+    upstreamModel: 'deepseek-vision-exp',
+    autoDetectVision: false,
+    activeProbe: false,
+    cacheDir: false,
+  })
+  const ref = ctx.attachments.add(Buffer.from('native original image bytes'), {
+    width: 1280,
+    height: 720,
+  })
+
+  const models = await ctx.llm.listModels('deepseekeyes')
+  assert.deepEqual(models.map(model => model.id), ['deepseek-vision-exp'])
+  assert.equal(models[0].name, 'DeepSeek Vision Experimental · Native Vision')
+  assert.match(models[0].description, /without a second vision call/)
+  const resolved = await ctx.llm.resolveModelInfo('deepseekeyes', 'deepseek-vision-exp')
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-vision-exp',
+    sessionId: 'native-vision-session',
+    messages: [userMessage([
+      { type: 'text', text: 'Read this image directly.' },
+      { type: 'image', attachment: ref },
+    ])],
+  }))
+
+  assert.equal(result.text, 'native visual answer')
+  assert.equal(upstreamCalls, 1)
+  assert.equal(forwarded.provider, 'deepseek-native')
+  assert.equal(forwarded.model, 'deepseek-vision-exp')
+  const image = forwarded.messages[0].content.find(block => block.type === 'image')
+  assert.deepEqual(image.attachment, ref)
+  assert.doesNotMatch(JSON.stringify(forwarded), /DeepSeekEyes image evidence|private visual protocol/)
+
+  const usage = await state.usage.snapshot()
+  assert.equal(usage.totals.visualTurns, 1)
+  assert.equal(usage.totals.nativeVisualTurns, 1)
+  assert.equal(usage.totals.calls.visionBase, 0)
+  assert.equal(usage.totals.calls.visionTarget, 0)
+  assert.equal(usage.totals.calls.upstreamFinal, 1)
+  assert.equal(usage.totals.derived.visionTokens, 0)
+  assert.equal(usage.totals.derived.exactAdditionalTokens, 0)
+  assert.equal(usage.totals.derived.estimatedBridgeInputTokens, 0)
+  assert.equal(usage.totals.derived.finalModelVisualTurnTokens, 148)
+  assert.equal(usage.accounting.nativeVisionPassThroughUsesNoSecondVisionCall, true)
+})
+
 test('MCP continuation calls are isolated and account their model plus schema input', async () => {
   const ctx = setupBridge({
     bridgeConfig: { mcpEnabled: true },

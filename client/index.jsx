@@ -42,6 +42,7 @@ const zh = {
   visionModel: '后台读图模型',
   visionModelPlaceholder: '选择或输入模型 ID；留空则选该 Provider 的首个视觉模型',
   routeSummary: '当前路由：图片 → {vision} 读图 → {final} 最终回答',
+  nativeRouteSummary: '当前路由：图片 → {final} 原生视觉直读；后台视觉模型不会重复调用',
   automaticVision: '自动检测视觉模型',
   allTextModels: '该 Provider 的会话所选模型',
   declareVision: '将此自定义网关声明为支持图片输入',
@@ -88,6 +89,7 @@ const zh = {
   usageMcpLimitStops: 'MCP 预算停止',
   usageMcpSubsetHint: 'MCP Schema 与结果输入是 Provider input usage 的组成部分，用于解释成本来源，不会再次加到“精确额外 Token”或“MCP 调用 Token”中。',
   usageVisualTurns: '视觉轮次',
+  usageNativeVisualTurns: '原生视觉旁路轮次',
   usageLookCalls: '原图按需读取',
   usageCacheHits: '视觉缓存命中',
   usageFinalExcluded: '普通图文轮次唯一一次最终回答仍单独展示；Browser/Desktop Computer Use 引发的每次 DeepSeek 调用均计入插件额外消耗。',
@@ -322,6 +324,7 @@ const en = {
   visionModel: 'Background vision model',
   visionModelPlaceholder: 'Choose or type a model ID; blank selects the first visual model',
   routeSummary: 'Current route: image → {vision} reads it → {final} gives the final answer',
+  nativeRouteSummary: 'Current route: image → {final} native vision; no duplicate background vision call',
   automaticVision: 'auto-detected vision model',
   allTextModels: 'conversation-selected model from this provider',
   declareVision: 'Declare image input for this custom gateway',
@@ -368,6 +371,7 @@ const en = {
   usageMcpLimitStops: 'MCP budget stops',
   usageMcpSubsetHint: 'MCP schema and result input are subsets of provider input usage. They explain cost sources and are not added again to Exact additional tokens or MCP call tokens.',
   usageVisualTurns: 'Visual turns',
+  usageNativeVisualTurns: 'Native vision bypass turns',
   usageLookCalls: 'On-demand original reads',
   usageCacheHits: 'Visual cache hits',
   usageFinalExcluded: 'The single final answer for an ordinary visual turn remains separate. Every DeepSeek call caused by Browser/Desktop Computer Use is included in plugin overhead.',
@@ -712,6 +716,12 @@ function TokenBudgetField({
 function modelName(group, modelId, fallback) {
   if (modelId === '') return fallback
   return group?.models?.find(model => model.id === modelId)?.name ?? modelId
+}
+
+function selectedModelAcceptsImages(group, modelId) {
+  if (modelId === '') return false
+  const model = group?.models?.find(entry => entry.id === modelId)
+  return Array.isArray(model?.inputModalities) && model.inputModalities.includes('image')
 }
 
 function routeSummary(template, vision, final) {
@@ -1254,7 +1264,8 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
     setDirty(true)
     setNotice(undefined)
   }
-  const failureKey = settingsDraftFailure(draft, PROVIDER_ID)
+  const upstreamNativeVision = selectedModelAcceptsImages(upstreamGroup, draft.upstreamModel)
+  const failureKey = settingsDraftFailure(draft, PROVIDER_ID, upstreamNativeVision)
   const readyGroup = catalog.groups.find(group => group.id === PROVIDER_ID && group.models.length > 0)
   const selectedFailure = catalog.failures.find(item => item.id === draft.visionProvider || item.id === draft.upstreamProvider)
   const saveBlocked = saving || snapshot.status !== 'ready' || !snapshot.writable || failureKey !== undefined
@@ -1424,7 +1435,9 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
           </div>
 
           <p style={styles.statusOk}>
-            {routeSummary(t('routeSummary'), visionRouteName, finalRouteName)}
+            {upstreamNativeVision
+              ? routeSummary(t('nativeRouteSummary'), visionRouteName, finalRouteName)
+              : routeSummary(t('routeSummary'), visionRouteName, finalRouteName)}
           </p>
 
           {draft.visionProvider !== '' && visionTarget !== undefined
@@ -1745,6 +1758,7 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
                         <UsageMetric label={t('usageMcpContextCompactions')} value={usage.value.totals.mcpContextCompactions} />
                         <UsageMetric label={t('usageMcpLimitStops')} value={usage.value.totals.mcpLimitStops} />
                         <UsageMetric label={t('usageVisualTurns')} value={usage.value.totals.visualTurns} />
+                        <UsageMetric label={t('usageNativeVisualTurns')} value={usage.value.totals.nativeVisualTurns} />
                         <UsageMetric label={t('usageLookCalls')} value={usage.value.totals.lookCalls} />
                         <UsageMetric label={t('usageCacheHits')} value={usage.value.totals.cacheHits} />
                       </div>

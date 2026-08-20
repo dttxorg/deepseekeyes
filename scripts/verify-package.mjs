@@ -1,7 +1,8 @@
 import { access, readFile } from 'node:fs/promises'
 
 const root = new URL('../', import.meta.url)
-const DSH_RC_VERSION = '0.1.0-rc.6'
+const DSH_RC_VERSION = '0.1.0-rc.8'
+const DSH_HOST_RANGE = '>=0.1.0-rc.6 <0.2.0'
 const CORDIS_VERSION = '4.0.1'
 const DSH_DEVELOPMENT_RUNTIME = [
   ['@deepseek-ai/cordis', CORDIS_VERSION],
@@ -62,9 +63,9 @@ for (const dependency of DSH_HOST_MODULES) {
   if (manifest.dependencies?.[dependency] !== undefined) {
     throw new Error(`${dependency} must be loaded from the DSH Host, not bundled as a runtime dependency`)
   }
-  if (manifest.peerDependencies?.[dependency] !== DSH_RC_VERSION
+  if (manifest.peerDependencies?.[dependency] !== DSH_HOST_RANGE
     || manifest.peerDependenciesMeta?.[dependency]?.optional !== true) {
-    throw new Error(`${dependency} must declare optional Host peer ${DSH_RC_VERSION}`)
+    throw new Error(`${dependency} must declare optional Host peer ${DSH_HOST_RANGE}`)
   }
 }
 for (const [dependency, version] of DSH_DEVELOPMENT_RUNTIME) {

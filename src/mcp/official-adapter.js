@@ -108,7 +108,7 @@ function arrayEntries(value) {
 
 /**
  * Incrementally measure a JSON-like tool schema without JSON.stringify(),
- * recursive calls, or an unbounded key array. The official rc.6 client drains
+ * recursive calls, or an unbounded key array. The official Host Client drains
  * and validates every tools/list page before it calls this registry, so this
  * boundary cannot cap bytes already received from one page or an unbounded
  * cursor chain. It does ensure the persistent capture, sorting, model schema,
@@ -417,7 +417,7 @@ class CaptureRegistry {
       description: definition.description ?? '',
       inputSchema: definition.parameters ?? {},
       outputSchema: definition.output?.schema,
-      // dsh-mcp-client rc.6 does not forward MCP annotations. Missing data is
+      // The verified dsh-mcp-client does not forward MCP annotations. Missing data is
       // intentionally classified as unknown-write by DeepSeekEyes.
       annotations: definition.annotations,
       definition,
@@ -499,7 +499,7 @@ export class DshMcpClientAdapter {
       this.connected = false
       reason = this.status
     } else if (this.startedOnce && previousCount > 0 && tools.length === 0) {
-      // Empty is a valid MCP catalog, but rc.6 exposes the same unregister
+      // Empty is a valid MCP catalog, but the Host Client exposes the same unregister
       // signal when its reconnect budget is exhausted. Mark it unknown and
       // fail closed until a real uncached probe distinguishes the two cases.
       this.status = 'unknown'

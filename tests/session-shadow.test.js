@@ -186,3 +186,60 @@ test('processed images leave the raw log intact but exit the model surface so V4
   assert.equal(targetCalls, 1)
   assert.equal(baseCalls, 1, 'on-demand reread reuses the cached base record')
 })
+
+test('native vision sends current pixels once and shadows them before the next model turn', async () => {
+  const ctx = mockContext()
+  let nativeCalls = 0
+  ctx.llm.addProvider(
+    'native-provider',
+    [{ id: 'native-vision', name: 'Native Vision', inputModalities: ['text', 'image'] }],
+    (options) => {
+      nativeCalls += 1
+      assert.equal(messagesHaveImages(options.messages), true)
+      return textStream('native answer', { inputTokens: 30, outputTokens: 4 })
+    },
+  )
+  const bytes = Buffer.from('native-session-image')
+  const hash = createHash('sha256').update(bytes).digest('hex')
+  const attachment = ctx.attachments.add(bytes, { attachmentId: `sha256:${hash}` })
+  const original = userMessage([
+    { type: 'text', text: 'Use native vision.' },
+    { type: 'image', attachment },
+  ])
+  const session = new SurfaceSession('native-session', original)
+  const agentCtx = {
+    ...ctx,
+    tools: new MockTools(),
+    systemPrompt: new MockSystemPrompt(),
+  }
+  const agent = {
+    id: 'native-session',
+    session,
+    ctx: agentCtx,
+    options: { provider: 'deepseekeyes', model: 'native-vision' },
+  }
+  ctx.agents = { get: id => String(id) === agent.id ? agent : undefined }
+
+  const state = apply(ctx, {
+    upstreamProvider: 'native-provider',
+    upstreamModel: 'native-vision',
+    autoDetectVision: false,
+    activeProbe: false,
+    cacheDir: false,
+  })
+  const result = await collectStream(ctx.llm.stream({
+    provider: 'deepseekeyes',
+    model: 'native-vision',
+    sessionId: 'native-session',
+    messages: [original],
+  }))
+
+  assert.equal(result.text, 'native answer')
+  assert.equal(nativeCalls, 1)
+  assert.equal(messagesHaveImages([session.events[0].data]), true, 'raw event retains original pixels')
+  assert.equal(messagesHaveImages(session.deriveMessages()), false, 'future turns do not replay pixels')
+  assert.match(JSON.stringify(session.deriveMessages()), /no DeepSeekEyes vision-model call was made/)
+  const usage = await state.usage.snapshot()
+  assert.equal(usage.totals.nativeVisualTurns, 1)
+  assert.equal(usage.totals.derived.exactAdditionalTokens, 0)
+})

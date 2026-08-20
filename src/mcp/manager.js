@@ -594,7 +594,13 @@ export class McpManager {
       // usage attribution and call guards; image results additionally carry
       // immutable Harness attachment references into the visual bridge.
       deferContext({ result: bounded })
-      return bounded
+      // Code Mode already receives the original image attachments through the
+      // trusted deferred MCP context above. Return a JSON-only binding value so
+      // DSH rc.8's generic image ferry does not add a second copy; rc.6 keeps
+      // using the same explicit context and therefore remains compatible.
+      return exec.parent !== undefined && bounded.images?.length > 0
+        ? { ...bounded, images: [] }
+        : bounded
     } catch (error) {
       failure = managedMcpError(error, publicName, failureCode)
       deferContext({ errorCode: failure.code })

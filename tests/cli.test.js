@@ -55,8 +55,8 @@ async function writeFixturePackage(profileDirectory) {
     name: NPM_PACKAGE,
     version: '0.6.0',
     peerDependencies: {
-      '@deepseek-ai/dsh-mcp-client': '0.1.0-rc.6',
-      '@deepseek-ai/dsh-tools': '0.1.0-rc.6',
+      '@deepseek-ai/dsh-mcp-client': '>=0.1.0-rc.6 <0.2.0',
+      '@deepseek-ai/dsh-tools': '>=0.1.0-rc.6 <0.2.0',
     },
     peerDependenciesMeta: {
       '@deepseek-ai/dsh-mcp-client': { optional: true },
@@ -84,13 +84,13 @@ async function writeHostRuntimeFixture(dshHome, profileDirectory) {
   await writeRuntimePackage(
     hostModules,
     '@deepseek-ai/dsh-tools',
-    '0.1.0-rc.6',
+    '0.1.0-rc.8',
     'export function renderToolsSdk() {} export function renderToolsSdkPy() {}',
   )
   await writeRuntimePackage(
     hostModules,
     '@deepseek-ai/dsh-mcp-client',
-    '0.1.0-rc.6',
+    '0.1.0-rc.8',
     'export function apply() {}',
   )
   await writeRuntimePackage(

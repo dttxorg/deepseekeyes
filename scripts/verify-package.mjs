@@ -1,4 +1,5 @@
 import { access, readFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 
 const root = new URL('../', import.meta.url)
 const DSH_RC_VERSION = '0.1.0-rc.8'
@@ -135,10 +136,11 @@ if (typeof mcpClient.apply !== 'function') {
   throw new Error('installed dsh-mcp-client and its runtime dependency closure must be importable')
 }
 const clientRequire = (await import('node:module')).createRequire(import.meta.url)
+const importClientDependency = specifier => import(pathToFileURL(clientRequire.resolve(specifier)).href)
 const [mcpSdkClient, mcpSdkStdio, mcpSdkHttp] = await Promise.all([
-  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/index.js')),
-  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')),
-  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js')),
+  importClientDependency('@modelcontextprotocol/sdk/client/index.js'),
+  importClientDependency('@modelcontextprotocol/sdk/client/stdio.js'),
+  importClientDependency('@modelcontextprotocol/sdk/client/streamableHttp.js'),
 ])
 if (typeof mcpSdkClient.Client !== 'function'
   || typeof mcpSdkStdio.StdioClientTransport !== 'function'

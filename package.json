@@ -38,7 +38,7 @@
     "check": "npm run build:client && node scripts/verify-package.mjs && npm run eval:fixture && npm test",
     "pack:dry": "npm pack --dry-run",
     "pack:release": "npm pack",
-    "build:client": "node scripts/build-client.mjs",
+    "build:client": "node scripts/build-client.cjs",
     "prepack": "npm run check",
     "test:desktop": "node acceptance/desktop-native.mjs && node acceptance/macos-pasteboard.mjs",
     "eval:fixtures": "python3 evals/generate-fixtures.py",

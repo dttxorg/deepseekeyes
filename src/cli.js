@@ -243,6 +243,7 @@ async function doctor(options, io) {
       'lib/client.js',
       'schemas/visual-evidence.schema.json',
       'src/mcp/index.js',
+      'src/mcp/oauth.js',
       'src/mcp/content-adapter.js',
       'src/mcp/host-runtime.js',
       'src/mcp/manager.js',

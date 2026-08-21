@@ -201,6 +201,16 @@ const zh = {
   mcpAddHeaderRef: '添加请求头引用',
   mcpRemoveReference: '删除引用',
   mcpCredentialHint: '这里只保存环境变量名，不保存 Token、Header 值或其他明文凭据。',
+  mcpOAuthEnabled: '启用 OAuth 2.0 Client Credentials',
+  mcpOAuthHint: '适用于需要 OAuth 的 Streamable HTTP Server。只保存 Client ID/Secret 的环境变量名；访问令牌仅保留在当前进程内，并由 Tools 与 Content 共用。',
+  mcpOAuthClientIdEnv: 'Client ID 环境变量',
+  mcpOAuthClientSecretEnv: 'Client Secret 环境变量',
+  mcpOAuthScope: 'OAuth Scope（可选）',
+  mcpOAuthScopePlaceholder: '例如 files:read tools:execute',
+  mcpOAuthAuthMethod: 'Token 端点认证方式',
+  mcpOAuthAuthBasic: 'client_secret_basic（推荐）',
+  mcpOAuthAuthPost: 'client_secret_post',
+  mcpOAuthStatus: 'OAuth 状态',
   mcpAllowedTools: '允许工具（每行一个）',
   mcpAllowedToolsPlaceholder: '默认留空，即不暴露任何工具',
   mcpDenyTools: '拒绝工具（每行一个）',
@@ -318,6 +328,10 @@ const zh = {
   mcpServerTimeoutMsRange: 'Server 连接超时必须留空或为 100–3600000 的整数。',
   mcpServerEnvInvalid: '环境变量引用必须使用有效变量名，且只能指向另一个环境变量名。',
   mcpServerHeadersInvalid: '请求头名称无效，或其值不是环境变量引用。',
+  mcpServerOAuthCredentialsInvalid: 'OAuth Client ID 和 Client Secret 必须分别引用有效的环境变量名。',
+  mcpServerOAuthMethodInvalid: 'OAuth Token 端点认证方式无效。',
+  mcpServerOAuthHeaderConflict: '启用 OAuth 时不要再配置 Authorization 请求头；Bearer Token 由插件注入。',
+  mcpServerOAuthTransportInvalid: 'OAuth Client Credentials 只支持 Streamable HTTP。',
   mcpServerToolsInvalid: '工具允许/拒绝列表无效。',
   mcpServerToolsConflict: '同一个工具不能同时出现在允许与拒绝列表。',
   mcpServerResourcesInvalid: 'Resource 允许/拒绝列表无效。',
@@ -509,6 +523,16 @@ const en = {
   mcpAddHeaderRef: 'Add header reference',
   mcpRemoveReference: 'Remove reference',
   mcpCredentialHint: 'Only environment-variable names are stored here—never tokens, header values, or other plaintext credentials.',
+  mcpOAuthEnabled: 'Enable OAuth 2.0 client credentials',
+  mcpOAuthHint: 'For Streamable HTTP servers that require OAuth. Only environment-variable names for the client ID and secret are stored; the access token stays in process memory and is shared by Tools and Content.',
+  mcpOAuthClientIdEnv: 'Client ID environment variable',
+  mcpOAuthClientSecretEnv: 'Client secret environment variable',
+  mcpOAuthScope: 'OAuth scope (optional)',
+  mcpOAuthScopePlaceholder: 'For example: files:read tools:execute',
+  mcpOAuthAuthMethod: 'Token endpoint authentication',
+  mcpOAuthAuthBasic: 'client_secret_basic (recommended)',
+  mcpOAuthAuthPost: 'client_secret_post',
+  mcpOAuthStatus: 'OAuth status',
   mcpAllowedTools: 'Allowed tools (one per line)',
   mcpAllowedToolsPlaceholder: 'Blank by default, which exposes no tools',
   mcpDenyTools: 'Denied tools (one per line)',
@@ -626,6 +650,10 @@ const en = {
   mcpServerTimeoutMsRange: 'Server connection timeout must be blank or an integer from 100 through 3600000.',
   mcpServerEnvInvalid: 'Environment references must use valid variable names and point only to another environment variable.',
   mcpServerHeadersInvalid: 'A request-header name is invalid or does not point to an environment variable.',
+  mcpServerOAuthCredentialsInvalid: 'OAuth Client ID and Client Secret must each reference a valid environment variable name.',
+  mcpServerOAuthMethodInvalid: 'The OAuth token endpoint authentication method is invalid.',
+  mcpServerOAuthHeaderConflict: 'Do not configure an Authorization header when OAuth is enabled; the plugin injects the bearer token.',
+  mcpServerOAuthTransportInvalid: 'OAuth client credentials are supported only for Streamable HTTP.',
   mcpServerToolsInvalid: 'The tool allow/deny lists are invalid.',
   mcpServerToolsConflict: 'A tool cannot be both allowed and denied.',
   mcpServerResourcesInvalid: 'The Resource allow/deny lists are invalid.',
@@ -986,7 +1014,7 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
             onChange={(event) => {
               const transport = event.target.value
               onChange(transport === 'stdio'
-                ? { ...server, transport, url: '', headers: {} }
+                ? { ...server, transport, url: '', headers: {}, oauth: { ...server.oauth, enabled: false } }
                 : { ...server, transport, command: '', args: [], cwd: '', env: {} })
             }}
           >
@@ -1045,6 +1073,53 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
       </div>
       <p style={styles.hint}>{t('mcpCredentialHint')}</p>
 
+      {server.transport === 'streamable-http'
+        ? (
+          <details style={{ ...styles.details, borderTop: 0, paddingTop: 0 }} open={server.oauth?.enabled === true}>
+            <summary style={{ ...styles.detailsSummary, marginBottom: 0 }}>{t('mcpOAuthEnabled')}</summary>
+            <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+              <label style={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={server.oauth?.enabled === true}
+                  disabled={serverDisabled}
+                  onChange={event => onChange({
+                    ...server,
+                    oauth: { ...server.oauth, enabled: event.target.checked },
+                  })}
+                />
+                <span>{t('mcpOAuthEnabled')}<br /><small style={styles.hint}>{t('mcpOAuthHint')}</small></span>
+              </label>
+              {server.oauth?.enabled === true
+                ? (
+                  <div style={styles.grid}>
+                    <div style={styles.field}>
+                      <label style={styles.label} htmlFor={`deepseekeyes-mcp-oauth-client-id-${index}`}>{t('mcpOAuthClientIdEnv')}</label>
+                      <input id={`deepseekeyes-mcp-oauth-client-id-${index}`} style={styles.input} type="text" value={server.oauth?.clientId?.env ?? ''} disabled={serverDisabled} onChange={event => onChange({ ...server, oauth: { ...server.oauth, clientId: { env: event.target.value } } })} />
+                    </div>
+                    <div style={styles.field}>
+                      <label style={styles.label} htmlFor={`deepseekeyes-mcp-oauth-client-secret-${index}`}>{t('mcpOAuthClientSecretEnv')}</label>
+                      <input id={`deepseekeyes-mcp-oauth-client-secret-${index}`} style={styles.input} type="text" value={server.oauth?.clientSecret?.env ?? ''} disabled={serverDisabled} onChange={event => onChange({ ...server, oauth: { ...server.oauth, clientSecret: { env: event.target.value } } })} />
+                    </div>
+                    <div style={styles.field}>
+                      <label style={styles.label} htmlFor={`deepseekeyes-mcp-oauth-scope-${index}`}>{t('mcpOAuthScope')}</label>
+                      <input id={`deepseekeyes-mcp-oauth-scope-${index}`} style={styles.input} type="text" placeholder={t('mcpOAuthScopePlaceholder')} value={server.oauth?.scope ?? ''} disabled={serverDisabled} onChange={event => onChange({ ...server, oauth: { ...server.oauth, scope: event.target.value } })} />
+                    </div>
+                    <div style={styles.field}>
+                      <label style={styles.label} htmlFor={`deepseekeyes-mcp-oauth-method-${index}`}>{t('mcpOAuthAuthMethod')}</label>
+                      <select id={`deepseekeyes-mcp-oauth-method-${index}`} style={styles.input} value={server.oauth?.authMethod ?? 'client_secret_basic'} disabled={serverDisabled} onChange={event => onChange({ ...server, oauth: { ...server.oauth, authMethod: event.target.value } })}>
+                        <option value="client_secret_basic">{t('mcpOAuthAuthBasic')}</option>
+                        <option value="client_secret_post">{t('mcpOAuthAuthPost')}</option>
+                      </select>
+                    </div>
+                  </div>
+                )
+                : null}
+            </div>
+          </details>
+        )
+        : null}
+
       <div style={styles.grid}>
         <div style={styles.field}>
           <label style={styles.label} htmlFor={`deepseekeyes-mcp-allow-${index}`}>{t('mcpAllowedTools')}</label>
@@ -1091,6 +1166,7 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
         <McpMetric label={t('mcpPromptCount')} value={formatCount(runtimeServer?.promptCount)} />
         <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtimeServer?.exposedToolCount ?? server.allowedTools.length)} />
         <McpMetric label={t('mcpSchemaTokens')} value={formatCount(runtimeServer?.schemaTokensEstimated)} />
+        {runtimeServer?.oauth ? <McpMetric label={t('mcpOAuthStatus')} value={runtimeServer.oauth.status ?? '—'} /> : null}
       </div>
       {runtimeServer?.toolsLastError?.message
         ? <p style={styles.statusError}>{t('mcpToolsLastError')}: {runtimeServer.toolsLastError.code ? `[${runtimeServer.toolsLastError.code}] ` : ''}{runtimeServer.toolsLastError.message}</p>

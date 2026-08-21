@@ -62,7 +62,22 @@ These limits begin at CaptureRegistry. Official rc.6 has already drained and val
 
 Credential fields contain environment-variable **names**, not secret values. For example, an HTTP `Authorization` header may point to `{ "env": "APP_MCP_AUTHORIZATION" }`. Export that variable in the environment that starts `dsh web`, then restart or reconnect the server. The settings card, runtime snapshot and audit do not return the resolved value.
 
-For stdio, verify the executable path, argument array and optional working directory from the same user account that runs DSH. Put secrets in the server's `env` reference map rather than command arguments; common inline forms such as `--token VALUE`, `--auth=VALUE` and Basic/Bearer authorization arguments are rejected. For Streamable HTTP, a remote endpoint must use `https://`. Plain `http://` is accepted only when the URL hostname/address is explicitly loopback, for example `localhost`, `service.localhost`, `127.0.0.1` or `[::1]`; a private-LAN name or address is not loopback. Keep credentials out of URL user information/query parameters and put them in header environment references. **Test connection** returns the stage, error code, latency and discovered-tool count without exposing the credential. There is no plaintext-secret or interactive OAuth field in 0.6. Settings status uses a fresh successful check for 30 seconds and single-flights an expired live probe; a failed probe marks the server degraded and withdraws its managed tools.
+For stdio, verify the executable path, argument array and optional working directory from the same user account that runs DSH. Put secrets in the server's `env` reference map rather than command arguments; common inline forms such as `--token VALUE`, `--auth=VALUE` and Basic/Bearer authorization arguments are rejected. For Streamable HTTP, a remote endpoint must use `https://`. Plain `http://` is accepted only when the URL hostname/address is explicitly loopback, for example `localhost`, `service.localhost`, `127.0.0.1` or `[::1]`; a private-LAN name or address is not loopback. Keep credentials out of URL user information/query parameters and put them in header environment references. **Test connection** returns the stage, error code, latency and discovered-tool count without exposing the credential. OAuth client credentials are available in 0.8 as an opt-in Streamable HTTP section; interactive OAuth is not part of this release. Settings status uses a fresh successful check for 30 seconds and single-flights an expired live probe; a failed probe marks the server degraded and withdraws its managed tools.
+
+## `MCP_OAUTH_*` or a Streamable HTTP OAuth server keeps returning 401
+
+Enable **OAuth 2.0 Client Credentials** only for a Streamable HTTP server. Enter the names of two variables that are exported to the process which starts `dsh web`, for example:
+
+```text
+MCP_OAUTH_CLIENT_ID=...
+MCP_OAUTH_CLIENT_SECRET=...
+```
+
+The settings card stores `{ "env": "MCP_OAUTH_CLIENT_ID" }` and `{ "env": "MCP_OAUTH_CLIENT_SECRET" }`, never their values. Restart `dsh web` after changing the process environment, then run **Test connection**. `MCP_OAUTH_CREDENTIAL_MISSING` means the variable is absent or empty; `MCP_OAUTH_TOKEN_INVALID` means the token endpoint did not return a non-empty `access_token`; discovery failures identify the protected-resource or authorization-server stage without returning a secret.
+
+The default token authentication is `client_secret_basic`; choose `client_secret_post` only when the authorization server advertises that method. Do not configure a static `Authorization` header at the same time—the OAuth transport owns the Bearer header. The Host SDK retries a 401 with a new client-credentials token and treats an expired in-memory token as absent, so repeated 401s usually indicate an issuer/resource mismatch, wrong scope, invalid client credentials or a server-side audience policy. Check the MCP health card for `oauth.status`, `tokenExpiresAt`, `discoveryCached` and the redacted `lastError`; token values and Client Secret values are never shown there or in the audit ring.
+
+If Tools work but Resources/Prompts do not, confirm both capability switches are enabled and that the server advertises the corresponding MCP capabilities. Tools and Content share one process-local OAuth provider for the same server configuration; changing the environment requires a DSH restart or a reconnect after the old process-local session is gone.
 
 ## An MCP result is truncated or has only an artifact reference
 

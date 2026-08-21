@@ -1,0 +1,25 @@
+# OAuth credentials are resolved from the environment of `dsh web`.
+# The settings card writes the same shape; this file is a headless example.
+- id: deepseekeyes
+  config:
+    mcpEnabled: true
+    mcpServers:
+      - id: remote-oauth
+        name: Remote OAuth MCP
+        enabled: true
+        transport: streamable-http
+        url: https://mcp.example.com/mcp
+        toolsEnabled: true
+        resourcesEnabled: false
+        promptsEnabled: false
+        oauth:
+          enabled: true
+          clientId:
+            env: MCP_OAUTH_CLIENT_ID
+          clientSecret:
+            env: MCP_OAUTH_CLIENT_SECRET
+          scope: mcp:read
+          authMethod: client_secret_basic
+        allowedTools:
+          - search
+        denyTools: []

@@ -95,7 +95,18 @@ export const SETTINGS_FIELDS = Object.freeze([
 ])
 
 export const McpCredentialEnvRefConfig = z.object({
-  env: z.string().required(),
+  env: z.string(),
+})
+
+export const McpOAuthConfig = z.object({
+  enabled: z.boolean().default(false),
+  clientId: McpCredentialEnvRefConfig,
+  clientSecret: McpCredentialEnvRefConfig,
+  scope: z.string(),
+  authMethod: z.union([
+    z.const('client_secret_basic'),
+    z.const('client_secret_post'),
+  ]),
 })
 
 export const McpServerConfig = z.object({
@@ -122,6 +133,7 @@ export const McpServerConfig = z.object({
   allowedPrompts: z.array(z.string()).default([]),
   denyPrompts: z.array(z.string()).default([]),
   timeoutMs: z.number().step(1).min(100).max(3_600_000),
+  oauth: McpOAuthConfig,
 })
 
 /** Schemastery schema serialized by Harness and consumed by the native settings client. */

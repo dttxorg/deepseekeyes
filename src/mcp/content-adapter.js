@@ -2,6 +2,7 @@ import { DeepSeekEyesError } from '../error.js'
 import { boundedUnicode, safeError, safeErrorCode } from './canonical.js'
 import { loadHostMcpSdk } from './host-runtime.js'
 import { materializeDshMcpConfig } from './official-adapter.js'
+import { isMcpOAuthEnabled, McpOAuthSessionRegistry } from './oauth.js'
 
 export const DEFAULT_MCP_CONTENT_CATALOG_LIMITS = Object.freeze({
   maxEntries: 256,
@@ -153,7 +154,7 @@ async function drainPages(request, field, normalize, limits, budget) {
   throw contentError('MCP content catalog exceeds the page limit', 'MCP_CONTENT_PAGE_LIMIT')
 }
 
-function transportFor(sdk, server, environment) {
+function transportFor(sdk, server, environment, oauth) {
   const config = materializeDshMcpConfig(server, environment)
   if (config.transport === 'stdio') {
     return new sdk.StdioClientTransport({
@@ -166,7 +167,10 @@ function transportFor(sdk, server, environment) {
   }
   return new sdk.StreamableHTTPClientTransport(
     new URL(config.url),
-    { requestInit: { headers: config.headers } },
+    {
+      requestInit: { headers: config.headers },
+      ...(oauth === undefined ? {} : { authProvider: oauth.provider }),
+    },
   )
 }
 
@@ -186,6 +190,11 @@ export class McpContentAdapter {
     this.loadSdk = options.loadSdk ?? (() => loadHostMcpSdk(ctx))
     this.catalogLimits = normalizeMcpContentCatalogLimits(options.catalogLimits)
     this.onChanged = options.onChanged
+    this.onOAuthEvent = options.onOAuthEvent
+    this.oauthSessions = options.oauthSessions ?? new McpOAuthSessionRegistry({ now: options.now })
+    this.oauth = isMcpOAuthEnabled(server)
+      ? this.oauthSessions.get(server, this.environment, { onEvent: event => this.onOAuthEvent?.(event) })
+      : undefined
     this.client = undefined
     this.cleanupClient = undefined
     this.transport = undefined
@@ -206,6 +215,7 @@ export class McpContentAdapter {
       resourceTemplateCount: this.resourceTemplates.length,
       promptCount: this.prompts.length,
       ...(this.lastError === undefined ? {} : { error: this.lastError }),
+      ...(this.oauth === undefined ? {} : { oauth: this.oauth.health() }),
     })
   }
 
@@ -239,11 +249,19 @@ export class McpContentAdapter {
     let client
     try {
       const sdk = await this.loadSdk()
+      this.oauth?.credentials()
       client = new sdk.Client(
-        { name: 'deepseekeyes-content', version: '0.7.0' },
+        { name: 'deepseekeyes-content', version: '0.8.0' },
         { capabilities: {} },
       )
-      const transport = transportFor(sdk, this.server, this.environment)
+      const transport = transportFor(sdk, this.server, this.environment, this.oauth)
+      if (this.oauth !== undefined) {
+        transport.onerror = error => {
+          this.oauth.recordError(error, 'content-transport-error')
+          this.lastError = Object.freeze({ code: safeErrorCode(error, 'MCP_OAUTH_FAILED'), message: safeError(error) })
+          this.notify('oauth-error')
+        }
+      }
       client.onclose = () => {
         if (this.client !== client) return
         this.status = 'disconnected'
@@ -270,6 +288,7 @@ export class McpContentAdapter {
         throw contentError(`MCP server ${this.server.id} does not advertise Prompts`, 'MCP_PROMPTS_UNSUPPORTED')
       }
       await this.refresh()
+      this.oauth?.markConnected()
       this.lastError = undefined
       this.notify('connected')
       return this
@@ -279,6 +298,7 @@ export class McpContentAdapter {
         code: safeErrorCode(cause, 'MCP_CONTENT_CONNECT_FAILED'),
         message: safeError(cause),
       })
+      this.oauth?.recordError(cause, 'content-connect-error')
       // Detach before closing so the transport's onclose notification cannot
       // overwrite this terminal startup error with `disconnected`.
       this.client = undefined

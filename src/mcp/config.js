@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { canonicalJson } from './canonical.js'
 import { mcpArgsContainInlineCredentials } from './credential-policy.js'
 import { mcpHttpUrlUsesSecureTransport } from './url-policy.js'
+import { normalizeMcpOAuthAuthMethod } from './oauth.js'
 
 export { mcpArgsContainInlineCredentials } from './credential-policy.js'
 
@@ -18,7 +19,7 @@ const MCP_PUBLIC_SERVER_FIELDS = new Set([
   'id', 'name', 'enabled', 'transport', 'command', 'args', 'cwd', 'url',
   'env', 'headers', 'toolsEnabled', 'resourcesEnabled', 'promptsEnabled',
   'allowedTools', 'denyTools', 'allowedResources', 'denyResources',
-  'allowedPrompts', 'denyPrompts', 'timeoutMs',
+  'allowedPrompts', 'denyPrompts', 'timeoutMs', 'oauth',
 ])
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
@@ -101,6 +102,30 @@ function credentialMap(value, field, { strict = false, keyPattern = undefined, k
     output[normalizedKey] = credentialReference(reference, `${field}.${normalizedKey}`, strict)
   }
   return Object.freeze(output)
+}
+
+function oauthValue(value, field, strict = false) {
+  const source = objectValue(value, field, {})
+  if (strict) {
+    for (const key of Object.keys(source)) {
+      if (!['enabled', 'clientId', 'clientSecret', 'scope', 'authMethod'].includes(key)) {
+        throw new TypeError(`deepseekeyes: ${field} has unknown field ${key}`)
+      }
+    }
+  }
+  const enabled = booleanValue(source.enabled, `${field}.enabled`, false)
+  if (!enabled) return Object.freeze({ enabled: false })
+  const clientId = credentialReference(source.clientId, `${field}.clientId`, strict)
+  const clientSecret = credentialReference(source.clientSecret, `${field}.clientSecret`, strict)
+  const scope = stringValue(source.scope, `${field}.scope`)
+  const authMethod = normalizeMcpOAuthAuthMethod(source.authMethod, `${field}.authMethod`)
+  return Object.freeze({
+    enabled: true,
+    clientId,
+    clientSecret,
+    ...(scope === undefined ? {} : { scope }),
+    ...(authMethod === undefined ? {} : { authMethod }),
+  })
 }
 
 function reconnectValue(value, field) {
@@ -189,6 +214,9 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
     if (strict && source.headers !== undefined && Object.keys(objectValue(source.headers, `mcpServers[${index}].headers`)).length > 0) {
       throw new TypeError(`deepseekeyes: mcpServers[${index}].headers is only valid for streamable-http`)
     }
+    if (strict && source.oauth !== undefined && oauthValue(source.oauth, `mcpServers[${index}].oauth`, strict).enabled) {
+      throw new TypeError(`deepseekeyes: mcpServers[${index}].oauth is only valid for streamable-http`)
+    }
     return Object.freeze({
       ...common,
       command: stringValue(source.command, `mcpServers[${index}].command`, { required: true }),
@@ -198,6 +226,7 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
         strict,
         ...(strict ? { keyPattern: ENVIRONMENT_NAME_PATTERN, keyDescription: 'an environment variable name' } : {}),
       }),
+      oauth: Object.freeze({ enabled: false }),
     })
   }
   const urlText = stringValue(source.url, `mcpServers[${index}].url`, { required: true })
@@ -235,6 +264,10 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
       throw new TypeError(`deepseekeyes: mcpServers[${index}].env is only valid for stdio`)
     }
   }
+  const oauth = oauthValue(source.oauth, `mcpServers[${index}].oauth`, strict)
+  if (oauth.enabled && Object.keys(source.headers ?? {}).some(key => key.toLowerCase() === 'authorization')) {
+    throw new TypeError(`deepseekeyes: mcpServers[${index}].oauth cannot be combined with an Authorization header`)
+  }
   return Object.freeze({
     ...common,
     url: url.toString(),
@@ -242,6 +275,7 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
       strict,
       ...(strict ? { keyPattern: HTTP_HEADER_NAME_PATTERN, keyDescription: 'a valid HTTP header name' } : {}),
     }),
+    oauth,
   })
 }
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 - 2026-08-22
+
+- Add optional OAuth 2.0 `client_credentials` for Streamable HTTP MCP servers, configured entirely from the native MCP settings card with environment-variable references for Client ID and Client Secret.
+- Discover RFC 9728 Protected Resource Metadata and RFC 8414/OIDC Authorization Server Metadata through the protocol SDK owned by the active DSH Host; support `client_secret_basic` and `client_secret_post` token endpoint authentication.
+- Keep OAuth access tokens and discovery state process-local, share one provider between a server's Tools and Content planes, refresh automatically after expiry or a 401 response, and expose only redacted health/audit projections.
+- Register the MCP `tools/list_changed` notification for OAuth transports and refresh the bounded catalog without exposing an unvalidated generation.
+- Extend Host SDK verification and doctor checks to require the protocol result schemas and tool-list notification schema used by the OAuth adapter.
+- Add real loopback OAuth Streamable HTTP acceptance covering metadata discovery, token exchange, rejected/expired-token refresh, shared provider behavior and notification-driven refresh.
+- Keep OAuth opt-in: ordinary stdio/HTTP MCP, vision, Browser and Desktop routes retain their existing transport and Token behavior.
+
 ## 0.7.0 - 2026-08-21
 
 - Add an opt-in MCP Content plane for Resources, Resource Templates and Prompts while keeping Tools entirely on DSH's official `@deepseek-ai/dsh-mcp-client`.

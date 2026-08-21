@@ -29,6 +29,7 @@ const required = [
   'src/vision-attempts.js',
   'src/settings.js',
   'src/mcp/index.js',
+  'src/mcp/oauth.js',
   'src/mcp/content-adapter.js',
   'src/mcp/host-runtime.js',
   'src/mcp/manager.js',
@@ -137,15 +138,19 @@ if (typeof mcpClient.apply !== 'function') {
 }
 const clientRequire = (await import('node:module')).createRequire(import.meta.url)
 const importClientDependency = specifier => import(pathToFileURL(clientRequire.resolve(specifier)).href)
-const [mcpSdkClient, mcpSdkStdio, mcpSdkHttp] = await Promise.all([
+const [mcpSdkClient, mcpSdkStdio, mcpSdkHttp, mcpSdkTypes] = await Promise.all([
   importClientDependency('@modelcontextprotocol/sdk/client/index.js'),
   importClientDependency('@modelcontextprotocol/sdk/client/stdio.js'),
   importClientDependency('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+  importClientDependency('@modelcontextprotocol/sdk/types.js'),
 ])
 if (typeof mcpSdkClient.Client !== 'function'
   || typeof mcpSdkStdio.StdioClientTransport !== 'function'
-  || typeof mcpSdkHttp.StreamableHTTPClientTransport !== 'function') {
-  throw new Error('installed dsh-mcp-client protocol SDK must expose Resources/Prompts transports')
+  || typeof mcpSdkHttp.StreamableHTTPClientTransport !== 'function'
+  || typeof mcpSdkTypes.ListToolsResultSchema?.parse !== 'function'
+  || typeof mcpSdkTypes.CallToolResultSchema?.parse !== 'function'
+  || typeof mcpSdkTypes.ToolListChangedNotificationSchema?.parse !== 'function') {
+  throw new Error('installed dsh-mcp-client protocol SDK must expose transports, result schemas and tool-list notifications')
 }
 
 console.log('package verification: OK')

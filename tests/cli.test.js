@@ -27,6 +27,7 @@ async function writeFixturePackage(profileDirectory) {
     'dsh/index.js',
     'lib/client.js',
     'src/mcp/index.js',
+    'src/mcp/oauth.js',
     'src/mcp/content-adapter.js',
     'src/mcp/host-runtime.js',
     'src/mcp/manager.js',
@@ -100,11 +101,17 @@ async function writeHostRuntimeFixture(dshHome, profileDirectory) {
     name: '@modelcontextprotocol/sdk',
     version: '1.12.0',
     type: 'module',
-    exports: { './client/*': './client/*' },
+    exports: { './client/*': './client/*', './types.js': './types.js' },
   }))
   await writeFile(join(sdkRoot, 'client', 'index.js'), 'export class Client {}')
   await writeFile(join(sdkRoot, 'client', 'stdio.js'), 'export class StdioClientTransport {}')
   await writeFile(join(sdkRoot, 'client', 'streamableHttp.js'), 'export class StreamableHTTPClientTransport {}')
+  await writeFile(join(sdkRoot, 'types.js'), [
+    'const schema = { parse(value) { return value } }',
+    'export const ListToolsResultSchema = schema',
+    'export const CallToolResultSchema = schema',
+    'export const ToolListChangedNotificationSchema = schema',
+  ].join('\n'))
   await writeRuntimePackage(
     profileModules,
     '@deepseek-ai/dsh-tools',

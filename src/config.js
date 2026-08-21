@@ -11,6 +11,7 @@ import {
 } from './mcp/config.js'
 import { mcpArgsContainInlineCredentials } from './mcp/credential-policy.js'
 import { mcpHttpUrlUsesSecureTransport } from './mcp/url-policy.js'
+import { normalizeMcpOAuthAuthMethod } from './mcp/oauth.js'
 
 export {
   DEFAULT_MCP_MAX_RESULT_CHARS,
@@ -71,6 +72,7 @@ const MCP_SERVER_FIELDS = new Set([
   'allowedPrompts',
   'denyPrompts',
   'timeoutMs',
+  'oauth',
 ])
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
@@ -226,6 +228,31 @@ function environmentReferenceMap(value, field, keyPattern, keyDescription) {
   return Object.freeze(result)
 }
 
+function resolveMcpOAuth(value, field, transport) {
+  const source = value === undefined || value === null ? {} : plainObject(value, field)
+  for (const key of Object.keys(source)) {
+    if (!['enabled', 'clientId', 'clientSecret', 'scope', 'authMethod'].includes(key)) {
+      throw new TypeError(`deepseekeyes: ${field} has unknown field ${key}`)
+    }
+  }
+  const enabled = booleanValue(source.enabled, `${field}.enabled`, false)
+  if (!enabled) return Object.freeze({ enabled: false })
+  if (transport !== 'streamable-http') {
+    throw new TypeError(`deepseekeyes: ${field} is only valid for streamable-http`)
+  }
+  const clientId = environmentReference(source.clientId, `${field}.clientId`)
+  const clientSecret = environmentReference(source.clientSecret, `${field}.clientSecret`)
+  const scope = optionalString(source.scope, `${field}.scope`)
+  const authMethod = normalizeMcpOAuthAuthMethod(source.authMethod, `${field}.authMethod`)
+  return Object.freeze({
+    enabled: true,
+    clientId,
+    clientSecret,
+    ...(scope === undefined ? {} : { scope }),
+    ...(authMethod === undefined ? {} : { authMethod }),
+  })
+}
+
 function validateHttpUrl(value, field) {
   const input = requiredString(value, field)
   let parsed
@@ -339,6 +366,7 @@ function resolveMcpServer(value, index) {
       ...(cwd === undefined ? {} : { cwd }),
       env,
       headers: Object.freeze({}),
+      oauth: Object.freeze({ enabled: false }),
     })
   }
 
@@ -361,12 +389,17 @@ function resolveMcpServer(value, index) {
     HTTP_HEADER_NAME_PATTERN,
     'a valid HTTP header name',
   )
+  const oauth = resolveMcpOAuth(source.oauth, `${field}.oauth`, transport)
+  if (oauth.enabled && Object.keys(headers).some(key => key.toLowerCase() === 'authorization')) {
+    throw new TypeError(`deepseekeyes: ${field}.oauth cannot be combined with an Authorization header`)
+  }
   return Object.freeze({
     ...common,
     url,
     args: Object.freeze([]),
     env: Object.freeze({}),
     headers,
+    oauth,
   })
 }
 

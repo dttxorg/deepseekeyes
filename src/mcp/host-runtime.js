@@ -90,20 +90,27 @@ export async function loadHostMcpSdk(ctx) {
   const hostClientEntry = await resolveHostModulePath(ctx, '@deepseek-ai/dsh-mcp-client')
   try {
     const requireFromHostClient = createRequire(hostClientEntry)
-    const [client, stdio, http] = await Promise.all([
+    const [client, stdio, http, types] = await Promise.all([
       import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/index.js')).href),
       import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/stdio.js')).href),
       import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js')).href),
+      import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/types.js')).href),
     ])
     if (typeof client?.Client !== 'function'
       || typeof stdio?.StdioClientTransport !== 'function'
-      || typeof http?.StreamableHTTPClientTransport !== 'function') {
+      || typeof http?.StreamableHTTPClientTransport !== 'function'
+      || typeof types?.ListToolsResultSchema?.parse !== 'function'
+      || typeof types?.CallToolResultSchema?.parse !== 'function'
+      || typeof types?.ToolListChangedNotificationSchema?.parse !== 'function') {
       throw new Error('required MCP SDK client exports are missing')
     }
     return Object.freeze({
       Client: client.Client,
       StdioClientTransport: stdio.StdioClientTransport,
       StreamableHTTPClientTransport: http.StreamableHTTPClientTransport,
+      ListToolsResultSchema: types.ListToolsResultSchema,
+      CallToolResultSchema: types.CallToolResultSchema,
+      ToolListChangedNotificationSchema: types.ToolListChangedNotificationSchema,
     })
   } catch (cause) {
     throw new DeepSeekEyesError(

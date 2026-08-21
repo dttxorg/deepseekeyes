@@ -204,13 +204,16 @@ Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或�
 
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
-## MCP 应用执行层 0.7（默认关闭）
+## MCP 应用执行层 0.8（默认关闭）
 
-DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有完整的 Content 设置界面。DeepSeekEyes 0.7 从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client`、匹配的 `@deepseek-ai/dsh-tools` 以及该 Host Client 自己依赖的协议 SDK，并将入口 canonicalize 到 Host 真实安装路径；插件不会再打包第二份 MCP SDK。Tools 继续完全走官方 DSH Client，Resources 与 Prompts 则进入独立、显式启用的 Content Plane。即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
+DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有完整的 Content 设置界面。DeepSeekEyes 0.8 从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client`、匹配的 `@deepseek-ai/dsh-tools` 以及该 Host Client 自己依赖的协议 SDK，并将入口 canonicalize 到 Host 真实安装路径；插件不会再打包第二份 MCP SDK。普通 Tools 继续完全走官方 DSH Client，启用 OAuth 的 Streamable HTTP Server 则使用同一 Host SDK 的 OAuth transport 适配器；Resources 与 Prompts 进入独立、显式启用的 Content Plane。即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
 
 - 增删、启停本机 `stdio` 或远端 `Streamable HTTP` Server；远端必须使用 `https://`，只有 `localhost`、`127.0.0.1`、`[::1]` 等显式 loopback 主机/地址可以使用 `http://`；
 - 分别测试真实 Tools 与 Content transport 往返、查看两条平面各自的健康状态/延迟/最近错误、强制新 transport generation 刷新并重新连接；状态轮询在 30 秒内复用各平面的已验证结果，过期后只发起一个共享探针批次，不把旧目录缓存当健康；
 - 凭据只保存**环境变量引用**：stdio 的 `env` 与 Streamable HTTP 请求头只填写 `dsh web` 进程环境中的变量名；明文 Token、含凭据的启动参数与 URL 会被拒绝；
+- Streamable HTTP 可选启用 **OAuth 2.0 Client Credentials**：Host MCP SDK 自动发现 Protected Resource Metadata（RFC 9728）与 Authorization Server Metadata（RFC 8414/OIDC fallback）；Client ID/Secret 只填写环境变量名，默认使用 `client_secret_basic`，也可选择 `client_secret_post`；访问 Token 仅保留在当前进程内；
+- 同一 OAuth Server 的 Tools 与 Content 共用一份内存 OAuth provider 和 Bearer 生命周期。Token 过期、刷新、发现或传输失败会进入 MCP 健康快照和隐私降级审计，不返回凭据或 Token 原文；未启用 OAuth 的普通 MCP、视觉、Browser、Desktop 和文字路径保持原有调用与 Token 行为；
+- 无界面部署可直接参考 [`examples/mcp-oauth.patch.yml`](examples/mcp-oauth.patch.yml)；GUI 与该示例使用同一套严格校验。
 - 新 Server 的工具允许列表默认为空，只有明确选择的工具才会注册给模型；拒绝规则始终优先于允许规则；
 - 每个 Server 可独立启用 Tools、Resources 和 Prompts。Tools 为兼容旧配置默认开启；Resources/Prompts 默认关闭，关闭时 **不建立 Content 连接、不增加通用 Schema，也不触发模型调用**；
 - Resources、Resource Templates 与 Prompts 的发现目录共享固定上限：最多 256 条、256 页、1,000,000 字符、4,000,000 字节；三类 allowlist 均默认空，deny 始终优先；
@@ -236,7 +239,7 @@ Schema 估算按实际请求面计算：Native 模式计算原生函数定义，
 
 首次连接顺序：添加 Server → 选择 Tools/Resources/Prompts 能力开关 → 只填写凭据的环境变量名 → 保存 → **测试连接** → 分别刷新工具或内容 → 只勾选任务所需的 Tool、Resource 与 Prompt → 再次保存 → 在对话中使用 `DeepSeekEyes` 路由。Server 连接成功不会自动暴露任何发现项。
 
-0.7 覆盖 MCP **Tools、Resources、Resource Templates 与 Prompts** 的 stdio/Streamable HTTP 链路；交互式 OAuth、Sampling/Elicitation、Roots 管理和通用后台 UI 驱动仍不属于本版本。后台操作要求目标应用提供兼容 MCP Server，并通过进程环境变量引用完成认证；没有 MCP Server 的应用仍使用 Browser/Desktop Computer Use。工具返回成功只是证据，不等于外部状态一定已改变；写操作后仍应检查有界结果，或再调用读取能力验证。
+0.8 覆盖 MCP **Tools、Resources、Resource Templates 与 Prompts** 的 stdio/Streamable HTTP 链路，以及非交互式 OAuth 2.0 Client Credentials；交互式 OAuth、Sampling/Elicitation、Roots 管理和通用后台 UI 驱动仍不属于本版本。后台操作要求目标应用提供兼容 MCP Server，并通过进程环境变量引用完成认证；没有 MCP Server 的应用仍使用 Browser/Desktop Computer Use。工具返回成功只是证据，不等于外部状态一定已改变；写操作后仍应检查有界结果，或再调用读取能力验证。
 
 固定的原始结果准入位于依赖边界之后：已验证的官方 Host Client 与 MCP SDK 会先完成 transport 响应解码；只要响应的 `content` 是数组，Client 就会在检查 `isError` **之前**遍历内容块并拼接提取出的文本。成功路径随后丢弃这个临时字符串并返回内容块，失败路径则把它作为异常抛出。所以上述硬限制只约束依赖边界之后交给 DeepSeekEyes 的成功 adapter 值；插件会对已经生成的上游异常先限长、再脱敏后显示，但不宣称限制 SDK 更早的网络解码或这次准入前的提取/拼接分配。
 
@@ -260,7 +263,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.7）
+## 全 GUI 配置（0.8）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -506,7 +509,7 @@ npm run check
 npm pack --dry-run
 ```
 
-设置接口、原生图片路由和 Client 插槽按 DeepSeek Harness `0.1.0-rc.8` 验证；MCP 0.7 为 `@deepseek-ai/dsh-mcp-client` 与 `@deepseek-ai/dsh-tools` 声明兼容的可选 Host peer 范围 `>=0.1.0-rc.6 <0.2.0`，运行时从 DSH 管理的 Host fallback 取用，并复用 Host Client 自己的协议 SDK。临时 SDK Server 覆盖 Tools、Resources、Resource Templates 与 Prompts 的真实 stdio 和 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。Node.js 版本要求为 `>=22.19`。
+设置接口、原生图片路由和 Client 插槽按 DeepSeek Harness `0.1.0-rc.8` 验证；MCP 0.8 为 `@deepseek-ai/dsh-mcp-client` 与 `@deepseek-ai/dsh-tools` 声明兼容的可选 Host peer 范围 `>=0.1.0-rc.6 <0.2.0`，运行时从 DSH 管理的 Host fallback 取用，并复用 Host Client 自己的协议 SDK。临时 SDK Server 覆盖 Tools、Resources、Resource Templates、Prompts 与 OAuth 元数据/Token 刷新的真实 stdio 和 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。Node.js 版本要求为 `>=22.19`。
 
 ## 卸载
 

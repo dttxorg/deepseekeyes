@@ -22,6 +22,7 @@ import {
   McpCatalogBudget,
   normalizeMcpCatalogLimits,
 } from './official-adapter.js'
+import { McpOAuthSessionRegistry } from './oauth.js'
 import {
   classifyToolRisk,
   contentPolicyDecision,
@@ -224,8 +225,10 @@ export class McpManager {
   constructor(ctx, config = {}, options = {}) {
     this.ctx = ctx
     this.config = normalizeMcpConfig(config, options)
-    this.adapterFactory = options.adapterFactory ?? createDshMcpClientAdapterFactory(ctx, options)
-    this.contentAdapterFactory = options.contentAdapterFactory ?? createMcpContentAdapterFactory(ctx, options)
+    this.oauthSessions = options.oauthSessions ?? new McpOAuthSessionRegistry({ now: options.now })
+    const adapterOptions = { ...options, oauthSessions: this.oauthSessions }
+    this.adapterFactory = options.adapterFactory ?? createDshMcpClientAdapterFactory(ctx, adapterOptions)
+    this.contentAdapterFactory = options.contentAdapterFactory ?? createMcpContentAdapterFactory(ctx, adapterOptions)
     this.loadDshTools = options.loadDshTools ?? loadHostDshTools
     this.logger = options.logger ?? ctx.logger ?? console
     this.now = options.now ?? Date.now
@@ -385,6 +388,7 @@ export class McpManager {
     if (server.toolsEnabled) {
       try {
         const adapter = await this.createAdapter(server, {
+          onOAuthEvent: event => this.recordOAuthAudit(server, event),
           onProbeCleanupFailure: (cleanupAdapter, error) => {
             this.recordCleanupFailure(server, cleanupAdapter, 'probe', error)
             const current = this.runtimes.get(server.id)
@@ -414,6 +418,7 @@ export class McpManager {
                 return
               }
               const connected = connection.connected === true
+              if (connection.oauth !== undefined) runtime.oauth = connection.oauth
               const explicitFailure = connection.connected === false
                 || connection.status === 'catalog-rejected'
                 || connection.status === 'cleanup-failed'
@@ -467,6 +472,7 @@ export class McpManager {
         runtime.toolsLastCheckedAt = runtime.lastCheckedAt
         runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
         runtime.lastError = undefined
+        if (connection?.oauth !== undefined) runtime.oauth = connection.oauth
       } catch (error) {
         this.runtimeFailure(runtime, error)
         this.logger.warn?.(`deepseekeyes: MCP Tools server ${server.id} failed: ${runtime.lastError.message}`)
@@ -478,6 +484,7 @@ export class McpManager {
     if (server.resourcesEnabled || server.promptsEnabled) {
       try {
         const contentAdapter = await this.createContentAdapter(server, {
+          onOAuthEvent: event => this.recordOAuthAudit(server, event),
           onChanged: (catalog, state = {}) => {
             void this.enqueue(async () => {
               if (this.runtimes.get(server.id) !== runtime) return
@@ -485,6 +492,7 @@ export class McpManager {
               runtime.contentStatus = state.status ?? runtime.contentStatus
               runtime.contentHealthy = state.connected === true
               runtime.contentLastError = state.error
+              if (state.oauth !== undefined) runtime.oauth = state.oauth
               runtime.contentLastCheckedAt = nowIso(this.now)
               if (state.connected === true) {
                 runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
@@ -500,6 +508,7 @@ export class McpManager {
         runtime.contentStatus = 'connected'
         runtime.contentHealthy = true
         runtime.contentLastError = undefined
+        if (contentAdapter.state?.().oauth !== undefined) runtime.oauth = contentAdapter.state().oauth
         runtime.contentLastConnectedAt = nowIso(this.now)
         runtime.contentLastCheckedAt = runtime.contentLastConnectedAt
         runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
@@ -1715,6 +1724,7 @@ export class McpManager {
         ...(lastError === undefined ? {} : { lastError: { ...lastError } }),
         ...(runtime?.lastError === undefined ? {} : { toolsLastError: { ...runtime.lastError } }),
         ...(runtime?.contentLastError === undefined ? {} : { contentLastError: { ...runtime.contentLastError } }),
+        ...(runtime?.oauth === undefined ? {} : { oauth: { ...runtime.oauth } }),
         tools,
         resources: content.resources.map(resource => ({
           ...resource,
@@ -1777,6 +1787,30 @@ export class McpManager {
 
   touch() {
     this.updatedAt = nowIso(this.now)
+  }
+
+  recordOAuthAudit(server, event = {}) {
+    if (!this.config.mcpAudit) return
+    const record = Object.freeze({
+      id: randomUUID(),
+      at: typeof event.at === 'string' ? event.at : nowIso(this.now),
+      serverId: server.id,
+      serverName: server.name,
+      plane: 'oauth',
+      event: typeof event.type === 'string' ? event.type : 'oauth-event',
+      status: event.error === undefined ? 'success' : 'error',
+      ...(event.error === undefined ? {} : {
+        error: {
+          code: boundedSafeErrorCode(event.error, 'MCP_OAUTH_FAILED'),
+          message: boundedSafeError(event.error),
+        },
+      }),
+    })
+    this.audit.push(record)
+    this.audit = this.audit.slice(-this.config.mcpAuditLimit)
+    void Promise.resolve(this.onAudit?.(record)).catch(error => {
+      this.logger.warn?.(`deepseekeyes: MCP OAuth audit failed: ${boundedSafeError(error)}`)
+    })
   }
 
   stop() {

@@ -1,8 +1,9 @@
 import { DeepSeekEyesError } from '../error.js'
 import { randomUUID } from 'node:crypto'
 import { boundedUnicode, safeError } from './canonical.js'
-import { loadHostDshMcpClient } from './host-runtime.js'
+import { loadHostDshMcpClient, loadHostMcpSdk } from './host-runtime.js'
 import { publicMcpToolName } from './policy.js'
+import { isMcpOAuthEnabled, McpOAuthSessionRegistry } from './oauth.js'
 
 export const DEFAULT_MCP_CATALOG_LIMITS = Object.freeze({
   maxTools: 256,
@@ -786,9 +787,290 @@ export class DshMcpClientAdapter {
   }
 }
 
+/**
+ * Streamable HTTP adapter for the optional OAuth client-credentials flow.
+ * The DSH rc.8 bridge predates MCP OAuth and only accepts static headers, so
+ * this path uses the exact SDK resolved from that same Host package and gives
+ * it one process-local OAuth provider. Tools and Content therefore share the
+ * provider's bearer token and refresh behavior without changing stdio or
+ * non-OAuth HTTP servers.
+ */
+export class McpOAuthClientAdapter {
+  constructor(ctx, server, options = {}) {
+    this.ctx = ctx
+    this.server = server
+    this.environment = options.environment ?? process.env
+    this.loadSdk = options.loadSdk ?? (() => loadHostMcpSdk(ctx))
+    this.onToolsChanged = options.onToolsChanged
+    this.onOAuthEvent = options.onOAuthEvent
+    this.catalogLimits = normalizeMcpCatalogLimits(options.mcpCatalogLimits)
+    this.oauthSessions = options.oauthSessions ?? new McpOAuthSessionRegistry({ now: options.now })
+    this.oauth = this.oauthSessions.get(server, this.environment, { onEvent: event => this.onOAuthEvent?.(event) })
+    this.client = undefined
+    this.transport = undefined
+    this.tools = []
+    this.status = 'idle'
+    this.lastError = undefined
+    this.closed = false
+    this.startedOnce = false
+    this.refreshing = undefined
+    this.onclose = () => {
+      if (this.closed) return
+      this.status = 'disconnected'
+      this.client = undefined
+      this.transport = undefined
+      this.notify('transport-closed')
+    }
+  }
+
+  connectionState() {
+    return Object.freeze({
+      connected: this.status === 'connected'
+        ? true
+        : this.status === 'connecting' ? undefined : false,
+      status: this.status,
+      toolCount: this.tools.length,
+      oauth: this.oauth.health(),
+      ...(this.lastError === undefined ? {} : { error: this.lastError }),
+      reconnect: Object.freeze({ ...this.server.reconnect }),
+    })
+  }
+
+  notify(reason) {
+    this.onToolsChanged?.(this.tools, Object.freeze({ ...this.connectionState(), reason }))
+  }
+
+  async start() {
+    if (this.closed) throw new DeepSeekEyesError('MCP OAuth adapter is closed', 'MCP_ADAPTER_CLOSED')
+    if (this.client !== undefined && this.status === 'connected') return this
+    this.status = 'connecting'
+    try {
+      // Fail before opening a network connection when the configured env refs
+      // are absent; the error contains only the variable names.
+      this.oauth.credentials()
+      const sdk = await this.loadSdk()
+      const config = materializeDshMcpConfig(this.server, this.environment)
+      const client = new sdk.Client(
+        { name: 'deepseekeyes-mcp-oauth', version: '0.8.0' },
+        { capabilities: {} },
+      )
+      this.client = client
+      // Streamable HTTP servers may change their tool catalog after the
+      // connection is established. Register the protocol-level notification
+      // before connecting so the first notification cannot race catalog
+      // discovery. The SDK owns schema validation; the adapter only starts a
+      // bounded refresh and reports a redacted failure through health/audit.
+      if (sdk.ToolListChangedNotificationSchema !== undefined
+        && typeof client.setNotificationHandler === 'function') {
+        client.setNotificationHandler(sdk.ToolListChangedNotificationSchema, () => {
+          void this.refresh().catch(error => {
+            this.lastError = adapterErrorState(error, 'MCP_OAUTH_CATALOG_REFRESH_FAILED', 'MCP OAuth tool catalog refresh failed')
+            this.oauth.recordError(error, 'catalog-refresh-error')
+            this.notify('catalog-refresh-error')
+          })
+        })
+      }
+      this.transport = new sdk.StreamableHTTPClientTransport(
+        new URL(config.url),
+        {
+          authProvider: this.oauth.provider,
+          requestInit: { headers: config.headers },
+        },
+      )
+      this.client.onclose = this.onclose
+      this.transport.onerror = error => {
+        this.oauth.recordError(error, 'transport-error')
+        this.lastError = adapterErrorState(error, 'MCP_OAUTH_FAILED', 'MCP OAuth transport failed')
+        this.notify('oauth-error')
+      }
+      await this.client.connect(this.transport)
+      this.status = 'connected'
+      this.startedOnce = true
+      await this.refresh()
+      this.oauth.markConnected()
+      this.lastError = undefined
+      this.notify('connected')
+      return this
+    } catch (error) {
+      this.status = 'error'
+      this.startedOnce = true
+      this.lastError = adapterErrorState(error, 'MCP_OAUTH_CONNECT_FAILED', 'MCP OAuth connection failed')
+      this.oauth.recordError(error, 'connect-error')
+      this.notify('startup-failed')
+      try {
+        await this.client?.close?.()
+      } catch {}
+      this.client = undefined
+      this.transport = undefined
+      this.status = 'error'
+      throw new DeepSeekEyesError(
+        `MCP OAuth server ${this.server.id} failed: ${this.lastError.message}`,
+        this.lastError.code,
+        { cause: error },
+      )
+    }
+  }
+
+  async readTools() {
+    if (this.client === undefined) throw new DeepSeekEyesError('MCP OAuth transport is not connected', 'MCP_CONNECTION_UNHEALTHY')
+    const sdk = await this.loadSdk()
+    const budget = new McpCatalogBudget(this.catalogLimits)
+    const output = []
+    let cursor
+    const cursors = new Set()
+    let complete = false
+    for (let page = 0; page < this.catalogLimits.maxTools; page += 1) {
+      const response = await this.client.request(
+        { method: 'tools/list', ...(cursor === undefined ? {} : { params: { cursor } }) },
+        sdk.ListToolsResultSchema,
+        { timeout: this.server.timeoutMs },
+      )
+      for (const tool of response.tools) {
+        const rawName = String(tool.name)
+        const publicName = publicMcpToolName(this.server.id, rawName)
+        budget.admit({
+          name: publicName,
+          description: tool.description ?? '',
+          parameters: tool.inputSchema ?? {},
+          outputSchema: tool.outputSchema ?? null,
+        })
+        output.push(Object.freeze({
+          name: rawName,
+          rawName,
+          publicName,
+          description: typeof tool.description === 'string' ? tool.description : '',
+          inputSchema: tool.inputSchema ?? {},
+          outputSchema: tool.outputSchema,
+          annotations: tool.annotations,
+        }))
+      }
+      const next = typeof response.nextCursor === 'string' && response.nextCursor !== ''
+        ? response.nextCursor
+        : undefined
+      if (next === undefined) {
+        complete = true
+        break
+      }
+      if (cursors.has(next)) throw new DeepSeekEyesError('MCP OAuth tools/list repeated a cursor', 'MCP_CATALOG_CURSOR_LOOP')
+      cursors.add(next)
+      cursor = next
+    }
+    if (!complete) {
+      throw new DeepSeekEyesError('MCP OAuth tools/list exceeded the page limit', 'MCP_CATALOG_PAGE_LIMIT')
+    }
+    const names = new Set()
+    for (const tool of output) {
+      if (names.has(tool.publicName)) throw new DeepSeekEyesError(`MCP OAuth server ${this.server.id} listed duplicate tool ${tool.publicName}`, 'MCP_CATALOG_DUPLICATE_TOOL')
+      names.add(tool.publicName)
+    }
+    return output.sort((left, right) => left.publicName.localeCompare(right.publicName))
+  }
+
+  async refresh() {
+    if (this.refreshing !== undefined) return this.refreshing
+    this.refreshing = (async () => {
+      const next = await this.readTools()
+      const hadTools = this.tools.length > 0
+      this.tools = next
+      if (this.startedOnce && hadTools && next.length === 0) this.status = 'unknown'
+      else this.status = 'connected'
+      this.lastError = undefined
+      this.notify('tools-refreshed')
+      return this.tools
+    })()
+    try {
+      return await this.refreshing
+    } finally {
+      this.refreshing = undefined
+    }
+  }
+
+  async listTools() {
+    return [...this.tools]
+  }
+
+  async callTool(tool, args, exec = {}) {
+    if (this.client === undefined || this.status !== 'connected') {
+      throw new DeepSeekEyesError(`MCP OAuth server ${this.server.id} is not connected`, 'MCP_CONNECTION_UNHEALTHY')
+    }
+    const sdk = await this.loadSdk()
+    try {
+      return await this.client.request(
+        {
+          method: 'tools/call',
+          params: { name: tool.rawName ?? tool.name, arguments: args ?? {} },
+        },
+        sdk.CallToolResultSchema,
+        { signal: exec.signal, timeout: this.server.timeoutMs },
+      )
+    } catch (error) {
+      this.lastError = adapterErrorState(error, 'MCP_OAUTH_TOOL_CALL_FAILED', 'MCP OAuth tool call failed')
+      this.oauth.recordError(error, 'tool-error')
+      this.notify('oauth-tool-error')
+      throw error
+    }
+  }
+
+  async probe() {
+    const probe = new McpOAuthClientAdapter(this.ctx, this.server, {
+      environment: this.environment,
+      loadSdk: this.loadSdk,
+      mcpCatalogLimits: this.catalogLimits,
+      oauthSessions: this.oauthSessions,
+      onOAuthEvent: this.onOAuthEvent,
+    })
+    try {
+      await probe.start()
+      return await probe.listTools()
+    } finally {
+      await probe.close()
+    }
+  }
+
+  reconcileProbe(tools) {
+    if (this.status !== 'unknown') return this.connectionState()
+    const current = this.tools.map(tool => tool.rawName).sort()
+    const live = tools.map(tool => tool.rawName ?? tool.name).sort()
+    if (current.length === live.length && current.every((name, index) => name === live[index])) {
+      this.status = 'connected'
+      this.lastError = undefined
+    } else {
+      this.status = 'disconnected'
+      this.lastError = adapterErrorState(
+        new DeepSeekEyesError(`MCP OAuth server ${this.server.id} catalog changed during probe`, 'MCP_CONNECTION_UNHEALTHY'),
+        'MCP_CONNECTION_UNHEALTHY',
+        'MCP OAuth connection is unhealthy',
+      )
+    }
+    this.notify('probe-reconciled')
+    return this.connectionState()
+  }
+
+  async close() {
+    this.closed = true
+    const client = this.client
+    this.client = undefined
+    this.transport = undefined
+    this.tools = []
+    this.status = 'closed'
+    try {
+      await client?.close?.()
+    } catch (error) {
+      this.status = 'cleanup-failed'
+      this.lastError = adapterErrorState(error, 'MCP_ADAPTER_CLOSE_FAILED', 'MCP OAuth transport cleanup failed')
+      this.notify('cleanup-failed')
+      throw new DeepSeekEyesError(this.lastError.message, this.lastError.code, { cause: error })
+    }
+    this.notify('closed')
+  }
+}
+
 export function createDshMcpClientAdapterFactory(ctx, options = {}) {
   return {
     create(server, hooks = {}) {
+      if (isMcpOAuthEnabled(server)) {
+        return new McpOAuthClientAdapter(ctx, server, { ...options, ...hooks })
+      }
       return new DshMcpClientAdapter(ctx, server, { ...options, ...hooks })
     },
   }

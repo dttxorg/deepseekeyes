@@ -93,6 +93,21 @@ function normalizedReferenceMap(value) {
     .filter(([key]) => key !== ''))
 }
 
+function normalizedMcpOAuth(value) {
+  const source = value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const reference = input => input !== null && typeof input === 'object' && !Array.isArray(input)
+    && typeof input.env === 'string' && input.env.trim() !== ''
+    ? { env: input.env.trim() }
+    : {}
+  return {
+    enabled: source.enabled === true,
+    clientId: reference(source.clientId),
+    clientSecret: reference(source.clientSecret),
+    scope: typeof source.scope === 'string' ? source.scope.trim() : '',
+    authMethod: source.authMethod === 'client_secret_post' ? 'client_secret_post' : 'client_secret_basic',
+  }
+}
+
 export function createMcpServerDraft(index = 1) {
   return {
     id: `server-${index}`,
@@ -115,6 +130,13 @@ export function createMcpServerDraft(index = 1) {
     allowedPrompts: [],
     denyPrompts: [],
     timeoutMs: undefined,
+    oauth: {
+      enabled: false,
+      clientId: {},
+      clientSecret: {},
+      scope: '',
+      authMethod: 'client_secret_basic',
+    },
   }
 }
 
@@ -243,6 +265,7 @@ export function normalizeMcpServer(value = {}, index = 0) {
     allowedPrompts: normalizedStringList(value.allowedPrompts),
     denyPrompts: normalizedStringList(value.denyPrompts),
     timeoutMs: Number.isInteger(value.timeoutMs) ? value.timeoutMs : undefined,
+    oauth: normalizedMcpOAuth(value.oauth),
   }
 }
 
@@ -405,6 +428,21 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes', upstrea
       } catch {
         return 'mcpServerUrlInvalid'
       }
+      const oauth = normalizedMcpOAuth(server.oauth)
+      if (oauth.enabled) {
+        if (typeof oauth.clientId?.env !== 'string' || !ENVIRONMENT_NAME.test(oauth.clientId.env)
+          || typeof oauth.clientSecret?.env !== 'string' || !ENVIRONMENT_NAME.test(oauth.clientSecret.env)) {
+          return 'mcpServerOAuthCredentialsInvalid'
+        }
+        if (!['client_secret_basic', 'client_secret_post'].includes(oauth.authMethod)) {
+          return 'mcpServerOAuthMethodInvalid'
+        }
+        if (Object.keys(server.headers ?? {}).some(key => key.toLowerCase() === 'authorization')) {
+          return 'mcpServerOAuthHeaderConflict'
+        }
+      }
+    } else if (normalizedMcpOAuth(server.oauth).enabled) {
+      return 'mcpServerOAuthTransportInvalid'
     }
     if (server.timeoutMs !== undefined
       && (!Number.isInteger(server.timeoutMs) || server.timeoutMs < 100 || server.timeoutMs > 3_600_000)) {

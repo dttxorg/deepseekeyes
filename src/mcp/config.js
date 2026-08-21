@@ -16,7 +16,9 @@ export const MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 export const MCP_TRANSPORTS = Object.freeze(['stdio', 'streamable-http'])
 const MCP_PUBLIC_SERVER_FIELDS = new Set([
   'id', 'name', 'enabled', 'transport', 'command', 'args', 'cwd', 'url',
-  'env', 'headers', 'allowedTools', 'denyTools', 'timeoutMs',
+  'env', 'headers', 'toolsEnabled', 'resourcesEnabled', 'promptsEnabled',
+  'allowedTools', 'denyTools', 'allowedResources', 'denyResources',
+  'allowedPrompts', 'denyPrompts', 'timeoutMs',
 ])
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
@@ -142,9 +144,16 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
     id,
     name,
     enabled: booleanValue(source.enabled, `mcpServers[${index}].enabled`, true),
+    toolsEnabled: booleanValue(source.toolsEnabled, `mcpServers[${index}].toolsEnabled`, true),
+    resourcesEnabled: booleanValue(source.resourcesEnabled, `mcpServers[${index}].resourcesEnabled`, false),
+    promptsEnabled: booleanValue(source.promptsEnabled, `mcpServers[${index}].promptsEnabled`, false),
     transport,
     allowedTools: stringList(source.allowedTools ?? source.allowlist, `mcpServers[${index}].allowedTools`, strict),
     denyTools: stringList(source.denyTools ?? source.deniedTools ?? source.denylist, `mcpServers[${index}].denyTools`, strict),
+    allowedResources: stringList(source.allowedResources, `mcpServers[${index}].allowedResources`, strict),
+    denyResources: stringList(source.denyResources, `mcpServers[${index}].denyResources`, strict),
+    allowedPrompts: stringList(source.allowedPrompts, `mcpServers[${index}].allowedPrompts`, strict),
+    denyPrompts: stringList(source.denyPrompts, `mcpServers[${index}].denyPrompts`, strict),
     ...(!strict || explicitTimeout !== undefined ? { timeoutMs: resolvedTimeout } : {}),
     ...(strict ? {} : {
       failOnStartupError: booleanValue(source.failOnStartupError, `mcpServers[${index}].failOnStartupError`, false),
@@ -152,10 +161,18 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
     }),
   }
   if (strict) {
-    const denied = new Set(common.denyTools)
-    const overlap = common.allowedTools.find(tool => denied.has(tool))
-    if (overlap !== undefined) {
-      throw new TypeError(`deepseekeyes: mcpServers[${index}].${overlap} cannot appear in both allowedTools and denyTools`)
+    for (const [allowField, denyField] of [
+      ['allowedTools', 'denyTools'],
+      ['allowedResources', 'denyResources'],
+      ['allowedPrompts', 'denyPrompts'],
+    ]) {
+      const denied = new Set(common[denyField])
+      const overlap = common[allowField].find(value => denied.has(value))
+      if (overlap !== undefined) {
+        throw new TypeError(
+          `deepseekeyes: mcpServers[${index}].${overlap} cannot appear in both ${allowField} and ${denyField}`,
+        )
+      }
     }
   }
   if (transport === 'stdio') {
@@ -293,6 +310,15 @@ export function normalizeMcpConfig(input = {}, { home = homedir(), strict = fals
 }
 
 export function mcpConnectionFingerprint(server) {
-  const { allowedTools: _allowed, denyTools: _denied, name: _name, ...connection } = server
+  const {
+    allowedTools: _allowedTools,
+    denyTools: _denyTools,
+    allowedResources: _allowedResources,
+    denyResources: _denyResources,
+    allowedPrompts: _allowedPrompts,
+    denyPrompts: _denyPrompts,
+    name: _name,
+    ...connection
+  } = server
   return canonicalJson(connection)
 }

@@ -4,7 +4,7 @@ import { access, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { loadHostDshMcpClient, loadHostDshTools } from './mcp/host-runtime.js'
+import { loadHostDshMcpClient, loadHostDshTools, loadHostMcpSdk } from './mcp/host-runtime.js'
 
 export const NPM_PACKAGE = '@dttxorg/deepseekeyes'
 export const DSH_PACKAGE = '@deepseek-ai/dsh'
@@ -243,6 +243,7 @@ async function doctor(options, io) {
       'lib/client.js',
       'schemas/visual-evidence.schema.json',
       'src/mcp/index.js',
+      'src/mcp/content-adapter.js',
       'src/mcp/host-runtime.js',
       'src/mcp/manager.js',
       'src/mcp/official-adapter.js',
@@ -284,6 +285,7 @@ async function doctor(options, io) {
         try {
           let tools
           let mcpClient
+          let mcpSdk
           let toolsManifest
           let clientManifest
           let origin
@@ -299,12 +301,24 @@ async function doctor(options, io) {
             ))
             tools = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-tools')).href)
             mcpClient = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-mcp-client')).href)
+            const clientRequire = createRequire(packageRequire.resolve('@deepseek-ai/dsh-mcp-client'))
+            const [sdkClient, sdkStdio, sdkHttp] = await Promise.all([
+              import(pathToFileURL(clientRequire.resolve('@modelcontextprotocol/sdk/client/index.js')).href),
+              import(pathToFileURL(clientRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')).href),
+              import(pathToFileURL(clientRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js')).href),
+            ])
+            mcpSdk = {
+              Client: sdkClient.Client,
+              StdioClientTransport: sdkStdio.StdioClientTransport,
+              StreamableHTTPClientTransport: sdkHttp.StreamableHTTPClientTransport,
+            }
             origin = 'source-dev-dependencies'
           } else {
             const hostContext = { dshHomePath: (...segments) => join(dshHome, ...segments) }
-            ;[tools, mcpClient] = await Promise.all([
+            ;[tools, mcpClient, mcpSdk] = await Promise.all([
               loadHostDshTools(hostContext),
               loadHostDshMcpClient(hostContext),
+              loadHostMcpSdk(hostContext),
             ])
             toolsManifest = JSON.parse(await readFile(join(
               dshHome,
@@ -327,6 +341,9 @@ async function doctor(options, io) {
           const exportsReady = typeof tools.renderToolsSdk === 'function'
             && typeof tools.renderToolsSdkPy === 'function'
             && typeof mcpClient.apply === 'function'
+            && typeof mcpSdk.Client === 'function'
+            && typeof mcpSdk.StdioClientTransport === 'function'
+            && typeof mcpSdk.StreamableHTTPClientTransport === 'function'
           if (!dshHostVersionCompatible(toolsManifest.version)
             || !dshHostVersionCompatible(clientManifest.version)
             || !exportsReady) {

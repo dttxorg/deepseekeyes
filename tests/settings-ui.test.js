@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createMcpServerDraft,
+  mcpContentAllowedInDraft,
   mcpToolAllowedInDraft,
   mcpToolMatchesSelector,
   nextMcpReferenceEntry,
@@ -13,6 +14,7 @@ import {
   settingsDraftFailure,
   settingsPathOps,
   updateMcpToolSelection,
+  updateMcpContentSelection,
 } from '../src/settings-ui.js'
 
 test('GUI draft emits minimal live settings mutations and validates routing constraints', () => {
@@ -273,6 +275,31 @@ test('MCP tool checkbox policy understands globs and writes exact deny exception
   const exact = updateMcpToolSelection(closed, tool, true)
   assert.deepEqual(exact.allowedTools, ['read_issue'])
   assert.deepEqual(exact.denyTools, [])
+})
+
+test('MCP Resource and Prompt checkboxes default closed and write exact GUI selections', () => {
+  const base = createMcpServerDraft(1)
+  assert.equal(base.toolsEnabled, true)
+  assert.equal(base.resourcesEnabled, false)
+  assert.equal(base.promptsEnabled, false)
+  assert.deepEqual(base.allowedResources, [])
+  assert.deepEqual(base.allowedPrompts, [])
+
+  const resource = { uri: 'notes://welcome', name: 'Welcome' }
+  const template = { uriTemplate: 'notes://{slug}', name: 'Note' }
+  const prompt = { name: 'summarize' }
+  let server = { ...base, resourcesEnabled: true, promptsEnabled: true }
+  assert.equal(mcpContentAllowedInDraft(server, 'resource', resource), false)
+  server = updateMcpContentSelection(server, 'resource', resource, true)
+  server = updateMcpContentSelection(server, 'resource', template, true)
+  server = updateMcpContentSelection(server, 'prompt', prompt, true)
+  assert.deepEqual(server.allowedResources, ['notes://welcome', 'notes://{slug}'])
+  assert.deepEqual(server.allowedPrompts, ['summarize'])
+  assert.equal(mcpContentAllowedInDraft(server, 'resource', template), true)
+  assert.equal(mcpContentAllowedInDraft(server, 'prompt', prompt), true)
+  server = updateMcpContentSelection(server, 'resource', resource, false)
+  assert.deepEqual(server.denyResources, ['notes://welcome'])
+  assert.equal(mcpContentAllowedInDraft(server, 'resource', resource), false)
 })
 
 test('custom gateway vision switch addresses only llm-pi-ai defaultInput and preserves sibling fields', () => {

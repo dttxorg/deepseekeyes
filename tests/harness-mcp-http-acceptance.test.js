@@ -1,13 +1,62 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createTemporaryMcpHttpServer } from '../acceptance/helpers/temporary-mcp-http-server.mjs'
 import {
   DshMcpClientAdapter,
+  McpContentAdapter,
+  mcpPromptResult,
+  mcpResourceResult,
   normalizeMcpConfig,
 } from '../src/mcp/index.js'
 
 const loadSourceMcpClient = () => import('@deepseek-ai/dsh-mcp-client')
+const sourceMcpSdk = { Client, StdioClientTransport, StreamableHTTPClientTransport }
+
+test('DeepSeekEyes Content plane discovers and reads real Streamable HTTP Resources and Prompts', { timeout: 30_000 }, async () => {
+  const fixture = await createTemporaryMcpHttpServer()
+  const server = normalizeMcpConfig({
+    mcpServers: [{
+      id: 'content_http',
+      name: 'Content HTTP',
+      transport: 'streamable-http',
+      url: fixture.url,
+      headers: {},
+      toolsEnabled: false,
+      resourcesEnabled: true,
+      promptsEnabled: true,
+      allowedResources: ['http://resource/*'],
+      allowedPrompts: ['http-summary'],
+    }],
+  }).mcpServers[0]
+  const adapter = new McpContentAdapter({}, server, { loadSdk: async () => sourceMcpSdk })
+  try {
+    await adapter.start()
+    assert.equal(adapter.catalog().resources.length, 2)
+    assert.equal(adapter.catalog().resourceTemplates.length, 1)
+    assert.equal(adapter.catalog().prompts.length, 1)
+    const text = mcpResourceResult(await adapter.readResource('http://resource/note'))
+    assert.match(text.content[0].text, /http-resource:http:\/\/resource\/note/)
+    const image = mcpResourceResult(await adapter.readResource('http://resource/pixel'))
+    assert.equal(image.content[0].type, 'image')
+    const prompt = mcpPromptResult(await adapter.getPrompt('http-summary', { style: 'brief' }))
+    assert.match(prompt.content[0].text, /http-prompt:brief/)
+  } finally {
+    await adapter.close()
+    await fixture.cleanup()
+  }
+  const observed = fixture.snapshot()
+  assert.equal(observed.methods.initialize, 1)
+  assert.equal(observed.methods['resources/list'], 1)
+  assert.equal(observed.methods['resources/templates/list'], 1)
+  assert.equal(observed.methods['resources/read'], 2)
+  assert.equal(observed.methods['prompts/list'], 1)
+  assert.equal(observed.methods['prompts/get'], 1)
+  assert.equal(observed.errors.length, 0)
+})
 
 test('official DSH MCP client completes the adapter lifecycle over real Streamable HTTP', { timeout: 30_000 }, async () => {
   const credentialName = 'DEEPSEEKEYES_HTTP_ACCEPTANCE_TOKEN'

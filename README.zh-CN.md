@@ -18,7 +18,7 @@
   <a href="#安装升级与-doctor">快速安装</a> ·
   <a href="#工作方式">工作方式</a> ·
   <a href="#windows--macos-desktop-computer-use-058默认关闭">Computer Use</a> ·
-  <a href="#mcp-应用执行层-06默认关闭">MCP 应用</a> ·
+  <a href="#mcp-应用执行层-07默认关闭">MCP 应用</a> ·
   <a href="#本插件-token-消耗统计">Token 统计</a> ·
   <a href="#配置字段">完整配置</a> ·
   <a href="https://x.com/lucars2026">X / @lucars2026</a>
@@ -204,19 +204,23 @@ Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或�
 
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
-## MCP 应用执行层 0.6（默认关闭）
+## MCP 应用执行层 0.7（默认关闭）
 
-DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有设置界面。DeepSeekEyes 0.6 只从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client` 与匹配的 `@deepseek-ai/dsh-tools`，并将入口 canonicalize 到 Host 真实安装路径；即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
+DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有完整的 Content 设置界面。DeepSeekEyes 0.7 从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client`、匹配的 `@deepseek-ai/dsh-tools` 以及该 Host Client 自己依赖的协议 SDK，并将入口 canonicalize 到 Host 真实安装路径；插件不会再打包第二份 MCP SDK。Tools 继续完全走官方 DSH Client，Resources 与 Prompts 则进入独立、显式启用的 Content Plane。即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
 
 - 增删、启停本机 `stdio` 或远端 `Streamable HTTP` Server；远端必须使用 `https://`，只有 `localhost`、`127.0.0.1`、`[::1]` 等显式 loopback 主机/地址可以使用 `http://`；
-- 测试真实 transport/tools-list 往返、查看健康状态/延迟/最近错误、强制新 transport generation 刷新工具并重新连接；状态轮询在 30 秒内复用已验证结果，过期后只发起一个共享实时探针，不把旧工具缓存当健康；
+- 分别测试真实 Tools 与 Content transport 往返、查看两条平面各自的健康状态/延迟/最近错误、强制新 transport generation 刷新并重新连接；状态轮询在 30 秒内复用各平面的已验证结果，过期后只发起一个共享探针批次，不把旧目录缓存当健康；
 - 凭据只保存**环境变量引用**：stdio 的 `env` 与 Streamable HTTP 请求头只填写 `dsh web` 进程环境中的变量名；明文 Token、含凭据的启动参数与 URL 会被拒绝；
 - 新 Server 的工具允许列表默认为空，只有明确选择的工具才会注册给模型；拒绝规则始终优先于允许规则；
+- 每个 Server 可独立启用 Tools、Resources 和 Prompts。Tools 为兼容旧配置默认开启；Resources/Prompts 默认关闭，关闭时 **不建立 Content 连接、不增加通用 Schema，也不触发模型调用**；
+- Resources、Resource Templates 与 Prompts 的发现目录共享固定上限：最多 256 条、256 页、1,000,000 字符、4,000,000 字节；三类 allowlist 均默认空，deny 始终优先；
+- 只有至少一个发现项被明确允许时，才暴露两个有界通用工具：`mcp__deepseekeyes__resource` 与 `mcp__deepseekeyes__prompt`。目录内容不会整批写进系统提示；
+- Prompt 名称、已声明参数、必填参数和字符串类型会在 transport 前验证；Resource 必须是已发现的精确 URI，或匹配已发现且已允许的 URI Template；
 - 持久 capture catalog 超过 256 Tools、1,000,000 个测量 Schema 字符、4,000,000 个 UTF-8 Schema 字节、Schema 深度 64 或 100,000 个 Schema 节点时，整个 generation 原子拒绝，不保留部分目录；已有非空 generation 突然变成零工具时先撤销暴露并标为未验证，只有匹配的实时探针才能确认“健康的零工具”；
 - capture 之后再应用独立的 `mcpMaxTools` 暴露预算与 Schema Token 估算；总预算超限的 allowlisted 工具不会进入模型请求，提高暴露预算也不会放宽固定 catalog 上限；
 - MCP Schema 与系统提示只在 DeepSeekEyes 虚拟 Provider 的提示装配中保留；普通 Provider 会移除两者，错误 Provider 或无 Agent 作用域的直接执行还会在外部调用前再次拒绝；
 - Code Mode 内层 MCP 调用通过 Harness Host 的 `deferContext()` 通道追加可信的插件 `mcp-context` 消息。每次成功或失败的子调用都携带紧凑状态/哈希标记；图片只携带不可变 Harness attachment 引用，不内联 base64。下一次模型继续因此会识别为 MCP 自动化并进入相同的上下文/调用次数保护与 `upstreamMcp` 统计。Native MCP 结果已经原生展示，不重复追加该上下文；Code Mode Host 缺少此通道时会在外部调用前以 `MCP_RESULT_CONTEXT_UNAVAILABLE` 失败；
-- stop 或重新配置在等待异步清理前先暂停全部 MCP 暴露；旧 transport 关闭期间 Schema 与提示持续撤销，只有完成清理并验证的新 generation 才重新发布，慢速或失败的 close 不会留下仍可调用的旧工具；
+- stop 或重新配置在等待异步清理前先暂停全部 MCP 暴露；Tools 与 Content 的清理失败会独立保留，受影响 Schema 持续撤销，重复探针/重连保持阻断，只有保留的 close handle 成功后才允许发布替代 generation；
 - 每个成功 adapter 结果会在 DeepSeekEyes 规范化、base64 解码、附件写入和产物落盘**之前**经过固定硬准入：深度 64、节点 50,000、content blocks 4,096、非图片字符串合计 16 Mi 字符、图片 8 张、图片编码数据 28 MiB、图片解码数据 20 MiB、其他二进制数据 20 MiB；
 - `mcpMaxResultChars` 只控制硬准入之后交给模型的 preview。通过准入的 adapter 值若过长或含非文本内容，默认把规范 JSON 按 SHA-256 私有落盘；POSIX 系统的 Server 目录/文件使用 `0700`/`0600`，Windows 则继承每用户 DSH Home 或显式产物目录的 ACL，因为 Node 返回的 POSIX mode 位不代表 NTFS 权限；写入或 rename 失败会拒绝该结果，并在不覆盖原始错误的前提下始终尝试清理临时文件；设置 `mcpArtifactDir: false` 后不会声称存在完整产物或引用，已交付图片会标为模型附件，未保留的原始 image/audio/resource block 会明确标为未保留；
 - MCP 图片优先一次性提交给 Harness 的 `ctx.attachments.saveImages()`，由 Host 原子完成数量、总字节、媒体类型与图像解码准入；只有旧版 saveImage-only Host 才进入有界兼容路径，在逐张写入前先校验完整批次。返回的内容寻址附件再进入现有原图视觉证据与细节追问链。
@@ -230,9 +234,9 @@ Schema 估算按实际请求面计算：Native 模式计算原生函数定义，
 
 `automationMaxCallsPerTurn` 限制最终模型的继续请求；`mcpMaxExternalCallsPerRun` 另外限制单次 `run_code` 内的 MCP 子调用，默认 64 次，并在每次 transport dispatch 之前原子计数，下一次调用会以 `MCP_EXTERNAL_CALL_LIMIT_REACHED` 停止。显式设为 `0` 表示不限。ToolRuntime 并发与单次 timeout 仍是独立边界；高风险写操作 approval 仍由应用/Host 策略负责，因此应保持最小 allowlist、最小凭据并用读取工具回查写入结果。
 
-首次连接顺序：添加 Server → 只填写凭据的环境变量名 → 保存 → **测试连接** → 刷新工具 → 只勾选任务所需工具 → 再次保存 → 在对话中使用 `DeepSeekEyes` 路由。Server 连接成功并不会自动把发现的工具全部暴露给模型。
+首次连接顺序：添加 Server → 选择 Tools/Resources/Prompts 能力开关 → 只填写凭据的环境变量名 → 保存 → **测试连接** → 分别刷新工具或内容 → 只勾选任务所需的 Tool、Resource 与 Prompt → 再次保存 → 在对话中使用 `DeepSeekEyes` 路由。Server 连接成功不会自动暴露任何发现项。
 
-0.6 的真实边界不是“完整 MCP 平台”：当前只桥接 Server 的 **Tools**，不桥接 MCP Resources/Prompts，也不提供交互式 OAuth 或通用后台 UI 驱动。后台操作要求目标应用已经提供所需 MCP Tool，并通过进程环境变量引用完成认证；没有 MCP Server 的应用仍需使用 Browser/Desktop Computer Use。工具返回成功只是证据，不等于外部状态一定已改变；写操作后仍应检查有界结果，或再调用读取工具验证。
+0.7 覆盖 MCP **Tools、Resources、Resource Templates 与 Prompts** 的 stdio/Streamable HTTP 链路；交互式 OAuth、Sampling/Elicitation、Roots 管理和通用后台 UI 驱动仍不属于本版本。后台操作要求目标应用提供兼容 MCP Server，并通过进程环境变量引用完成认证；没有 MCP Server 的应用仍使用 Browser/Desktop Computer Use。工具返回成功只是证据，不等于外部状态一定已改变；写操作后仍应检查有界结果，或再调用读取能力验证。
 
 固定的原始结果准入位于依赖边界之后：已验证的官方 Host Client 与 MCP SDK 会先完成 transport 响应解码；只要响应的 `content` 是数组，Client 就会在检查 `isError` **之前**遍历内容块并拼接提取出的文本。成功路径随后丢弃这个临时字符串并返回内容块，失败路径则把它作为异常抛出。所以上述硬限制只约束依赖边界之后交给 DeepSeekEyes 的成功 adapter 值；插件会对已经生成的上游异常先限长、再脱敏后显示，但不宣称限制 SDK 更早的网络解码或这次准入前的提取/拼接分配。
 
@@ -256,7 +260,7 @@ DeepSeekEyes → 最终回答模型 · 后台读图模型 Eyes
 
 此后图片仍按 Harness 原生附件方式粘贴，原始附件字节和追加式会话事件都保留，不需要在视觉模型窗口和 DeepSeek 窗口之间切换。
 
-## 全 GUI 配置（0.6）
+## 全 GUI 配置（0.7）
 
 安装后只需重启一次 `dsh web`。此后的路由与插件参数都可以在 Harness 原生设置界面完成，保存后实时生效：
 
@@ -467,7 +471,7 @@ $DSH_HOME/deepseekeyes/evidence/
 | `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
 | `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |
 | `mcpEnabled` | `false` | 是否启用 MCP 应用执行层；关闭时不连接 Server、不注册 MCP 工具 |
-| `mcpServers` | `[]` | stdio/Streamable HTTP Server 列表；远端 URL 强制 HTTPS，HTTP 仅限显式 loopback；stdio `env`/HTTP Header 的凭据值只接受 `{env: "VAR_NAME"}`，连接时从 `dsh web` 进程环境解析 |
+| `mcpServers` | `[]` | stdio/Streamable HTTP Server 列表；每项含 Tools/Resources/Prompts 独立开关及三组 allow/deny；远端 URL 强制 HTTPS，HTTP 仅限显式 loopback；stdio `env`/HTTP Header 的凭据值只接受 `{env: "VAR_NAME"}`，连接时从 `dsh web` 进程环境解析 |
 | `mcpMaxTools` | `16` | capture 后跨 Server 最多暴露工具数；`0` 只取消暴露预算，固定 256-tool/catalog 复杂度上限仍生效，允许列表仍默认空 |
 | `mcpMaxSchemaTokens` | `12000` | 所有已暴露 MCP 工具的 Schema Token 预算；`0` 表示不限制 |
 | `mcpMaxResultChars` | `20000` | 固定原始结果硬准入之后的单次模型 preview 字符上限；超出后返回预览、哈希及可用时的本地产物引用 |
@@ -502,7 +506,7 @@ npm run check
 npm pack --dry-run
 ```
 
-设置接口、原生图片路由和 Client 插槽按 DeepSeek Harness `0.1.0-rc.8` 验证；MCP 0.6 为 `@deepseek-ai/dsh-mcp-client` 与 `@deepseek-ai/dsh-tools` 声明兼容的可选 Host peer 范围 `>=0.1.0-rc.6 <0.2.0`，运行时从 DSH 管理的 Host fallback 取用，并把源码测试依赖精确固定在 rc.8。临时 SDK Server 覆盖真实 stdio 与真实 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。Node.js 版本要求为 `>=22.19`。
+设置接口、原生图片路由和 Client 插槽按 DeepSeek Harness `0.1.0-rc.8` 验证；MCP 0.7 为 `@deepseek-ai/dsh-mcp-client` 与 `@deepseek-ai/dsh-tools` 声明兼容的可选 Host peer 范围 `>=0.1.0-rc.6 <0.2.0`，运行时从 DSH 管理的 Host fallback 取用，并复用 Host Client 自己的协议 SDK。临时 SDK Server 覆盖 Tools、Resources、Resource Templates 与 Prompts 的真实 stdio 和 loopback Streamable HTTP 生命周期，全新 profile 验收还会确认安装树没有重复的 DSH 核心运行时。该结果证明本地协议路径，不代表任意外部 Server 或证书已经测试。Node.js 版本要求为 `>=22.19`。
 
 ## 卸载
 

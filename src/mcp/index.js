@@ -1,6 +1,7 @@
 export * from './audit.js'
 export * from './canonical.js'
 export * from './config.js'
+export * from './content-adapter.js'
 export * from './host-runtime.js'
 export * from './manager.js'
 export * from './official-adapter.js'

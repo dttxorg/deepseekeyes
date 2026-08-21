@@ -7,6 +7,7 @@ import {
 } from 'react'
 import {
   createMcpServerDraft,
+  mcpContentAllowedInDraft,
   mcpToolAllowedInDraft,
   nextMcpReferenceEntry,
   normalizeSettingsDraft,
@@ -16,6 +17,7 @@ import {
   settingsDraftFailure,
   settingsPathOps,
   updateMcpToolSelection,
+  updateMcpContentSelection,
 } from '../src/settings-ui.js'
 
 const NS = 'deepseekeyes.settings'
@@ -172,6 +174,10 @@ const zh = {
   mcpServer: 'MCP Server',
   mcpRemoveServer: '删除 Server',
   mcpServerEnabled: '启用此 Server',
+  mcpToolsEnabled: 'Tools：调用结构化操作',
+  mcpResourcesEnabled: 'Resources：读取应用内容',
+  mcpPromptsEnabled: 'Prompts：获取应用提示模板',
+  mcpCapabilitiesHint: 'Resources 与 Prompts 默认关闭；关闭时不建立 Content 连接，也不增加 Schema 或模型调用。',
   mcpServerId: 'Server ID',
   mcpServerName: '显示名称',
   mcpTransport: '传输方式',
@@ -200,6 +206,16 @@ const zh = {
   mcpDenyTools: '拒绝工具（每行一个）',
   mcpDenyToolsPlaceholder: '即使已允许也始终拒绝',
   mcpToolsHint: '允许列表默认为空；连接后可在下方工具清单中精确选择。',
+  mcpAllowedResources: '允许 Resources（每行一个 URI/模板）',
+  mcpDenyResources: '拒绝 Resources',
+  mcpAllowedPrompts: '允许 Prompts（每行一个名称）',
+  mcpDenyPrompts: '拒绝 Prompts',
+  mcpResourcesHint: '保存并刷新 Content 后，可从发现列表精确勾选；通用 Resource 工具只在至少一项被允许时暴露。',
+  mcpPromptsHint: 'Prompt 参数会按发现声明校验；通用 Prompt 工具只在至少一项被允许时暴露。',
+  mcpResourceCount: 'Resource 数',
+  mcpPromptCount: 'Prompt 数',
+  mcpResourceTemplates: 'Resource 模板',
+  mcpRefreshContent: '刷新内容',
   mcpHealth: '运行状态',
   mcpStatusDisabled: '已禁用',
   mcpStatusIdle: '待连接',
@@ -209,6 +225,12 @@ const zh = {
   mcpStatusError: '错误',
   mcpStatusUnknown: '尚未检测',
   mcpLatency: '延迟',
+  mcpToolsStatus: 'Tools 状态',
+  mcpContentStatus: 'Content 状态',
+  mcpToolsLatency: 'Tools 延迟',
+  mcpContentLatency: 'Content 延迟',
+  mcpToolsLastError: 'Tools 最近错误',
+  mcpContentLastError: 'Content 最近错误',
   mcpToolCount: '工具总数',
   mcpSelectedCount: '已选工具',
   mcpSchemaTokens: 'Schema Token 估算',
@@ -298,6 +320,10 @@ const zh = {
   mcpServerHeadersInvalid: '请求头名称无效，或其值不是环境变量引用。',
   mcpServerToolsInvalid: '工具允许/拒绝列表无效。',
   mcpServerToolsConflict: '同一个工具不能同时出现在允许与拒绝列表。',
+  mcpServerResourcesInvalid: 'Resource 允许/拒绝列表无效。',
+  mcpServerResourcesConflict: '同一个 Resource 不能同时出现在允许与拒绝列表。',
+  mcpServerPromptsInvalid: 'Prompt 允许/拒绝列表无效。',
+  mcpServerPromptsConflict: '同一个 Prompt 不能同时出现在允许与拒绝列表。',
   mcpMaxToolsRange: '最多暴露工具数必须是 0（不限制）或 1–1000 的整数。',
   mcpMaxSchemaTokensRange: 'Schema Token 预算必须是 0（不限制）或 256–10000000 的整数。',
   mcpMaxResultCharsRange: '结果字符上限必须是 256–10000000 的整数。',
@@ -456,6 +482,10 @@ const en = {
   mcpServer: 'MCP server',
   mcpRemoveServer: 'Remove server',
   mcpServerEnabled: 'Enable this server',
+  mcpToolsEnabled: 'Tools: invoke structured operations',
+  mcpResourcesEnabled: 'Resources: read application content',
+  mcpPromptsEnabled: 'Prompts: get application prompt templates',
+  mcpCapabilitiesHint: 'Resources and Prompts are off by default. While off, the Content plane opens no connection and adds no schema or model call.',
   mcpServerId: 'Server ID',
   mcpServerName: 'Display name',
   mcpTransport: 'Transport',
@@ -484,6 +514,16 @@ const en = {
   mcpDenyTools: 'Denied tools (one per line)',
   mcpDenyToolsPlaceholder: 'Always denied, even when also allowed',
   mcpToolsHint: 'The allowlist starts empty. After connecting, select exact tools from the list below.',
+  mcpAllowedResources: 'Allowed Resources (one URI/template per line)',
+  mcpDenyResources: 'Denied Resources',
+  mcpAllowedPrompts: 'Allowed Prompts (one name per line)',
+  mcpDenyPrompts: 'Denied Prompts',
+  mcpResourcesHint: 'Save and refresh Content, then select exact discoveries. The generic Resource tool appears only after at least one item is allowed.',
+  mcpPromptsHint: 'Prompt arguments are checked against discovery metadata. The generic Prompt tool appears only after at least one item is allowed.',
+  mcpResourceCount: 'Resources',
+  mcpPromptCount: 'Prompts',
+  mcpResourceTemplates: 'Resource templates',
+  mcpRefreshContent: 'Refresh content',
   mcpHealth: 'Runtime health',
   mcpStatusDisabled: 'Disabled',
   mcpStatusIdle: 'Idle',
@@ -493,6 +533,12 @@ const en = {
   mcpStatusError: 'Error',
   mcpStatusUnknown: 'Not checked',
   mcpLatency: 'Latency',
+  mcpToolsStatus: 'Tools status',
+  mcpContentStatus: 'Content status',
+  mcpToolsLatency: 'Tools latency',
+  mcpContentLatency: 'Content latency',
+  mcpToolsLastError: 'Latest Tools error',
+  mcpContentLastError: 'Latest Content error',
   mcpToolCount: 'Total tools',
   mcpSelectedCount: 'Selected tools',
   mcpSchemaTokens: 'Estimated schema tokens',
@@ -582,6 +628,10 @@ const en = {
   mcpServerHeadersInvalid: 'A request-header name is invalid or does not point to an environment variable.',
   mcpServerToolsInvalid: 'The tool allow/deny lists are invalid.',
   mcpServerToolsConflict: 'A tool cannot be both allowed and denied.',
+  mcpServerResourcesInvalid: 'The Resource allow/deny lists are invalid.',
+  mcpServerResourcesConflict: 'A Resource cannot be both allowed and denied.',
+  mcpServerPromptsInvalid: 'The Prompt allow/deny lists are invalid.',
+  mcpServerPromptsConflict: 'A Prompt cannot be both allowed and denied.',
   mcpMaxToolsRange: 'Maximum exposed tools must be zero (unlimited) or an integer from 1 through 1000.',
   mcpMaxSchemaTokensRange: 'Schema token budget must be zero (unlimited) or an integer from 256 through 10000000.',
   mcpMaxResultCharsRange: 'Result character limit must be an integer from 256 through 10000000.',
@@ -875,9 +925,17 @@ function McpReferenceEditor({ id, title, addLabel, value, disabled, header, onCh
 function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChange, onRemove, onAction, t }) {
   const serverDisabled = disabled || !server.enabled
   const tools = Array.isArray(runtimeServer?.tools) ? runtimeServer.tools : []
+  const resources = [
+    ...(Array.isArray(runtimeServer?.resources) ? runtimeServer.resources : []),
+    ...(Array.isArray(runtimeServer?.resourceTemplates) ? runtimeServer.resourceTemplates : []),
+  ]
+  const prompts = Array.isArray(runtimeServer?.prompts) ? runtimeServer.prompts : []
   const status = runtimeServer?.status
   const setAllowed = (tool, allowed) => {
     onChange(updateMcpToolSelection(server, tool, allowed))
+  }
+  const setContentAllowed = (kind, item, allowed) => {
+    onChange(updateMcpContentSelection(server, kind, item, allowed))
   }
   return (
     <section style={styles.serverCard} aria-label={`${t('mcpServer')}: ${server.name || server.id}`}>
@@ -893,6 +951,21 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
         <input type="checkbox" checked={server.enabled} disabled={disabled} onChange={event => onChange({ ...server, enabled: event.target.checked })} />
         <span>{t('mcpServerEnabled')}</span>
       </label>
+      <div style={styles.grid}>
+        <label style={styles.checkboxRow}>
+          <input type="checkbox" checked={server.toolsEnabled} disabled={serverDisabled} onChange={event => onChange({ ...server, toolsEnabled: event.target.checked })} />
+          <span>{t('mcpToolsEnabled')}</span>
+        </label>
+        <label style={styles.checkboxRow}>
+          <input type="checkbox" checked={server.resourcesEnabled} disabled={serverDisabled} onChange={event => onChange({ ...server, resourcesEnabled: event.target.checked })} />
+          <span>{t('mcpResourcesEnabled')}</span>
+        </label>
+        <label style={styles.checkboxRow}>
+          <input type="checkbox" checked={server.promptsEnabled} disabled={serverDisabled} onChange={event => onChange({ ...server, promptsEnabled: event.target.checked })} />
+          <span>{t('mcpPromptsEnabled')}</span>
+        </label>
+      </div>
+      <p style={styles.hint}>{t('mcpCapabilitiesHint')}</p>
 
       <div style={styles.grid}>
         <div style={styles.field}>
@@ -975,22 +1048,57 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
       <div style={styles.grid}>
         <div style={styles.field}>
           <label style={styles.label} htmlFor={`deepseekeyes-mcp-allow-${index}`}>{t('mcpAllowedTools')}</label>
-          <textarea id={`deepseekeyes-mcp-allow-${index}`} style={styles.textArea} value={linesOf(server.allowedTools)} placeholder={t('mcpAllowedToolsPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, allowedTools: listFromText(event.target.value) })} />
+          <textarea id={`deepseekeyes-mcp-allow-${index}`} style={styles.textArea} value={linesOf(server.allowedTools)} placeholder={t('mcpAllowedToolsPlaceholder')} disabled={serverDisabled || !server.toolsEnabled} onChange={event => onChange({ ...server, allowedTools: listFromText(event.target.value) })} />
         </div>
         <div style={styles.field}>
           <label style={styles.label} htmlFor={`deepseekeyes-mcp-deny-${index}`}>{t('mcpDenyTools')}</label>
-          <textarea id={`deepseekeyes-mcp-deny-${index}`} style={styles.textArea} value={linesOf(server.denyTools)} placeholder={t('mcpDenyToolsPlaceholder')} disabled={serverDisabled} onChange={event => onChange({ ...server, denyTools: listFromText(event.target.value) })} />
+          <textarea id={`deepseekeyes-mcp-deny-${index}`} style={styles.textArea} value={linesOf(server.denyTools)} placeholder={t('mcpDenyToolsPlaceholder')} disabled={serverDisabled || !server.toolsEnabled} onChange={event => onChange({ ...server, denyTools: listFromText(event.target.value) })} />
         </div>
       </div>
       <p style={styles.hint}>{t('mcpToolsHint')}</p>
 
+      <div style={styles.grid}>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-resource-allow-${index}`}>{t('mcpAllowedResources')}</label>
+          <textarea id={`deepseekeyes-mcp-resource-allow-${index}`} style={styles.textArea} value={linesOf(server.allowedResources)} disabled={serverDisabled || !server.resourcesEnabled} onChange={event => onChange({ ...server, allowedResources: listFromText(event.target.value) })} />
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-resource-deny-${index}`}>{t('mcpDenyResources')}</label>
+          <textarea id={`deepseekeyes-mcp-resource-deny-${index}`} style={styles.textArea} value={linesOf(server.denyResources)} disabled={serverDisabled || !server.resourcesEnabled} onChange={event => onChange({ ...server, denyResources: listFromText(event.target.value) })} />
+        </div>
+      </div>
+      <p style={styles.hint}>{t('mcpResourcesHint')}</p>
+      <div style={styles.grid}>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-prompt-allow-${index}`}>{t('mcpAllowedPrompts')}</label>
+          <textarea id={`deepseekeyes-mcp-prompt-allow-${index}`} style={styles.textArea} value={linesOf(server.allowedPrompts)} disabled={serverDisabled || !server.promptsEnabled} onChange={event => onChange({ ...server, allowedPrompts: listFromText(event.target.value) })} />
+        </div>
+        <div style={styles.field}>
+          <label style={styles.label} htmlFor={`deepseekeyes-mcp-prompt-deny-${index}`}>{t('mcpDenyPrompts')}</label>
+          <textarea id={`deepseekeyes-mcp-prompt-deny-${index}`} style={styles.textArea} value={linesOf(server.denyPrompts)} disabled={serverDisabled || !server.promptsEnabled} onChange={event => onChange({ ...server, denyPrompts: listFromText(event.target.value) })} />
+        </div>
+      </div>
+      <p style={styles.hint}>{t('mcpPromptsHint')}</p>
+
       <div style={styles.metricGrid}>
-        <McpMetric label={t('mcpLatency')} value={Number.isFinite(runtimeServer?.latencyMs) ? `${formatCount(runtimeServer.latencyMs)} ms` : '—'} />
+        <McpMetric label={t('mcpToolsStatus')} value={t(mcpStatusLabel(runtimeServer?.toolsStatus))} />
+        <McpMetric label={t('mcpContentStatus')} value={t(mcpStatusLabel(runtimeServer?.contentStatus))} />
+        <McpMetric label={t('mcpToolsLatency')} value={Number.isFinite(runtimeServer?.toolsLatencyMs) ? `${formatCount(runtimeServer.toolsLatencyMs)} ms` : '—'} />
+        <McpMetric label={t('mcpContentLatency')} value={Number.isFinite(runtimeServer?.contentLatencyMs) ? `${formatCount(runtimeServer.contentLatencyMs)} ms` : '—'} />
         <McpMetric label={t('mcpToolCount')} value={formatCount(runtimeServer?.toolCount)} />
+        <McpMetric label={t('mcpResourceCount')} value={formatCount(runtimeServer?.resourceCount)} />
+        <McpMetric label={t('mcpResourceTemplates')} value={formatCount(runtimeServer?.resourceTemplateCount)} />
+        <McpMetric label={t('mcpPromptCount')} value={formatCount(runtimeServer?.promptCount)} />
         <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtimeServer?.exposedToolCount ?? server.allowedTools.length)} />
         <McpMetric label={t('mcpSchemaTokens')} value={formatCount(runtimeServer?.schemaTokensEstimated)} />
       </div>
-      {runtimeServer?.lastError?.message
+      {runtimeServer?.toolsLastError?.message
+        ? <p style={styles.statusError}>{t('mcpToolsLastError')}: {runtimeServer.toolsLastError.code ? `[${runtimeServer.toolsLastError.code}] ` : ''}{runtimeServer.toolsLastError.message}</p>
+        : null}
+      {runtimeServer?.contentLastError?.message
+        ? <p style={styles.statusError}>{t('mcpContentLastError')}: {runtimeServer.contentLastError.code ? `[${runtimeServer.contentLastError.code}] ` : ''}{runtimeServer.contentLastError.message}</p>
+        : null}
+      {runtimeServer?.lastError?.message && !runtimeServer?.toolsLastError?.message && !runtimeServer?.contentLastError?.message
         ? <p style={styles.statusError}>{t('mcpLastError')}: {runtimeServer.lastError.code ? `[${runtimeServer.lastError.code}] ` : ''}{runtimeServer.lastError.message}</p>
         : null}
 
@@ -1016,9 +1124,47 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
         )
         : null}
 
+      {resources.length > 0
+        ? (
+          <div style={styles.toolList}>
+            {resources.map(resource => {
+              const identity = resource.uri ?? resource.uriTemplate
+              return (
+                <label key={identity} style={styles.toolRow}>
+                  <input type="checkbox" checked={mcpContentAllowedInDraft(server, 'resource', resource)} disabled={serverDisabled || !server.resourcesEnabled} onChange={event => setContentAllowed('resource', resource, event.target.checked)} />
+                  <span>
+                    <span style={styles.toolName}>{resource.name ?? identity}</span>
+                    <span style={styles.toolDescription}>{identity}</span>
+                  </span>
+                  <span style={styles.statusBadge}>{resource.uriTemplate ? t('mcpResourceTemplates') : 'Resource'}</span>
+                </label>
+              )
+            })}
+          </div>
+        )
+        : null}
+
+      {prompts.length > 0
+        ? (
+          <div style={styles.toolList}>
+            {prompts.map(prompt => (
+              <label key={prompt.name} style={styles.toolRow}>
+                <input type="checkbox" checked={mcpContentAllowedInDraft(server, 'prompt', prompt)} disabled={serverDisabled || !server.promptsEnabled} onChange={event => setContentAllowed('prompt', prompt, event.target.checked)} />
+                <span>
+                  <span style={styles.toolName}>{prompt.title ?? prompt.name}</span>
+                  {prompt.description ? <span style={styles.toolDescription}>{prompt.description}</span> : null}
+                </span>
+                <span style={styles.statusBadge}>Prompt</span>
+              </label>
+            ))}
+          </div>
+        )
+        : null}
+
       <div style={styles.actions}>
         <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('test', server.id)}>{t('mcpTestConnection')}</button>
         <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('tools', server.id)}>{t('mcpRefreshTools')}</button>
+        <button type="button" style={styles.button} disabled={busy || !server.enabled || (!server.resourcesEnabled && !server.promptsEnabled)} onClick={() => onAction('content', server.id)}>{t('mcpRefreshContent')}</button>
         <button type="button" style={styles.button} disabled={busy || !server.enabled} onClick={() => onAction('reconnect', server.id)}>{t('mcpReconnect')}</button>
       </div>
     </section>
@@ -1051,7 +1197,11 @@ function McpSettingsSection({ draft, disabled, rpc, refreshRevision, onUpdate, t
   const act = async (method, serverId) => {
     setRuntime(current => ({ ...current, busy: `${method}:${serverId}`, error: undefined }))
     try {
-      const action = await callMcpRpc(rpc, method, method === 'tools' ? { serverId, refresh: true } : { serverId })
+      const action = await callMcpRpc(
+        rpc,
+        method,
+        method === 'tools' || method === 'content' ? { serverId, refresh: true } : { serverId },
+      )
       const value = await callMcpRpc(rpc, 'snapshot', {})
       const actionError = action?.ok === false
         ? `${action.error?.code ? `[${action.error.code}] ` : ''}${action.error?.message ?? 'MCP connection test failed'}`
@@ -1154,7 +1304,7 @@ function McpSettingsSection({ draft, disabled, rpc, refreshRevision, onUpdate, t
             <>
               <div style={styles.metricGrid}>
                 <McpMetric label={t('mcpServer')} value={`${formatCount(runtime.value.summary?.connectedServers)} / ${formatCount(runtime.value.summary?.enabledServers)}`} />
-                <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtime.value.summary?.exposedTools)} />
+                <McpMetric label={t('mcpSelectedCount')} value={formatCount(runtime.value.summary?.exposedSchemas ?? runtime.value.summary?.exposedTools)} />
                 <McpMetric label={t('mcpSchemaTokens')} value={formatCount(runtime.value.summary?.schemaTokensEstimated)} />
               </div>
               {runtime.value.updatedAt ? <p style={styles.hint}>{t('mcpRuntimeUpdatedAt')}{runtime.value.updatedAt}</p> : null}

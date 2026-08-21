@@ -105,8 +105,15 @@ export function createMcpServerDraft(index = 1) {
     url: '',
     env: {},
     headers: {},
+    toolsEnabled: true,
+    resourcesEnabled: false,
+    promptsEnabled: false,
     allowedTools: [],
     denyTools: [],
+    allowedResources: [],
+    denyResources: [],
+    allowedPrompts: [],
+    denyPrompts: [],
     timeoutMs: undefined,
   }
 }
@@ -174,6 +181,45 @@ export function updateMcpToolSelection(server, tool, selected) {
   return { ...server, allowedTools, denyTools }
 }
 
+function mcpContentIdentity(kind, item) {
+  if (kind === 'resource') return String(item?.uri ?? item?.uriTemplate ?? '')
+  return String(item?.name ?? '')
+}
+
+function mcpContentMatchesSelector(server, kind, item, selector) {
+  const identity = mcpContentIdentity(kind, item)
+  const expression = mcpSelectorExpression(selector)
+  return [identity, `${server.id}/${identity}`, `${server.name}/${identity}`]
+    .some(name => expression.test(name))
+}
+
+export function mcpContentAllowedInDraft(server, kind, item) {
+  const denyField = kind === 'resource' ? 'denyResources' : 'denyPrompts'
+  const allowField = kind === 'resource' ? 'allowedResources' : 'allowedPrompts'
+  if (server[denyField].some(selector => mcpContentMatchesSelector(server, kind, item, selector))) return false
+  return server[allowField].some(selector => mcpContentMatchesSelector(server, kind, item, selector))
+}
+
+export function updateMcpContentSelection(server, kind, item, selected) {
+  const identity = mcpContentIdentity(kind, item)
+  const allowField = kind === 'resource' ? 'allowedResources' : 'allowedPrompts'
+  const denyField = kind === 'resource' ? 'denyResources' : 'denyPrompts'
+  const exactNames = new Set([identity, `${server.id}/${identity}`, `${server.name}/${identity}`])
+  const exact = selector => !/[?*]/.test(selector) && exactNames.has(selector)
+  if (!selected) {
+    const allowed = server[allowField].filter(selector => !exact(selector))
+    const denied = server[denyField].some(selector => mcpContentMatchesSelector(server, kind, item, selector))
+      ? server[denyField]
+      : [...server[denyField], identity]
+    return { ...server, [allowField]: allowed, [denyField]: denied }
+  }
+  const denied = server[denyField].filter(selector => !exact(selector))
+  const allowed = server[allowField].some(selector => mcpContentMatchesSelector(server, kind, item, selector))
+    ? server[allowField]
+    : [...server[allowField], identity]
+  return { ...server, [allowField]: allowed, [denyField]: denied }
+}
+
 export function normalizeMcpServer(value = {}, index = 0) {
   const fallback = createMcpServerDraft(index + 1)
   return {
@@ -187,8 +233,15 @@ export function normalizeMcpServer(value = {}, index = 0) {
     url: typeof value.url === 'string' ? value.url.trim() : '',
     env: normalizedReferenceMap(value.env),
     headers: normalizedReferenceMap(value.headers),
+    toolsEnabled: value.toolsEnabled !== false,
+    resourcesEnabled: value.resourcesEnabled === true,
+    promptsEnabled: value.promptsEnabled === true,
     allowedTools: normalizedStringList(value.allowedTools),
     denyTools: normalizedStringList(value.denyTools),
+    allowedResources: normalizedStringList(value.allowedResources),
+    denyResources: normalizedStringList(value.denyResources),
+    allowedPrompts: normalizedStringList(value.allowedPrompts),
+    denyPrompts: normalizedStringList(value.denyPrompts),
     timeoutMs: Number.isInteger(value.timeoutMs) ? value.timeoutMs : undefined,
   }
 }
@@ -370,8 +423,15 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes', upstrea
       return 'mcpServerHeadersInvalid'
     }
     if (!Array.isArray(server.allowedTools) || !Array.isArray(server.denyTools)) return 'mcpServerToolsInvalid'
-    const denied = new Set(server.denyTools)
-    if (server.allowedTools.some(tool => denied.has(tool))) return 'mcpServerToolsConflict'
+    for (const [allowField, denyField, invalid, conflict] of [
+      ['allowedTools', 'denyTools', 'mcpServerToolsInvalid', 'mcpServerToolsConflict'],
+      ['allowedResources', 'denyResources', 'mcpServerResourcesInvalid', 'mcpServerResourcesConflict'],
+      ['allowedPrompts', 'denyPrompts', 'mcpServerPromptsInvalid', 'mcpServerPromptsConflict'],
+    ]) {
+      if (!Array.isArray(server[allowField]) || !Array.isArray(server[denyField])) return invalid
+      const denied = new Set(server[denyField])
+      if (server[allowField].some(value => denied.has(value))) return conflict
+    }
   }
   const tokenRanges = [
     ['baseMaxTokens', 512],

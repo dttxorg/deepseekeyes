@@ -10,6 +10,8 @@ import {
   HASH_UNAVAILABLE,
   MCP_RESULT_OUTPUT,
   MCP_RESULT_CONTEXT_PREFIX,
+  MCP_PROMPT_TOOL_NAME,
+  MCP_RESOURCE_TOOL_NAME,
   McpManager,
   toolDefinitionTokenSurface,
 } from '../src/mcp/index.js'
@@ -107,6 +109,160 @@ const tools = [
   { name: 'search', description: 'Search records', inputSchema: { type: 'object', properties: { query: { type: 'string' } } }, annotations: { readOnlyHint: true } },
   { name: 'write', description: 'Write a record', inputSchema: { type: 'object' } },
 ]
+
+function fakeContentFactory() {
+  const state = { created: 0, closed: 0, reads: [], prompts: [], refreshes: 0 }
+  const catalog = Object.freeze({
+    resources: Object.freeze([
+      Object.freeze({ uri: 'notes://welcome', name: 'Welcome', mimeType: 'text/plain' }),
+      Object.freeze({ uri: 'image://chart', name: 'Chart', mimeType: 'image/png' }),
+    ]),
+    resourceTemplates: Object.freeze([Object.freeze({ uriTemplate: 'templ://{id}', name: 'Template' })]),
+    prompts: Object.freeze([Object.freeze({
+      name: 'summarize',
+      arguments: Object.freeze([Object.freeze({ name: 'style', required: true })]),
+    })]),
+  })
+  return {
+    state,
+    create(_server, hooks) {
+      state.created += 1
+      let status = 'idle'
+      return {
+        async start() {
+          status = 'connected'
+          hooks.onChanged?.(catalog, { connected: true, status, reason: 'connected' })
+        },
+        catalog() { return catalog },
+        state() { return { connected: status === 'connected', status } },
+        async refresh() {
+          state.refreshes += 1
+          hooks.onChanged?.(catalog, { connected: true, status, reason: 'refreshed' })
+          return catalog
+        },
+        async readResource(uri) {
+          state.reads.push(uri)
+          if (uri.startsWith('image://')) {
+            return { contents: [{ uri, mimeType: 'image/png', blob: Buffer.from('png').toString('base64') }] }
+          }
+          return { contents: [{ uri, mimeType: 'text/plain', text: `resource:${uri}` }] }
+        },
+        async getPrompt(name, args) {
+          state.prompts.push({ name, args })
+          return { messages: [{ role: 'user', content: { type: 'text', text: `prompt:${args.style}` } }] }
+        },
+        async close() {
+          status = 'closed'
+          state.closed += 1
+          hooks.onChanged?.({ resources: [], resourceTemplates: [], prompts: [] }, { connected: false, status, reason: 'closed' })
+        },
+      }
+    },
+  }
+}
+
+test('MCP Content plane exposes two bounded generic tools only for explicitly allowlisted catalog entries', async () => {
+  const ctx = mockContext()
+  const toolFactory = fakeFactory(tools)
+  const contentFactory = fakeContentFactory()
+  const usage = []
+  const manager = new McpManager(ctx, config({}, {
+    toolsEnabled: false,
+    resourcesEnabled: true,
+    promptsEnabled: true,
+    allowedResources: ['notes://welcome', 'image://chart', 'templ://{id}'],
+    allowedPrompts: ['summarize'],
+  }), {
+    adapterFactory: toolFactory,
+    contentAdapterFactory: contentFactory,
+    usageTracker: { async recordMcpExternalCall(_sessionId, value) { usage.push(value) } },
+  })
+  await manager.start()
+
+  assert.equal(toolFactory.state.created.length, 0, 'disabled Tools plane starts no official client')
+  assert.equal(contentFactory.state.created, 1)
+  assert.ok(ctx.tools.get(MCP_RESOURCE_TOOL_NAME))
+  assert.ok(ctx.tools.get(MCP_PROMPT_TOOL_NAME))
+  let snapshot = manager.snapshot()
+  assert.equal(snapshot.servers[0].status, 'connected')
+  assert.equal(snapshot.servers[0].toolsStatus, 'disabled')
+  assert.equal(snapshot.servers[0].contentStatus, 'connected')
+  assert.equal(snapshot.servers[0].resourceCount, 2)
+  assert.equal(snapshot.servers[0].resourceTemplateCount, 1)
+  assert.equal(snapshot.servers[0].promptCount, 1)
+  assert.equal(snapshot.summary.exposedTools, 0)
+  assert.equal(snapshot.summary.exposedContentTools, 2)
+  assert.equal(snapshot.summary.exposedSchemas, 2)
+
+  const exec = {
+    agent: { id: 'content-session', options: { provider: 'deepseekeyes' } },
+    signal: new AbortController().signal,
+  }
+  const resource = await ctx.tools.get(MCP_RESOURCE_TOOL_NAME).execute({
+    serverId: 'fixture',
+    uri: 'notes://welcome',
+  }, exec)
+  assert.equal(resource.preview, '[MCP resource notes://welcome; text/plain]\nresource:notes://welcome')
+  const templated = await ctx.tools.get(MCP_RESOURCE_TOOL_NAME).execute({
+    serverId: 'fixture',
+    uri: 'templ://42',
+  }, exec)
+  assert.match(templated.preview, /templ:\/\/42/)
+  const prompt = await ctx.tools.get(MCP_PROMPT_TOOL_NAME).execute({
+    serverId: 'fixture',
+    name: 'summarize',
+    arguments: { style: 'short' },
+  }, exec)
+  assert.match(prompt.preview, /prompt:short/)
+  assert.equal(usage.length, 3)
+  assert.equal(manager.snapshot().audit.length, 3)
+
+  await assert.rejects(
+    ctx.tools.get(MCP_RESOURCE_TOOL_NAME).execute({ serverId: 'fixture', uri: 'notes://private' }, exec),
+    error => error.code === 'MCP_RESOURCE_UNKNOWN',
+  )
+  await assert.rejects(
+    ctx.tools.get(MCP_PROMPT_TOOL_NAME).execute({ serverId: 'fixture', name: 'summarize', arguments: {} }, exec),
+    error => error.code === 'MCP_PROMPT_ARGUMENT_REQUIRED',
+  )
+  await manager.listContent('fixture', { refresh: true })
+  assert.equal(contentFactory.state.refreshes, 1)
+  snapshot = manager.snapshot()
+  assert.equal(snapshot.summary.exposedContentTools, 2)
+  await manager.stop()
+  assert.equal(contentFactory.state.closed, 1)
+  assert.equal(ctx.tools.get(MCP_RESOURCE_TOOL_NAME), undefined)
+})
+
+test('MCP Resources and Prompts stay zero-connection and zero-schema while disabled or unallowlisted', async () => {
+  const ctx = mockContext()
+  const contentFactory = fakeContentFactory()
+  const manager = new McpManager(ctx, config({}, {
+    resourcesEnabled: false,
+    promptsEnabled: false,
+    allowedTools: [],
+  }), { adapterFactory: fakeFactory([]), contentAdapterFactory: contentFactory })
+  await manager.start()
+  assert.equal(contentFactory.state.created, 0)
+  assert.equal(manager.snapshot().summary.exposedContentTools, 0)
+  assert.equal(ctx.tools.get(MCP_RESOURCE_TOOL_NAME), undefined)
+  await manager.stop()
+
+  const ctx2 = mockContext()
+  const contentFactory2 = fakeContentFactory()
+  const manager2 = new McpManager(ctx2, config({}, {
+    toolsEnabled: false,
+    resourcesEnabled: true,
+    promptsEnabled: true,
+    allowedResources: [],
+    allowedPrompts: [],
+  }), { adapterFactory: fakeFactory([]), contentAdapterFactory: contentFactory2 })
+  await manager2.start()
+  assert.equal(contentFactory2.state.created, 1)
+  assert.equal(manager2.snapshot().summary.exposedContentTools, 0)
+  assert.equal(ctx2.tools.definitions.size, 0)
+  await manager2.stop()
+})
 
 test('MCP manager connects while exposing zero tools by default', async () => {
   const ctx = mockContext()
@@ -857,6 +1013,174 @@ test('automatic MCP health probes are single-flight and rate-limited while expir
   clock = 60_002
   await manager.health()
   assert.equal(factory.state.probes, 2, 'the next expired status performs a new real probe')
+  await manager.stop()
+})
+
+test('mixed MCP servers probe Tools and Content independently with per-plane health evidence', async () => {
+  let clock = 0
+  const ctx = mockContext()
+  const toolFactory = fakeFactory(tools)
+  const contentFactory = fakeContentFactory()
+  const manager = new McpManager(ctx, config({}, {
+    toolsEnabled: true,
+    resourcesEnabled: true,
+    promptsEnabled: true,
+    allowedTools: ['search'],
+    allowedResources: ['notes://welcome'],
+    allowedPrompts: ['summarize'],
+  }), {
+    adapterFactory: toolFactory,
+    contentAdapterFactory: contentFactory,
+    now: () => clock,
+    healthProbeIntervalMs: 30_000,
+  })
+  await manager.start()
+  await manager.queue
+  let snapshot = manager.snapshot()
+  assert.equal(snapshot.servers[0].toolsStatus, 'connected')
+  assert.equal(snapshot.servers[0].contentStatus, 'connected')
+  assert.equal(snapshot.servers[0].toolsHealthy, true)
+  assert.equal(snapshot.servers[0].contentHealthy, true)
+
+  clock = 30_001
+  await manager.health()
+  assert.equal(toolFactory.state.probes, 1)
+  assert.equal(contentFactory.state.created, 2, 'Content health must open an independent protocol probe')
+  assert.equal(contentFactory.state.closed, 1)
+  snapshot = manager.snapshot()
+  assert.equal(snapshot.servers[0].toolsLastCheckedAt, new Date(clock).toISOString())
+  assert.equal(snapshot.servers[0].contentLastCheckedAt, new Date(clock).toISOString())
+  assert.equal(typeof snapshot.servers[0].toolsLatencyMs, 'number')
+  assert.equal(typeof snapshot.servers[0].contentLatencyMs, 'number')
+
+  clock = 60_002
+  manager.runtimes.get('fixture').toolsLastProbeAtMs = clock
+  await manager.health()
+  assert.equal(toolFactory.state.probes, 1, 'fresh Tools health must not be probed with stale Content')
+  assert.equal(contentFactory.state.created, 3)
+  assert.equal(contentFactory.state.closed, 2)
+  await manager.stop()
+})
+
+test('Content probe cleanup failures persist, revoke Content schemas, and retry before reconnect', async () => {
+  const state = { created: 0, cleanupAttempts: 0, allowCleanup: false }
+  const catalog = Object.freeze({
+    resources: Object.freeze([Object.freeze({ uri: 'notes://welcome', name: 'Welcome' })]),
+    resourceTemplates: Object.freeze([]),
+    prompts: Object.freeze([]),
+  })
+  const contentAdapterFactory = {
+    create(_server, hooks) {
+      state.created += 1
+      const probe = state.created === 2
+      let connected = false
+      return {
+        async start() {
+          connected = true
+          hooks.onChanged?.(catalog, { connected: true, status: 'connected', reason: 'connected' })
+        },
+        catalog() { return catalog },
+        async close() {
+          connected = false
+          if (probe) {
+            state.cleanupAttempts += 1
+            if (!state.allowCleanup) {
+              throw Object.assign(new Error('content probe cleanup failed'), {
+                code: 'MCP_CONTENT_CLOSE_FAILED',
+              })
+            }
+          }
+          hooks.onChanged?.(
+            { resources: [], resourceTemplates: [], prompts: [] },
+            { connected, status: 'closed', reason: 'closed' },
+          )
+        },
+      }
+    },
+  }
+  const ctx = mockContext()
+  const manager = new McpManager(ctx, config({}, {
+    toolsEnabled: false,
+    resourcesEnabled: true,
+    allowedResources: ['notes://welcome'],
+  }), { adapterFactory: fakeFactory([]), contentAdapterFactory })
+  await manager.start()
+  await manager.queue
+  assert.ok(ctx.tools.get(MCP_RESOURCE_TOOL_NAME))
+
+  const failed = await manager.testConnection('fixture')
+  assert.equal(failed.ok, false)
+  assert.equal(failed.error.code, 'MCP_CONTENT_CLOSE_FAILED')
+  let snapshot = manager.snapshot()
+  assert.equal(snapshot.summary.cleanupFailures, 1)
+  assert.equal(snapshot.cleanupErrors[0].plane, 'content')
+  assert.equal(snapshot.cleanupErrors[0].phase, 'probe')
+  assert.equal(snapshot.summary.exposedContentTools, 0)
+  assert.equal(ctx.tools.get(MCP_RESOURCE_TOOL_NAME), undefined)
+
+  const repeated = await manager.testConnection('fixture')
+  assert.equal(repeated.ok, false)
+  assert.equal(state.created, 2, 'unresolved cleanup must block another Content probe')
+
+  const stillBlocked = await manager.reconnect('fixture')
+  assert.equal(stillBlocked.summary.cleanupFailures, 1)
+  assert.equal(stillBlocked.summary.exposedContentTools, 0)
+  assert.equal(state.cleanupAttempts, 2)
+
+  state.allowCleanup = true
+  const recovered = await manager.reconnect('fixture')
+  assert.equal(recovered.summary.cleanupFailures, 0)
+  assert.equal(recovered.servers[0].contentStatus, 'connected')
+  assert.equal(recovered.summary.exposedContentTools, 1)
+  assert.equal(state.cleanupAttempts, 3)
+  assert.equal(state.created, 3)
+  await manager.stop()
+})
+
+test('Content transport callbacks are serialized and stale generations cannot overwrite replacement state', async () => {
+  const hooksByCommand = new Map()
+  const catalogFor = command => Object.freeze({
+    resources: Object.freeze([Object.freeze({ uri: `notes://${command}`, name: command })]),
+    resourceTemplates: Object.freeze([]),
+    prompts: Object.freeze([]),
+  })
+  const contentAdapterFactory = {
+    create(server, hooks) {
+      hooksByCommand.set(server.command, hooks)
+      const catalog = catalogFor(server.command)
+      return {
+        async start() { hooks.onChanged?.(catalog, { connected: true, status: 'connected' }) },
+        catalog() { return catalog },
+        async close() {},
+      }
+    },
+  }
+  const makeConfig = command => config({}, {
+    command,
+    toolsEnabled: false,
+    resourcesEnabled: true,
+    allowedResources: ['*'],
+  })
+  const ctx = mockContext()
+  const manager = new McpManager(ctx, makeConfig('old'), {
+    adapterFactory: fakeFactory([]),
+    contentAdapterFactory,
+  })
+  await manager.start()
+  await manager.queue
+  const currentHooks = hooksByCommand.get('old')
+  currentHooks.onChanged?.(catalogFor('old'), { connected: false, status: 'disconnected' })
+  assert.equal(manager.snapshot().servers[0].contentStatus, 'connected', 'callback must not mutate outside the manager queue')
+  await manager.queue
+  assert.equal(manager.snapshot().servers[0].contentStatus, 'disconnected')
+
+  await manager.reconfigure(makeConfig('new'))
+  await manager.queue
+  currentHooks.onChanged?.(catalogFor('old'), { connected: true, status: 'connected' })
+  await manager.queue
+  const snapshot = manager.snapshot()
+  assert.equal(snapshot.servers[0].contentStatus, 'connected')
+  assert.deepEqual(snapshot.servers[0].resources.map(resource => resource.uri), ['notes://new'])
   await manager.stop()
 })
 

@@ -17,7 +17,7 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 Restart `dsh web` once after installation or upgrade. The installer migrates the old unscoped `deepseekeyes` profile dependency after the scoped package is added successfully.
 
-DeepSeekEyes 0.6.x is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries and exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
+DeepSeekEyes 0.7.x is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair plus its protocol SDK only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries, Tools renderer and all three Content SDK exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
 
 ## An MCP server connects but exposes no tools
 
@@ -30,6 +30,15 @@ This is the expected safe state for a new server: its `allowedTools` list is emp
 5. Select the `DeepSeekEyes` virtual Provider in the conversation. Managed MCP tools deliberately reject calls from a native Provider with `MCP_REQUIRES_DEEPSEEKEYES`.
 
 Disabling MCP, disabling the server or clearing its allowlist unregisters the managed definitions and MCP prompt section. When MCP is enabled for DeepSeekEyes, prompt assembly still strips those schemas and guidance from every non-DeepSeekEyes Provider, and execution rejects wrong-Provider or agentless calls. Ordinary text, image, Browser and Desktop routes are unaffected.
+
+## Resources or Prompts connect but do not appear
+
+1. Enable **Resources** and/or **Prompts** on the Server and save. These switches are off by default and use an independent Content connection.
+2. Click **Refresh content**. Confirm `contentStatus=connected` and inspect the discovered Resources, templates and Prompts.
+3. Select exact entries in the discovery list and save again. `allowedResources` and `allowedPrompts` start empty; discovery alone exposes no schema.
+4. Use the `DeepSeekEyes` virtual Provider. The generic schemas are `mcp__deepseekeyes__resource` and `mcp__deepseekeyes__prompt`, and only the corresponding schema appears when at least one item is allowed.
+
+`MCP_RESOURCES_UNSUPPORTED` or `MCP_PROMPTS_UNSUPPORTED` means the Server did not advertise that capability. `MCP_CONTENT_CATALOG_*`, `MCP_CONTENT_PAGE_LIMIT` or `MCP_CONTENT_CURSOR_LOOP` means discovery was rejected by the fixed 256-entry / 256-page / 1,000,000-character / 4,000,000-byte Content budget. Narrow the Server catalog or disable that capability; increasing model Token settings does not change these protocol limits.
 
 ## `MCP_CATALOG_*` rejection or a server suddenly shows zero tools
 
@@ -90,9 +99,9 @@ The official rc.6 client and MCP SDK already parsed/decoded the transport respon
 
 An MCP tool invoked inside `run_code` needs the current Harness Host's `deferContext()` channel. DeepSeekEyes uses it to append one trusted plugin `mcp-context` marker for every successful or failed nested call, so the following model request remains inside MCP context/call guards and `upstreamMcp` usage accounting. Image results carry Harness attachment references through this message and never embed base64; the visual bridge reads the original attachment and installs targeted reread state. Native MCP execution already returns its result directly and intentionally does not append a duplicate context.
 
-This error is fail-closed and occurs before contacting the MCP server. Upgrade the Harness Host/runtime pair and restart the selected profile; retry after doctor confirms the pinned 0.6 dependencies.
+This error is fail-closed and occurs before contacting the MCP server. Upgrade the Harness Host/runtime pair and restart the selected profile; retry after doctor confirms the pinned 0.7 dependencies.
 
-Do not use `automationMaxCallsPerTurn` as a quota for calls made inside one `run_code`. In 0.6 it counts only final-model continuation requests; one Code Mode execution can still issue multiple MCP sub-calls subject to ToolRuntime concurrency and each tool's timeout. DeepSeekEyes does not currently add a cumulative per-run call cap or a separate approval prompt per sub-call. Until the planned P1 `mcpMaxExternalCallsPerRun` control lands (recommended default `64`, `0` unlimited), keep allowlists minimal and enforce rate/operation limits at the MCP server or credential scope.
+Do not use `automationMaxCallsPerTurn` as a quota for calls made inside one `run_code`; it counts final-model continuation requests. `mcpMaxExternalCallsPerRun` separately defaults to 64 and rejects the next Tool/Resource/Prompt sub-call before transport dispatch; `0` is explicit unlimited. ToolRuntime concurrency, each operation's timeout and server-side rate/operation limits remain separate controls.
 
 ## An MCP image result is rejected
 
@@ -110,7 +119,7 @@ Upgrade to 0.6.1 or later. Older builds split only when compressed PNG bytes cro
 
 The Schema estimate follows the request actually sent. Native mode counts the native function definition, Code Mode counts the generated `tools:sdk` declaration, and `both` mode counts both surfaces; the larger `both` value is expected and is not an accidental duplicate of one surface.
 
-During stop or live reconfiguration, all MCP tools can temporarily disappear even when only one transport is slow to close. This is intentional fail-closed behavior: exposure is revoked before asynchronous cleanup and restored only from the validated replacement generation. Wait for the operation to finish, then refresh status; a cleanup failure remains visible instead of re-enabling stale tools.
+During stop or live reconfiguration, all MCP tools can temporarily disappear even when only one transport is slow to close. This is intentional fail-closed behavior: exposure is revoked before asynchronous cleanup and restored only from the validated replacement generation. Tools and Content cleanup failures appear with their plane in health state; another probe/reconnect is blocked until the retained close handle succeeds. Wait for the operation to finish, retry reconnect, then refresh status.
 
 The Token panel separates final-model MCP usage, external call count, Schema input estimate, result input estimate, MCP compactions and MCP limit stops. Schema/result values are attribution subsets of Provider input and are not added twice to exact usage. Non-DeepSeekEyes Provider requests receive neither the MCP schemas nor MCP guidance, so they do not pay this plugin's MCP Schema estimate. Clearing or refreshing statistics uses only the loopback RPC and does not call a model.
 

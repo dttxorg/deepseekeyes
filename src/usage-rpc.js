@@ -7,6 +7,7 @@ export const MCP_STATUS_ENDPOINT = 'mcp.status'
 export const MCP_TEST_ENDPOINT = 'mcp.test'
 export const MCP_RECONNECT_ENDPOINT = 'mcp.reconnect'
 export const MCP_TOOLS_ENDPOINT = 'mcp.tools'
+export const MCP_CONTENT_ENDPOINT = 'mcp.content'
 
 function ok(value) {
   return { ok: true, value }
@@ -38,13 +39,14 @@ export function createUsageRpcHandler(tracker, mcp) {
         return error(safeErrorCode(cause, 'mcp-health-failed'), safeError(cause))
       }
     }
-    if ([MCP_TEST_ENDPOINT, MCP_RECONNECT_ENDPOINT, MCP_TOOLS_ENDPOINT].includes(endpoint)) {
+    if ([MCP_TEST_ENDPOINT, MCP_RECONNECT_ENDPOINT, MCP_TOOLS_ENDPOINT, MCP_CONTENT_ENDPOINT].includes(endpoint)) {
       if (mcp === undefined) return error('mcp-unavailable', 'DeepSeekEyes MCP runtime is not installed')
       const id = serverId(payload)
       if (id === undefined) return error('bad-request', `${endpoint} requires serverId`)
       try {
         if (endpoint === MCP_TEST_ENDPOINT) return ok(await mcp.testConnection(id))
         if (endpoint === MCP_RECONNECT_ENDPOINT) return ok(await mcp.reconnect(id))
+        if (endpoint === MCP_CONTENT_ENDPOINT) return ok(await mcp.listContent(id, { refresh: payload?.refresh === true }))
         return ok(await mcp.listTools(id, { refresh: payload?.refresh === true }))
       } catch (cause) {
         return error(safeErrorCode(cause, 'mcp-operation-failed'), safeError(cause))

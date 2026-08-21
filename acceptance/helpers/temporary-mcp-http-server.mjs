@@ -3,11 +3,17 @@ import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {
   CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const MAX_REQUEST_BYTES = 1024 * 1024
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 function writeJsonError(response, status, message) {
   if (response.headersSent) return
@@ -40,7 +46,7 @@ function requestMethods(body) {
 function createProtocol(state) {
   const protocol = new McpServer(
     { name: 'deepseekeyes-http-acceptance', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {}, prompts: {} } },
   )
 
   protocol.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -65,6 +71,25 @@ function createProtocol(state) {
     state.toolCalls.push(text)
     return { content: [{ type: 'text', text: `http-echo:${text}` }] }
   })
+
+  protocol.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      { uri: 'http://resource/note', name: 'HTTP note', mimeType: 'text/plain' },
+      { uri: 'http://resource/pixel', name: 'HTTP pixel', mimeType: 'image/png' },
+    ],
+  }))
+  protocol.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [{ uriTemplate: 'http://resource/{id}', name: 'HTTP resource template' }],
+  }))
+  protocol.setRequestHandler(ReadResourceRequestSchema, async request => request.params.uri.endsWith('/pixel')
+    ? { contents: [{ uri: request.params.uri, mimeType: 'image/png', blob: ONE_PIXEL_PNG }] }
+    : { contents: [{ uri: request.params.uri, mimeType: 'text/plain', text: `http-resource:${request.params.uri}` }] })
+  protocol.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: [{ name: 'http-summary', arguments: [{ name: 'style', required: true }] }],
+  }))
+  protocol.setRequestHandler(GetPromptRequestSchema, async request => ({
+    messages: [{ role: 'user', content: { type: 'text', text: `http-prompt:${request.params.arguments.style}` } }],
+  }))
 
   return protocol
 }

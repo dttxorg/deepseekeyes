@@ -70,6 +70,10 @@ test('local RPC exposes bounded MCP status, connection test, refresh, and reconn
       calls.push(['tools', serverId, options])
       return [{ name: 'read' }]
     },
+    async listContent(serverId, options) {
+      calls.push(['content', serverId, options])
+      return { resources: [{ uri: 'notes://welcome' }], prompts: [] }
+    },
   }
   const handle = createUsageRpcHandler(new UsageTracker({ file: undefined }), mcp)
   assert.equal((await handle('mcp.status', {})).value.summary.connectedServers, 1)
@@ -79,11 +83,16 @@ test('local RPC exposes bounded MCP status, connection test, refresh, and reconn
     (await handle('mcp.tools', { serverId: 'fixture', refresh: true })).value,
     [{ name: 'read' }],
   )
+  assert.deepEqual(
+    (await handle('mcp.content', { serverId: 'fixture', refresh: true })).value,
+    { resources: [{ uri: 'notes://welcome' }], prompts: [] },
+  )
   assert.deepEqual(calls, [
     ['health'],
     ['test', 'fixture'],
     ['reconnect', 'fixture'],
     ['tools', 'fixture', { refresh: true }],
+    ['content', 'fixture', { refresh: true }],
   ])
   assert.equal((await handle('mcp.test', {})).error.code, 'bad-request')
 })

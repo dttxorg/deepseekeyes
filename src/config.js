@@ -61,8 +61,15 @@ const MCP_SERVER_FIELDS = new Set([
   'url',
   'env',
   'headers',
+  'toolsEnabled',
+  'resourcesEnabled',
+  'promptsEnabled',
   'allowedTools',
   'denyTools',
+  'allowedResources',
+  'denyResources',
+  'allowedPrompts',
+  'denyPrompts',
   'timeoutMs',
 ])
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -262,14 +269,27 @@ function resolveMcpServer(value, index) {
   const name = requiredString(source.name, `${field}.name`)
   const transport = choiceValue(source.transport, `${field}.transport`, undefined, MCP_TRANSPORTS)
   const enabled = booleanValue(source.enabled, `${field}.enabled`, true)
+  const toolsEnabled = booleanValue(source.toolsEnabled, `${field}.toolsEnabled`, true)
+  const resourcesEnabled = booleanValue(source.resourcesEnabled, `${field}.resourcesEnabled`, false)
+  const promptsEnabled = booleanValue(source.promptsEnabled, `${field}.promptsEnabled`, false)
   const allowedTools = stringList(source.allowedTools, `${field}.allowedTools`, true)
   const denyTools = stringList(source.denyTools, `${field}.denyTools`, true)
-  const denied = new Set(denyTools)
-  for (const tool of allowedTools) {
-    if (denied.has(tool)) {
-      throw new TypeError(
-        `deepseekeyes: ${field}.${tool} cannot appear in both allowedTools and denyTools`,
-      )
+  const allowedResources = stringList(source.allowedResources, `${field}.allowedResources`, true)
+  const denyResources = stringList(source.denyResources, `${field}.denyResources`, true)
+  const allowedPrompts = stringList(source.allowedPrompts, `${field}.allowedPrompts`, true)
+  const denyPrompts = stringList(source.denyPrompts, `${field}.denyPrompts`, true)
+  for (const [allowField, denyField, allowed, deniedValues] of [
+    ['allowedTools', 'denyTools', allowedTools, denyTools],
+    ['allowedResources', 'denyResources', allowedResources, denyResources],
+    ['allowedPrompts', 'denyPrompts', allowedPrompts, denyPrompts],
+  ]) {
+    const denied = new Set(deniedValues)
+    for (const value of allowed) {
+      if (denied.has(value)) {
+        throw new TypeError(
+          `deepseekeyes: ${field}.${value} cannot appear in both ${allowField} and ${denyField}`,
+        )
+      }
     }
   }
 
@@ -280,9 +300,16 @@ function resolveMcpServer(value, index) {
     id,
     name,
     enabled,
+    toolsEnabled,
+    resourcesEnabled,
+    promptsEnabled,
     transport,
     allowedTools,
     denyTools,
+    allowedResources,
+    denyResources,
+    allowedPrompts,
+    denyPrompts,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   }
 

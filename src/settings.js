@@ -102,6 +102,9 @@ export const McpServerConfig = z.object({
   id: z.string().required(),
   name: z.string().required(),
   enabled: z.boolean().default(true),
+  toolsEnabled: z.boolean().default(true),
+  resourcesEnabled: z.boolean().default(false),
+  promptsEnabled: z.boolean().default(false),
   transport: z.union([
     z.const('stdio'),
     z.const('streamable-http'),
@@ -114,6 +117,10 @@ export const McpServerConfig = z.object({
   headers: z.dict(McpCredentialEnvRefConfig).default({}),
   allowedTools: z.array(z.string()).default([]),
   denyTools: z.array(z.string()).default([]),
+  allowedResources: z.array(z.string()).default([]),
+  denyResources: z.array(z.string()).default([]),
+  allowedPrompts: z.array(z.string()).default([]),
+  denyPrompts: z.array(z.string()).default([]),
   timeoutMs: z.number().step(1).min(100).max(3_600_000),
 })
 

@@ -15,6 +15,31 @@ function globExpression(pattern) {
   return new RegExp(`^${pattern.replace(GLOB_SPECIAL, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`)
 }
 
+function contentNames(server, identity) {
+  return new Set([
+    String(identity),
+    `${server.id}/${identity}`,
+    `${server.name}/${identity}`,
+  ])
+}
+
+export function contentMatchesSelector(server, identity, selector) {
+  const expression = globExpression(String(selector))
+  return [...contentNames(server, identity)].some(name => expression.test(name))
+}
+
+/** Resources and Prompts use the same explicit allowlist and deny-wins model as Tools. */
+export function contentPolicyDecision(server, kind, identity) {
+  const allowField = kind === 'resource' ? 'allowedResources' : 'allowedPrompts'
+  const denyField = kind === 'resource' ? 'denyResources' : 'denyPrompts'
+  const deniedBy = server[denyField].find(selector => contentMatchesSelector(server, identity, selector))
+  if (deniedBy !== undefined) return Object.freeze({ allowed: false, reason: 'denylist', selector: deniedBy })
+  if (server[allowField].length === 0) return Object.freeze({ allowed: false, reason: 'not-allowlisted' })
+  const allowedBy = server[allowField].find(selector => contentMatchesSelector(server, identity, selector))
+  if (allowedBy === undefined) return Object.freeze({ allowed: false, reason: 'not-allowlisted' })
+  return Object.freeze({ allowed: true, reason: 'allowlist', selector: allowedBy })
+}
+
 function toolNames(server, tool) {
   const rawName = String(tool.rawName ?? tool.name ?? tool.publicName ?? '')
   const publicName = String(tool.publicName ?? tool.name ?? rawName)

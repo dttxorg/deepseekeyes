@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -14,6 +14,7 @@ import {
   HASH_UNAVAILABLE,
   hashValue,
   loadHostDshMcpClient,
+  loadHostMcpSdk,
   loadHostDshTools,
   MCP_RESULT_OUTPUT,
   mcpArgsContainInlineCredentials,
@@ -88,6 +89,22 @@ test('MCP runtime fails closed when the DSH Host path service is unavailable', a
     loadHostDshTools({ loader: { import: () => import('@deepseek-ai/dsh-tools') } }),
     error => error?.code === 'MCP_HOST_UNAVAILABLE',
   )
+})
+
+test('MCP Content plane resolves all protocol SDK exports from the active Host client dependency', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'deepseekeyes-host-sdk-'))
+  try {
+    const modules = join(home, 'profiles', 'node_modules', '@deepseek-ai')
+    await mkdir(modules, { recursive: true })
+    const hostClient = new URL('../node_modules/@deepseek-ai/dsh-mcp-client', import.meta.url)
+    await symlink(hostClient, join(modules, 'dsh-mcp-client'), 'dir')
+    const sdk = await loadHostMcpSdk({ dshHomePath: (...segments) => join(home, ...segments) })
+    assert.equal(typeof sdk.Client, 'function')
+    assert.equal(typeof sdk.StdioClientTransport, 'function')
+    assert.equal(typeof sdk.StreamableHTTPClientTransport, 'function')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 function server(overrides = {}) {

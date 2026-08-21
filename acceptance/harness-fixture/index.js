@@ -118,12 +118,31 @@ export function apply(ctx) {
       const hasLookPrompt = options.system?.includes('DeepSeekEyes preserved images') === true
       const hasComputerTool = options.tools?.some(tool => tool.name === 'computer') === true
       const hasMcpEchoTool = options.tools?.some(tool => tool.name === 'mcp__acceptance__echo') === true
+      const hasMcpResourceTool = options.tools?.some(tool => tool.name === 'mcp__deepseekeyes__resource') === true
+      const hasMcpPromptTool = options.tools?.some(tool => tool.name === 'mcp__deepseekeyes__prompt') === true
       if (corpus.includes('MCP_STDIO_ACCEPTANCE')) {
         if (!hasMcpEchoTool) return output('MCP_STDIO_ACCEPTANCE_TOOL_MISSING')
         if (corpus.includes('[DeepSeekEyes MCP result]') && corpus.includes('echo:verified')) {
           return output('MCP_STDIO_ACCEPTANCE_OK: official stdio result reached the final model.')
         }
         return toolCall('mcp__acceptance__echo', { text: 'verified' })
+      }
+      if (corpus.includes('MCP_CONTENT_ACCEPTANCE')) {
+        if (!hasMcpResourceTool || !hasMcpPromptTool) return output('MCP_CONTENT_ACCEPTANCE_TOOL_MISSING')
+        if (!corpus.includes('stdio-resource:notes://welcome')) {
+          return toolCall('mcp__deepseekeyes__resource', {
+            serverId: 'content_acceptance',
+            uri: 'notes://welcome',
+          })
+        }
+        if (!corpus.includes('detail:full')) {
+          return toolCall('mcp__deepseekeyes__prompt', {
+            serverId: 'content_acceptance',
+            name: 'describe-pixel',
+            arguments: { detail: 'full' },
+          })
+        }
+        return output('MCP_CONTENT_ACCEPTANCE_OK: Resources and Prompts reached the final model.')
       }
       if (corpus.includes('DESKTOP_COMPUTER_USE_ACCEPTANCE')) {
         if (!hasComputerTool) return output('DESKTOP_COMPUTER_TOOL_MISSING')

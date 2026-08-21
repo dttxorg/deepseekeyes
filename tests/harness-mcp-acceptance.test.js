@@ -2,12 +2,59 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { createTemporaryMcpServer } from '../acceptance/helpers/temporary-mcp-server.mjs'
+import { createTemporaryMcpContentServer } from '../acceptance/helpers/temporary-mcp-content-server.mjs'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
   DshMcpClientAdapter,
+  McpContentAdapter,
+  mcpPromptResult,
+  mcpResourceResult,
   normalizeMcpConfig,
 } from '../src/mcp/index.js'
 
 const loadSourceMcpClient = () => import('@deepseek-ai/dsh-mcp-client')
+const sourceMcpSdk = { Client, StdioClientTransport, StreamableHTTPClientTransport }
+
+test('DeepSeekEyes Content plane discovers and reads real stdio Resources and Prompts', async () => {
+  const fixture = await createTemporaryMcpContentServer()
+  const server = normalizeMcpConfig({
+    mcpServers: [{
+      id: 'content_stdio',
+      name: 'Content stdio',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixture.script],
+      env: {},
+      toolsEnabled: false,
+      resourcesEnabled: true,
+      promptsEnabled: true,
+      allowedResources: ['notes://welcome', 'image://pixel', 'notes://{slug}'],
+      allowedPrompts: ['describe-pixel'],
+    }],
+  }).mcpServers[0]
+  const adapter = new McpContentAdapter({}, server, { loadSdk: async () => sourceMcpSdk })
+  try {
+    await adapter.start()
+    const catalog = adapter.catalog()
+    assert.equal(catalog.resources.length, 2)
+    assert.equal(catalog.resourceTemplates.length, 1)
+    assert.equal(catalog.prompts.length, 1)
+    assert.deepEqual(mcpResourceResult(await adapter.readResource('notes://welcome')), {
+      content: [{ type: 'text', text: '[MCP resource notes://welcome; text/plain]\nstdio-resource:notes://welcome' }],
+    })
+    const image = mcpResourceResult(await adapter.readResource('image://pixel'))
+    assert.equal(image.content[0].type, 'image')
+    assert.equal(image.content[0].mimeType, 'image/png')
+    const prompt = mcpPromptResult(await adapter.getPrompt('describe-pixel', { detail: 'full' }))
+    assert.equal(prompt.content.some(block => block.type === 'image'), true)
+    assert.equal(prompt.content.some(block => block.type === 'text' && block.text.includes('detail:full')), true)
+  } finally {
+    await adapter.close()
+    await fixture.cleanup()
+  }
+})
 
 test('Harness MCP acceptance fixture uses the official client over a real temporary stdio SDK server', async () => {
   const fixture = await createTemporaryMcpServer()

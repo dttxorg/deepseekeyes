@@ -28,6 +28,7 @@ const required = [
   'src/vision-attempts.js',
   'src/settings.js',
   'src/mcp/index.js',
+  'src/mcp/content-adapter.js',
   'src/mcp/host-runtime.js',
   'src/mcp/manager.js',
   'src/mcp/official-adapter.js',
@@ -132,6 +133,17 @@ if (typeof tools.renderToolsSdk !== 'function' || typeof tools.renderToolsSdkPy 
 const mcpClient = await import('@deepseek-ai/dsh-mcp-client')
 if (typeof mcpClient.apply !== 'function') {
   throw new Error('installed dsh-mcp-client and its runtime dependency closure must be importable')
+}
+const clientRequire = (await import('node:module')).createRequire(import.meta.url)
+const [mcpSdkClient, mcpSdkStdio, mcpSdkHttp] = await Promise.all([
+  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/index.js')),
+  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js')),
+  import(clientRequire.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js')),
+])
+if (typeof mcpSdkClient.Client !== 'function'
+  || typeof mcpSdkStdio.StdioClientTransport !== 'function'
+  || typeof mcpSdkHttp.StreamableHTTPClientTransport !== 'function') {
+  throw new Error('installed dsh-mcp-client protocol SDK must expose Resources/Prompts transports')
 }
 
 console.log('package verification: OK')

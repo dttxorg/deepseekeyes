@@ -10,6 +10,11 @@ import {
   safeObjectKeys,
 } from './canonical.js'
 import { mcpAuditSummary } from './audit.js'
+import {
+  createMcpContentAdapterFactory,
+  mcpPromptResult,
+  mcpResourceResult,
+} from './content-adapter.js'
 import { mcpConnectionFingerprint, normalizeMcpConfig } from './config.js'
 import { loadHostDshTools } from './host-runtime.js'
 import {
@@ -17,7 +22,12 @@ import {
   McpCatalogBudget,
   normalizeMcpCatalogLimits,
 } from './official-adapter.js'
-import { classifyToolRisk, publicMcpToolName, toolPolicyDecision } from './policy.js'
+import {
+  classifyToolRisk,
+  contentPolicyDecision,
+  publicMcpToolName,
+  toolPolicyDecision,
+} from './policy.js'
 import {
   admitMcpResult,
   boundMcpResult,
@@ -29,9 +39,11 @@ import { estimateToolSchemaTokens, toolDefinitionTokenSurface } from './schema-t
 
 export const MCP_SYSTEM_PROMPT = `## DeepSeekEyes MCP applications
 
-Use an enabled MCP tool when an application exposes a structured operation; prefer it over pixel automation. Inspect the bounded result and verify that the requested state change occurred. Treat tools marked write, destructive, or unknown-write cautiously and do not infer success from a call alone. When no suitable MCP tool is exposed, use DeepSeekEyes Browser Computer Use for websites or Desktop Computer Use for native UI.`
+Use an enabled MCP tool when an application exposes a structured operation; prefer it over pixel automation. Read allowlisted application data with mcp__deepseekeyes__resource and obtain an allowlisted reusable template with mcp__deepseekeyes__prompt when those tools are present. Inspect every bounded result and verify that the requested state change occurred. Treat tools marked write, destructive, or unknown-write cautiously and do not infer success from a call alone. When no suitable MCP capability is exposed, use DeepSeekEyes Browser Computer Use for websites or Desktop Computer Use for native UI.`
 
 export const MCP_RESULT_CONTEXT_PREFIX = MCP_CONTEXT_PREFIX
+export const MCP_RESOURCE_TOOL_NAME = 'mcp__deepseekeyes__resource'
+export const MCP_PROMPT_TOOL_NAME = 'mcp__deepseekeyes__prompt'
 
 export const DEFAULT_MCP_HEALTH_PROBE_INTERVAL_MS = 30_000
 const MCP_ERROR_INPUT_MAX_CHARS = 2_000
@@ -183,11 +195,37 @@ async function renderFilteredToolsSdk(ctx, scope, hiddenNames, loadDshTools) {
   )
 }
 
+function uriTemplateExpression(template) {
+  const escaped = String(template).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escaped.replace(/\\\{[^}]+\\\}/g, '.*')}$`)
+}
+
+function resourceCatalogEntry(runtime, uri) {
+  const direct = runtime.contentCatalog.resources.find(entry => entry.uri === uri)
+  if (direct !== undefined) return direct
+  return runtime.contentCatalog.resourceTemplates.find(entry => {
+    try {
+      return uriTemplateExpression(entry.uriTemplate).test(uri)
+    } catch {
+      return false
+    }
+  })
+}
+
+function contentAuditTool(publicName, rawName) {
+  return Object.freeze({
+    rawName,
+    publicName,
+    annotations: Object.freeze({ readOnlyHint: true }),
+  })
+}
+
 export class McpManager {
   constructor(ctx, config = {}, options = {}) {
     this.ctx = ctx
     this.config = normalizeMcpConfig(config, options)
     this.adapterFactory = options.adapterFactory ?? createDshMcpClientAdapterFactory(ctx, options)
+    this.contentAdapterFactory = options.contentAdapterFactory ?? createMcpContentAdapterFactory(ctx, options)
     this.loadDshTools = options.loadDshTools ?? loadHostDshTools
     this.logger = options.logger ?? ctx.logger ?? console
     this.now = options.now ?? Date.now
@@ -201,7 +239,9 @@ export class McpManager {
     }
     this.runtimes = new Map()
     this.cleanupFailures = new Map()
+    this.contentCleanupFailures = new Map()
     this.exposed = new Map()
+    this.contentExposed = new Map()
     this.audit = []
     this.started = false
     this.exposureSuspended = false
@@ -226,7 +266,7 @@ export class McpManager {
       this.started = true
       if (this.config.mcpEnabled) {
         await Promise.all(this.config.mcpServers.filter(server => server.enabled).map(async server => {
-          if (this.cleanupFailures.has(server.id) && !await this.retryCleanup(server.id)) return
+          if (!await this.retryServerCleanup(server.id)) return
           await this.connect(server)
         }))
       }
@@ -239,12 +279,18 @@ export class McpManager {
     return adapterCreate(this.adapterFactory, server, hooks)
   }
 
+  async createContentAdapter(server, hooks) {
+    return adapterCreate(this.contentAdapterFactory, server, hooks)
+  }
+
   runtimeFailure(runtime, error, fallbackCode = 'MCP_CONNECT_FAILED') {
     runtime.status = 'error'
     runtime.healthy = false
     runtime.tools = new Map()
     runtime.lastCheckedAt = nowIso(this.now)
     runtime.lastProbeAtMs = nowMilliseconds(this.now)
+    runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+    runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
     runtime.lastError = {
       code: boundedSafeErrorCode(error, fallbackCode),
       message: boundedSafeError(error),
@@ -270,6 +316,23 @@ export class McpManager {
     return lastError
   }
 
+  recordContentCleanupFailure(server, adapter, phase, error) {
+    const lastError = {
+      code: boundedSafeErrorCode(error, 'MCP_CONTENT_CLOSE_FAILED'),
+      message: boundedSafeError(error),
+    }
+    this.contentCleanupFailures.set(server.id, {
+      server,
+      adapter,
+      phase,
+      at: nowIso(this.now),
+      lastError,
+    })
+    this.logger.warn?.(`deepseekeyes: MCP Content server ${server.id} ${phase} cleanup failed: ${lastError.message}`)
+    this.touch()
+    return lastError
+  }
+
   async retryCleanup(serverId) {
     const failure = this.cleanupFailures.get(serverId)
     if (failure === undefined) return true
@@ -284,103 +347,180 @@ export class McpManager {
     }
   }
 
+  async retryContentCleanup(serverId) {
+    const failure = this.contentCleanupFailures.get(serverId)
+    if (failure === undefined) return true
+    try {
+      await failure.adapter?.close?.()
+      if (this.contentCleanupFailures.get(serverId) === failure) this.contentCleanupFailures.delete(serverId)
+      this.touch()
+      return true
+    } catch (error) {
+      this.recordContentCleanupFailure(failure.server, failure.adapter, 'retry', error)
+      return false
+    }
+  }
+
+  async retryServerCleanup(serverId) {
+    const toolsClean = await this.retryCleanup(serverId)
+    const contentClean = await this.retryContentCleanup(serverId)
+    return toolsClean && contentClean
+  }
+
   async connect(server) {
     const runtime = {
       server,
-      status: 'connecting',
+      status: server.toolsEnabled ? 'connecting' : 'disabled',
       healthy: false,
       tools: new Map(),
       schemaTokensEstimated: new Map(),
+      contentStatus: server.resourcesEnabled || server.promptsEnabled ? 'connecting' : 'disabled',
+      contentHealthy: false,
+      contentCatalog: Object.freeze({ resources: [], resourceTemplates: [], prompts: [] }),
       startedAt: nowIso(this.now),
       lastCheckedAt: nowIso(this.now),
     }
     this.runtimes.set(server.id, runtime)
     this.touch()
-    try {
-      const adapter = await this.createAdapter(server, {
-        onProbeCleanupFailure: (cleanupAdapter, error) => {
-          this.recordCleanupFailure(server, cleanupAdapter, 'probe', error)
-          const current = this.runtimes.get(server.id)
-          if (current !== runtime) return
-          runtime.status = 'degraded'
-          runtime.healthy = false
-          runtime.lastCheckedAt = nowIso(this.now)
-          runtime.lastProbeAtMs = nowMilliseconds(this.now)
-          runtime.lastError = {
-            code: boundedSafeErrorCode(error, 'MCP_ADAPTER_CLOSE_FAILED'),
-            message: boundedSafeError(error),
-          }
-          this.syncExposure()
-        },
-        onToolsChanged: (tools, connection = {}) => {
-          void this.enqueue(async () => {
+    if (server.toolsEnabled) {
+      try {
+        const adapter = await this.createAdapter(server, {
+          onProbeCleanupFailure: (cleanupAdapter, error) => {
+            this.recordCleanupFailure(server, cleanupAdapter, 'probe', error)
             const current = this.runtimes.get(server.id)
             if (current !== runtime) return
-            try {
-              this.setRuntimeTools(runtime, tools)
-            } catch (error) {
-              const failure = this.runtimeFailure(runtime, error, 'MCP_CATALOG_REJECTED')
-              this.logger.warn?.(`deepseekeyes: MCP server ${server.id} catalog rejected: ${failure.message}`)
-              this.syncExposure()
-              return
-            }
-            const connected = connection.connected === true
-            const explicitFailure = connection.connected === false
-              || connection.status === 'catalog-rejected'
-              || connection.status === 'cleanup-failed'
-              || connection.status === 'disconnected'
-            runtime.status = connected
-              ? 'connected'
-              : explicitFailure && connection.status === 'catalog-rejected' ? 'error'
-                : runtime.status === 'error' && connection.reason === 'closed' ? 'error' : 'degraded'
-            runtime.healthy = connected
+            runtime.status = 'degraded'
+            runtime.healthy = false
             runtime.lastCheckedAt = nowIso(this.now)
-            if (connected) {
-              runtime.lastProbeAtMs = nowMilliseconds(this.now)
-              runtime.lastConnectedAt = runtime.lastCheckedAt
-              runtime.lastError = undefined
-            } else if (connection.reason !== 'closed') {
-              runtime.lastProbeAtMs = undefined
-              runtime.lastError = connection.error === undefined
-                ? {
-                    code: 'MCP_CONNECTION_UNHEALTHY',
-                    message: connection.status === 'unknown'
-                      ? 'The empty MCP tool generation requires a live probe before it is considered healthy.'
-                      : 'The MCP transport is not connected.',
-                  }
-                : {
-                    code: boundedSafeErrorCode(connection.error, 'MCP_CONNECTION_UNHEALTHY'),
-                    message: boundedSafeError(connection.error),
-                  }
+            runtime.lastProbeAtMs = nowMilliseconds(this.now)
+            runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+            runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
+            runtime.lastError = {
+              code: boundedSafeErrorCode(error, 'MCP_ADAPTER_CLOSE_FAILED'),
+              message: boundedSafeError(error),
             }
             this.syncExposure()
-          })
-        },
-      })
-      runtime.adapter = adapter
-      await adapter.start?.()
-      this.setRuntimeTools(runtime, await adapter.listTools())
-      const connection = adapter.connectionState?.()
-      if (connection?.connected === false) {
-        throw new DeepSeekEyesError(
-          `MCP server ${server.id} did not establish a live transport`,
-          'MCP_CONNECT_FAILED',
-        )
+          },
+          onToolsChanged: (tools, connection = {}) => {
+            void this.enqueue(async () => {
+              const current = this.runtimes.get(server.id)
+              if (current !== runtime) return
+              try {
+                this.setRuntimeTools(runtime, tools)
+              } catch (error) {
+                const failure = this.runtimeFailure(runtime, error, 'MCP_CATALOG_REJECTED')
+                this.logger.warn?.(`deepseekeyes: MCP server ${server.id} catalog rejected: ${failure.message}`)
+                this.syncExposure()
+                return
+              }
+              const connected = connection.connected === true
+              const explicitFailure = connection.connected === false
+                || connection.status === 'catalog-rejected'
+                || connection.status === 'cleanup-failed'
+                || connection.status === 'disconnected'
+              runtime.status = connected
+                ? 'connected'
+                : explicitFailure && connection.status === 'catalog-rejected' ? 'error'
+                  : runtime.status === 'error' && connection.reason === 'closed' ? 'error' : 'degraded'
+              runtime.healthy = connected
+              runtime.lastCheckedAt = nowIso(this.now)
+              runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+              if (connected) {
+                runtime.lastProbeAtMs = nowMilliseconds(this.now)
+                runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
+                runtime.lastConnectedAt = runtime.lastCheckedAt
+                runtime.lastError = undefined
+              } else if (connection.reason !== 'closed') {
+                runtime.lastProbeAtMs = undefined
+                runtime.toolsLastProbeAtMs = undefined
+                runtime.lastError = connection.error === undefined
+                  ? {
+                      code: 'MCP_CONNECTION_UNHEALTHY',
+                      message: connection.status === 'unknown'
+                        ? 'The empty MCP tool generation requires a live probe before it is considered healthy.'
+                        : 'The MCP transport is not connected.',
+                    }
+                  : {
+                      code: boundedSafeErrorCode(connection.error, 'MCP_CONNECTION_UNHEALTHY'),
+                      message: boundedSafeError(connection.error),
+                    }
+              }
+              this.syncExposure()
+            })
+          },
+        })
+        runtime.adapter = adapter
+        await adapter.start?.()
+        this.setRuntimeTools(runtime, await adapter.listTools())
+        const connection = adapter.connectionState?.()
+        if (connection?.connected === false) {
+          throw new DeepSeekEyesError(
+            `MCP server ${server.id} did not establish a live transport`,
+            'MCP_CONNECT_FAILED',
+          )
+        }
+        runtime.status = 'connected'
+        runtime.healthy = true
+        runtime.lastConnectedAt = nowIso(this.now)
+        runtime.lastCheckedAt = runtime.lastConnectedAt
+        runtime.lastProbeAtMs = nowMilliseconds(this.now)
+        runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+        runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
+        runtime.lastError = undefined
+      } catch (error) {
+        this.runtimeFailure(runtime, error)
+        this.logger.warn?.(`deepseekeyes: MCP Tools server ${server.id} failed: ${runtime.lastError.message}`)
+        await runtime.adapter?.close?.().catch(closeError => {
+          this.recordCleanupFailure(server, runtime.adapter, 'failed-connect', closeError)
+        })
       }
-      runtime.status = 'connected'
-      runtime.healthy = true
-      runtime.lastConnectedAt = nowIso(this.now)
-      runtime.lastCheckedAt = runtime.lastConnectedAt
-      runtime.lastProbeAtMs = nowMilliseconds(this.now)
-      runtime.lastError = undefined
-    } catch (error) {
-      this.runtimeFailure(runtime, error)
-      this.logger.warn?.(`deepseekeyes: MCP server ${server.id} failed: ${runtime.lastError.message}`)
-      await runtime.adapter?.close?.().catch(closeError => {
-        this.recordCleanupFailure(server, runtime.adapter, 'failed-connect', closeError)
-      })
+    }
+    if (server.resourcesEnabled || server.promptsEnabled) {
+      try {
+        const contentAdapter = await this.createContentAdapter(server, {
+          onChanged: (catalog, state = {}) => {
+            void this.enqueue(async () => {
+              if (this.runtimes.get(server.id) !== runtime) return
+              runtime.contentCatalog = catalog
+              runtime.contentStatus = state.status ?? runtime.contentStatus
+              runtime.contentHealthy = state.connected === true
+              runtime.contentLastError = state.error
+              runtime.contentLastCheckedAt = nowIso(this.now)
+              if (state.connected === true) {
+                runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
+                runtime.contentLastConnectedAt = runtime.contentLastCheckedAt
+              }
+              this.syncExposure()
+            })
+          },
+        })
+        runtime.contentAdapter = contentAdapter
+        await contentAdapter.start()
+        runtime.contentCatalog = contentAdapter.catalog()
+        runtime.contentStatus = 'connected'
+        runtime.contentHealthy = true
+        runtime.contentLastError = undefined
+        runtime.contentLastConnectedAt = nowIso(this.now)
+        runtime.contentLastCheckedAt = runtime.contentLastConnectedAt
+        runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
+      } catch (error) {
+        const lastError = {
+          code: boundedSafeErrorCode(error, 'MCP_CONTENT_CONNECT_FAILED'),
+          message: boundedSafeError(error),
+        }
+        this.logger.warn?.(`deepseekeyes: MCP Content server ${server.id} failed: ${lastError.message}`)
+        await runtime.contentAdapter?.close?.().catch(closeError => {
+          this.recordContentCleanupFailure(server, runtime.contentAdapter, 'failed-connect', closeError)
+        })
+        runtime.contentStatus = 'error'
+        runtime.contentHealthy = false
+        runtime.contentLastError = lastError
+        runtime.contentLastCheckedAt = nowIso(this.now)
+        runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
+      }
     }
     this.touch()
+    this.syncExposure()
     return runtime
   }
 
@@ -433,7 +573,7 @@ export class McpManager {
     const seen = new Set()
     for (const server of this.config.mcpServers) {
       const runtime = this.runtimes.get(server.id)
-      if (!this.config.mcpEnabled || !server.enabled || runtime?.status !== 'connected') continue
+      if (!this.config.mcpEnabled || !server.enabled || !server.toolsEnabled || runtime?.status !== 'connected') continue
       for (const tool of [...runtime.tools.values()].sort((left, right) => left.publicName.localeCompare(right.publicName))) {
         const candidate = this.createManagedCandidate(server, runtime, tool)
         runtime.schemaTokensEstimated.set(tool.publicName, candidate.schemaTokensEstimated)
@@ -492,8 +632,134 @@ export class McpManager {
       }
     }
     this.exposed = next
+    this.syncContentExposure()
     this.syncPrompt()
     this.touch()
+  }
+
+  contentAvailability() {
+    const resources = []
+    const prompts = []
+    for (const server of this.config.mcpServers) {
+      const runtime = this.runtimes.get(server.id)
+      if (!this.config.mcpEnabled || !server.enabled || runtime?.contentStatus !== 'connected') continue
+      if (server.resourcesEnabled) {
+        for (const resource of runtime.contentCatalog.resources) {
+          if (contentPolicyDecision(server, 'resource', resource.uri).allowed) {
+            resources.push({ server, runtime, resource, template: false })
+          }
+        }
+        for (const resource of runtime.contentCatalog.resourceTemplates) {
+          if (contentPolicyDecision(server, 'resource', resource.uriTemplate).allowed) {
+            resources.push({ server, runtime, resource, template: true })
+          }
+        }
+      }
+      if (server.promptsEnabled) {
+        for (const prompt of runtime.contentCatalog.prompts) {
+          if (contentPolicyDecision(server, 'prompt', prompt.name).allowed) {
+            prompts.push({ server, runtime, prompt })
+          }
+        }
+      }
+    }
+    return { resources, prompts }
+  }
+
+  createContentDefinition(kind) {
+    if (kind === 'resource') {
+      return {
+        name: MCP_RESOURCE_TOOL_NAME,
+        description: 'Read one explicitly allowlisted MCP Resource by server ID and URI. The result is bounded, audited, and image content is delivered through DeepSeekEyes attachments.',
+        parameters: {
+          type: 'object',
+          properties: {
+            serverId: { type: 'string', description: 'Configured MCP Server ID.' },
+            uri: { type: 'string', description: 'Exact resource URI discovered in the MCP catalog, or a URI matching an allowlisted template.' },
+          },
+          required: ['serverId', 'uri'],
+          additionalProperties: false,
+        },
+        output: genericToolOutput(),
+        timeoutMs: this.config.mcpToolCallTimeoutMs + 15_000,
+        execute: (args, exec) => this.executeContent('resource', args, exec),
+        presentCall: args => ({
+          card: 'generic',
+          title: `MCP Resource · ${String(args?.serverId ?? '')}`,
+          kind: 'read',
+          rawInput: publicCallInput(args),
+        }),
+      }
+    }
+    return {
+      name: MCP_PROMPT_TOOL_NAME,
+      description: 'Get one explicitly allowlisted MCP Prompt by server ID and name. Pass only arguments declared by the discovered prompt catalog.',
+      parameters: {
+        type: 'object',
+        properties: {
+          serverId: { type: 'string', description: 'Configured MCP Server ID.' },
+          name: { type: 'string', description: 'Exact allowlisted prompt name from the MCP catalog.' },
+          arguments: { type: 'object', description: 'Prompt arguments keyed by argument name.', additionalProperties: { type: 'string' } },
+        },
+        required: ['serverId', 'name'],
+        additionalProperties: false,
+      },
+      output: genericToolOutput(),
+      timeoutMs: this.config.mcpToolCallTimeoutMs + 15_000,
+      execute: (args, exec) => this.executeContent('prompt', args, exec),
+      presentCall: args => ({
+        card: 'generic',
+        title: `MCP Prompt · ${String(args?.serverId ?? '')}`,
+        kind: 'read',
+        rawInput: publicCallInput(args),
+      }),
+    }
+  }
+
+  syncContentExposure() {
+    const availability = this.exposureSuspended
+      ? { resources: [], prompts: [] }
+      : this.contentAvailability()
+    const candidates = []
+    if (availability.resources.length > 0) candidates.push(this.createContentDefinition('resource'))
+    if (availability.prompts.length > 0) candidates.push(this.createContentDefinition('prompt'))
+
+    let usedTools = this.exposed.size
+    let usedTokens = [...this.exposed.values()].reduce(
+      (total, candidate) => total + candidate.schemaTokensEstimated,
+      0,
+    )
+    const next = new Map()
+    for (const definition of candidates) {
+      const schemaTokensEstimated = estimateToolSchemaTokens(definition)
+      if (this.config.mcpMaxTools !== 0 && usedTools >= this.config.mcpMaxTools) continue
+      if (this.config.mcpMaxSchemaTokens !== 0
+        && usedTokens + schemaTokensEstimated > this.config.mcpMaxSchemaTokens) continue
+      usedTools += 1
+      usedTokens += schemaTokensEstimated
+      const fingerprint = hashValue({
+        schema: toolDefinitionTokenSurface(definition),
+        timeoutMs: definition.timeoutMs,
+      })
+      next.set(definition.name, { definition, schemaTokensEstimated, fingerprint })
+    }
+    for (const [name, current] of this.contentExposed) {
+      if (next.get(name)?.fingerprint === current.fingerprint) {
+        next.get(name).dispose = current.dispose
+        continue
+      }
+      current.dispose?.()
+    }
+    for (const [name, candidate] of next) {
+      if (candidate.dispose !== undefined) continue
+      try {
+        candidate.dispose = this.ctx.tools.register(candidate.definition)
+      } catch (error) {
+        this.logger.warn?.(`deepseekeyes: MCP content tool ${name} registration failed: ${boundedSafeError(error)}`)
+        next.delete(name)
+      }
+    }
+    this.contentExposed = next
   }
 
   createManagedCandidate(server, runtime, tool) {
@@ -669,8 +935,164 @@ export class McpManager {
     }
   }
 
+  async executeContent(kind, args, exec = {}) {
+    this.assertRoute(exec)
+    const publicName = kind === 'resource' ? MCP_RESOURCE_TOOL_NAME : MCP_PROMPT_TOOL_NAME
+    if (exec.parent !== undefined && typeof exec.deferContext !== 'function') {
+      throw new DeepSeekEyesError(
+        `MCP Code Mode result ${publicName} cannot be delivered without the Host context channel`,
+        'MCP_RESULT_CONTEXT_UNAVAILABLE',
+      )
+    }
+    let contextDeferred = false
+    const deferContext = value => {
+      if (exec.parent === undefined || contextDeferred) return
+      contextDeferred = true
+      exec.deferContext(managedMcpContext(publicName, value))
+    }
+    const rejectBeforeCall = (message, code) => {
+      deferContext({ errorCode: code })
+      throw new DeepSeekEyesError(message, code)
+    }
+    const serverId = typeof args?.serverId === 'string' ? args.serverId : ''
+    const identity = kind === 'resource'
+      ? typeof args?.uri === 'string' ? args.uri : ''
+      : typeof args?.name === 'string' ? args.name : ''
+    if (serverId === '' || identity === '') {
+      rejectBeforeCall(`MCP ${kind} requires a non-empty serverId and ${kind === 'resource' ? 'uri' : 'name'}`, 'MCP_CONTENT_INPUT_INVALID')
+    }
+    const runtime = this.runtimes.get(serverId)
+    const server = runtime?.server
+    if (!this.config.mcpEnabled || !server?.enabled || runtime?.contentStatus !== 'connected') {
+      rejectBeforeCall(`MCP ${kind} ${identity} is not currently available`, 'MCP_CONTENT_UNAVAILABLE')
+    }
+    let catalogEntry
+    if (kind === 'resource') {
+      if (!server.resourcesEnabled || !this.contentExposed.has(publicName)) {
+        rejectBeforeCall(`MCP Resource ${identity} is disabled`, 'MCP_RESOURCES_DISABLED')
+      }
+      catalogEntry = resourceCatalogEntry(runtime, identity)
+      if (catalogEntry === undefined) {
+        rejectBeforeCall(`MCP Resource ${identity} is not present in the discovered catalog`, 'MCP_RESOURCE_UNKNOWN')
+      }
+      const direct = contentPolicyDecision(server, 'resource', identity)
+      const templateIdentity = catalogEntry.uriTemplate
+      const template = templateIdentity === undefined
+        ? undefined
+        : contentPolicyDecision(server, 'resource', templateIdentity)
+      if (direct.reason === 'denylist' || template?.reason === 'denylist'
+        || (!direct.allowed && template?.allowed !== true)) {
+        rejectBeforeCall(`MCP Resource ${identity} is not allowed by current settings`, 'MCP_RESOURCE_NOT_ALLOWED')
+      }
+    } else {
+      if (!server.promptsEnabled || !this.contentExposed.has(publicName)) {
+        rejectBeforeCall(`MCP Prompt ${identity} is disabled`, 'MCP_PROMPTS_DISABLED')
+      }
+      catalogEntry = runtime.contentCatalog.prompts.find(prompt => prompt.name === identity)
+      if (catalogEntry === undefined) {
+        rejectBeforeCall(`MCP Prompt ${identity} is not present in the discovered catalog`, 'MCP_PROMPT_UNKNOWN')
+      }
+      if (!contentPolicyDecision(server, 'prompt', identity).allowed) {
+        rejectBeforeCall(`MCP Prompt ${identity} is not allowed by current settings`, 'MCP_PROMPT_NOT_ALLOWED')
+      }
+      const promptArgs = args?.arguments ?? {}
+      if (promptArgs === null || typeof promptArgs !== 'object' || Array.isArray(promptArgs)) {
+        rejectBeforeCall('MCP Prompt arguments must be an object', 'MCP_CONTENT_INPUT_INVALID')
+      }
+      const declared = new Map(catalogEntry.arguments.map(argument => [argument.name, argument]))
+      for (const [name, value] of Object.entries(promptArgs)) {
+        if (!declared.has(name) || typeof value !== 'string') {
+          rejectBeforeCall(`MCP Prompt argument ${name} is not a declared string argument`, 'MCP_PROMPT_ARGUMENT_INVALID')
+        }
+      }
+      const missing = catalogEntry.arguments.find(argument => argument.required && !Object.hasOwn(promptArgs, argument.name))
+      if (missing !== undefined) {
+        rejectBeforeCall(`MCP Prompt argument ${missing.name} is required`, 'MCP_PROMPT_ARGUMENT_REQUIRED')
+      }
+    }
+
+    const auditTool = contentAuditTool(publicName, kind)
+    const classification = classifyToolRisk(auditTool.annotations)
+    if (this.authorize !== undefined) {
+      let allowed
+      try {
+        allowed = await this.authorize({ server, tool: auditTool, classification, args, exec })
+      } catch (error) {
+        const failure = managedMcpError(error, publicName, 'MCP_TOOL_NOT_APPROVED')
+        deferContext({ errorCode: failure.code })
+        throw failure
+      }
+      if (!allowed) rejectBeforeCall(`MCP ${kind} ${identity} was not approved`, 'MCP_TOOL_NOT_APPROVED')
+    }
+    await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
+
+    const started = Date.now()
+    let bounded
+    let failure
+    let failureCode = kind === 'resource' ? 'MCP_RESOURCE_READ_FAILED' : 'MCP_PROMPT_GET_FAILED'
+    try {
+      const response = kind === 'resource'
+        ? await runtime.contentAdapter.readResource(identity, exec)
+        : await runtime.contentAdapter.getPrompt(identity, args.arguments ?? {}, exec)
+      const raw = kind === 'resource' ? mcpResourceResult(response) : mcpPromptResult(response)
+      failureCode = 'MCP_CONTENT_RESULT_FAILED'
+      const admission = admitMcpResult(raw)
+      const images = await saveMcpResultImages(this.ctx, raw, {
+        serverId,
+        toolName: `${kind}-${identity}`,
+        admission,
+      })
+      bounded = await boundMcpResult(raw, {
+        maxChars: this.config.mcpMaxResultChars,
+        artifactDir: this.config.mcpArtifactDir,
+        serverId,
+        toolName: `${kind}-${identity}`,
+        images,
+        admission,
+      })
+      deferContext({ result: bounded })
+      return exec.parent !== undefined && bounded.images?.length > 0
+        ? { ...bounded, images: [] }
+        : bounded
+    } catch (error) {
+      failure = managedMcpError(error, publicName, failureCode)
+      deferContext({ errorCode: failure.code })
+      throw failure
+    } finally {
+      const sessionId = exec.agent?.id ?? exec.agent?.session?.id
+      if (this.usageTracker?.recordMcpExternalCall !== undefined) {
+        try {
+          await this.usageTracker.recordMcpExternalCall(sessionId, {
+            resultTokens: bounded === undefined ? 0 : estimateMcpResultTokens(bounded),
+          })
+        } catch (error) {
+          this.logger.warn?.(`deepseekeyes: MCP usage accounting failed: ${boundedSafeError(error)}`)
+        }
+      }
+      if (this.config.mcpAudit) {
+        try {
+          const event = mcpAuditSummary({
+            id: randomUUID(),
+            at: nowIso(this.now),
+            server,
+            tool: auditTool,
+            args,
+            result: bounded,
+            error: failure,
+            durationMs: Date.now() - started,
+          })
+          this.audit.push(event)
+          this.audit = this.audit.slice(-this.config.mcpAuditLimit)
+          await this.onAudit?.(event)
+        } catch (error) {
+          this.logger.warn?.(`deepseekeyes: MCP audit failed without affecting the content result: ${boundedSafeError(error)}`)
+        }
+      }
+    }
+  }
+
   syncPrompt() {
-    const active = this.config.mcpEnabled && this.exposed.size > 0
+    const active = this.config.mcpEnabled && (this.exposed.size > 0 || this.contentExposed.size > 0)
     if (active && this.disposePrompt === undefined && this.ctx.systemPrompt !== undefined) {
       this.disposePrompt = this.ctx.systemPrompt.section({
         name: 'deepseekeyes:mcp-applications',
@@ -689,7 +1111,7 @@ export class McpManager {
           async (assembly, context, next) => {
             const resolved = await next()
             if (assembledProvider(resolved, context) === this.config.providerId) return resolved
-            const names = new Set(this.exposed.keys())
+            const names = new Set([...this.exposed.keys(), ...this.contentExposed.keys()])
             const sections = []
             for (const section of resolved.sections) {
               if (section.name === 'deepseekeyes:mcp-applications') continue
@@ -726,17 +1148,28 @@ export class McpManager {
   async closeRuntime(runtime) {
     runtime.status = 'closing'
     runtime.healthy = false
+    runtime.contentStatus = 'closing'
+    runtime.contentHealthy = false
     runtime.tools = new Map()
     if (this.runtimes.get(runtime.server.id) === runtime) this.runtimes.delete(runtime.server.id)
     // Revoke model-facing schemas and guidance before awaiting transport
     // cleanup. A broken close must never keep an application tool callable.
     this.syncExposure()
+    let closed = true
+    try {
+      await runtime.contentAdapter?.close?.()
+      const failure = this.contentCleanupFailures.get(runtime.server.id)
+      if (failure?.adapter === runtime.contentAdapter) this.contentCleanupFailures.delete(runtime.server.id)
+    } catch (error) {
+      closed = false
+      this.recordContentCleanupFailure(runtime.server, runtime.contentAdapter, 'runtime', error)
+    }
     try {
       await runtime.adapter?.close?.()
       const failure = this.cleanupFailures.get(runtime.server.id)
       if (failure?.adapter === runtime.adapter) this.cleanupFailures.delete(runtime.server.id)
       this.touch()
-      return true
+      return closed
     } catch (error) {
       this.recordCleanupFailure(runtime.server, runtime.adapter, 'runtime', error)
       return false
@@ -771,7 +1204,7 @@ export class McpManager {
         if (next.mcpEnabled) {
           for (const server of next.mcpServers) {
             if (!server.enabled || this.runtimes.has(server.id) || blockedReplacement.has(server.id)) continue
-            if (this.cleanupFailures.has(server.id) && !await this.retryCleanup(server.id)) continue
+            if (!await this.retryServerCleanup(server.id)) continue
             await this.connect(server)
           }
         }
@@ -790,102 +1223,265 @@ export class McpManager {
       if (server === undefined) throw new DeepSeekEyesError(`Unknown MCP server ${serverId}`, 'MCP_SERVER_UNKNOWN')
       const current = this.runtimes.get(server.id)
       let cleaned = current === undefined || await this.closeRuntime(current)
-      if (cleaned && this.cleanupFailures.has(server.id)) cleaned = await this.retryCleanup(server.id)
+      if (cleaned) cleaned = await this.retryServerCleanup(server.id)
       if (cleaned && this.config.mcpEnabled && server.enabled) await this.connect(server)
       this.syncExposure()
       return this.snapshot()
     })
   }
 
-  testConnection(serverId) {
+  toolsHealthProjection(server, runtime) {
+    const tools = runtime === undefined ? [] : [...runtime.tools.values()]
+    return {
+      enabled: server.toolsEnabled,
+      ok: !server.toolsEnabled || runtime?.healthy === true,
+      status: server.toolsEnabled ? runtime?.status ?? 'idle' : 'disabled',
+      latencyMs: runtime?.toolsLatencyMs ?? 0,
+      toolCount: tools.length,
+      schemaTokensEstimated: tools.reduce(
+        (total, tool) => total + this.createManagedCandidate(server, runtime, tool).schemaTokensEstimated,
+        0,
+      ),
+      ...(runtime?.lastError === undefined ? {} : { error: { ...runtime.lastError } }),
+    }
+  }
+
+  contentHealthProjection(server, runtime) {
+    const catalog = runtime?.contentCatalog ?? { resources: [], resourceTemplates: [], prompts: [] }
+    const enabled = server.resourcesEnabled || server.promptsEnabled
+    return {
+      enabled,
+      ok: !enabled || runtime?.contentHealthy === true,
+      status: enabled ? runtime?.contentStatus ?? 'idle' : 'disabled',
+      latencyMs: runtime?.contentLatencyMs ?? 0,
+      resourceCount: catalog.resources.length,
+      resourceTemplateCount: catalog.resourceTemplates.length,
+      promptCount: catalog.prompts.length,
+      ...(runtime?.contentLastError === undefined ? {} : { error: { ...runtime.contentLastError } }),
+    }
+  }
+
+  async probeToolsPlane(server) {
+    const started = Date.now()
+    const active = this.runtimes.get(server.id)
+    let adapter
+    let result
+    try {
+      if (this.cleanupFailures.has(server.id)) {
+        throw new DeepSeekEyesError(
+          `MCP server ${server.id} has an unresolved Tools transport cleanup failure`,
+          'MCP_ADAPTER_CLOSE_FAILED',
+        )
+      }
+      adapter = active?.adapter ?? await this.createAdapter(server, {})
+      let tools
+      if (typeof adapter.probe === 'function') {
+        tools = await adapter.probe()
+      } else {
+        // A custom adapter without a dedicated probe must still establish a
+        // fresh transport. Reading listTools() from the active capture is not
+        // a health check.
+        if (active?.adapter === adapter) adapter = await this.createAdapter(server, {})
+        await adapter.start?.()
+        tools = await adapter.listTools()
+      }
+      if (!Array.isArray(tools)) throw new TypeError(`MCP server ${server.id} listTools() must return an array`)
+      const checkedAt = nowIso(this.now)
+      const checkedAtMs = nowMilliseconds(this.now)
+      if (active !== undefined) {
+        active.lastCheckedAt = checkedAt
+        active.lastProbeAtMs = checkedAtMs
+        active.toolsLastCheckedAt = checkedAt
+        active.toolsLastProbeAtMs = checkedAtMs
+        active.toolsLatencyMs = Date.now() - started
+        active.adapter.reconcileProbe?.(tools)
+        const live = active.adapter.connectionState?.()
+        active.healthy = live === undefined || live.connected === true
+        active.status = active.healthy ? 'connected' : 'degraded'
+        if (active.healthy) active.lastError = undefined
+        else if (live?.error !== undefined) {
+          active.lastError = {
+            code: boundedSafeErrorCode(live.error, 'MCP_CONNECTION_UNHEALTHY'),
+            message: boundedSafeError(live.error),
+          }
+        }
+        this.syncExposure()
+      }
+      const probeRuntime = { server, tools: new Map() }
+      this.setRuntimeTools(probeRuntime, tools)
+      const normalizedTools = [...probeRuntime.tools.values()]
+      result = {
+        enabled: true,
+        ok: true,
+        status: active === undefined || active.healthy ? 'connected' : 'reachable',
+        latencyMs: Date.now() - started,
+        toolCount: tools.length,
+        schemaTokensEstimated: normalizedTools.reduce(
+          (total, tool) => total + this.createManagedCandidate(server, undefined, tool).schemaTokensEstimated,
+          0,
+        ),
+      }
+    } catch (error) {
+      const lastError = {
+        code: boundedSafeErrorCode(error, 'MCP_CONNECT_FAILED'),
+        message: boundedSafeError(error),
+      }
+      if (active !== undefined) {
+        const checkedAt = nowIso(this.now)
+        active.status = 'degraded'
+        active.healthy = false
+        active.lastCheckedAt = checkedAt
+        active.lastProbeAtMs = nowMilliseconds(this.now)
+        active.toolsLastCheckedAt = checkedAt
+        active.toolsLastProbeAtMs = active.lastProbeAtMs
+        active.toolsLatencyMs = Date.now() - started
+        active.lastError = lastError
+        this.syncExposure()
+      }
+      result = {
+        enabled: true,
+        ok: false,
+        status: 'error',
+        latencyMs: Date.now() - started,
+        toolCount: 0,
+        schemaTokensEstimated: 0,
+        error: lastError,
+      }
+    }
+    if (adapter !== active?.adapter) {
+      try {
+        await adapter?.close?.()
+      } catch (error) {
+        const lastError = this.recordCleanupFailure(server, adapter, 'probe', error)
+        if (active !== undefined) {
+          active.status = 'degraded'
+          active.healthy = false
+          active.lastError = lastError
+          this.syncExposure()
+        }
+        result = { ...result, ok: false, status: 'error', error: lastError }
+      }
+    }
+    return result
+  }
+
+  async probeContentPlane(server) {
+    const started = Date.now()
+    const active = this.runtimes.get(server.id)
+    let adapter
+    let result
+    try {
+      if (this.contentCleanupFailures.has(server.id)) {
+        throw new DeepSeekEyesError(
+          `MCP server ${server.id} has an unresolved Content transport cleanup failure`,
+          'MCP_CONTENT_CLOSE_FAILED',
+        )
+      }
+      adapter = await this.createContentAdapter(server, {})
+      await adapter.start()
+      const catalog = adapter.catalog()
+      const checkedAt = nowIso(this.now)
+      const checkedAtMs = nowMilliseconds(this.now)
+      if (active !== undefined) {
+        active.contentCatalog = catalog
+        active.contentStatus = 'connected'
+        active.contentHealthy = true
+        active.contentLastError = undefined
+        active.contentLastConnectedAt = checkedAt
+        active.contentLastCheckedAt = checkedAt
+        active.contentLastProbeAtMs = checkedAtMs
+        active.lastProbeAtMs = checkedAtMs
+        active.contentLatencyMs = Date.now() - started
+        this.syncExposure()
+      }
+      result = {
+        enabled: true,
+        ok: true,
+        status: 'connected',
+        latencyMs: Date.now() - started,
+        resourceCount: catalog.resources.length,
+        resourceTemplateCount: catalog.resourceTemplates.length,
+        promptCount: catalog.prompts.length,
+      }
+    } catch (error) {
+      const lastError = {
+        code: boundedSafeErrorCode(error, 'MCP_CONTENT_CONNECT_FAILED'),
+        message: boundedSafeError(error),
+      }
+      if (active !== undefined) {
+        const checkedAt = nowIso(this.now)
+        active.contentStatus = 'error'
+        active.contentHealthy = false
+        active.contentLastError = lastError
+        active.contentLastCheckedAt = checkedAt
+        active.contentLastProbeAtMs = nowMilliseconds(this.now)
+        active.lastProbeAtMs = active.contentLastProbeAtMs
+        active.contentLatencyMs = Date.now() - started
+        this.syncExposure()
+      }
+      result = {
+        enabled: true,
+        ok: false,
+        status: 'error',
+        latencyMs: Date.now() - started,
+        resourceCount: 0,
+        resourceTemplateCount: 0,
+        promptCount: 0,
+        error: lastError,
+      }
+    }
+    try {
+      await adapter?.close?.()
+    } catch (error) {
+      const lastError = this.recordContentCleanupFailure(server, adapter, 'probe', error)
+      if (active !== undefined) {
+        active.contentStatus = 'error'
+        active.contentHealthy = false
+        active.contentLastError = lastError
+        this.syncExposure()
+      }
+      result = { ...result, ok: false, status: 'error', error: lastError }
+    }
+    return result
+  }
+
+  testConnection(serverId, options = {}) {
     return this.enqueue(async () => {
       const server = this.config.mcpServers.find(entry => entry.id === String(serverId))
       if (server === undefined) throw new DeepSeekEyesError(`Unknown MCP server ${serverId}`, 'MCP_SERVER_UNKNOWN')
       const started = Date.now()
-      let adapter
-      try {
-        if (this.cleanupFailures.has(server.id)) {
-          throw new DeepSeekEyesError(
-            `MCP server ${server.id} has an unresolved transport cleanup failure`,
-            'MCP_ADAPTER_CLOSE_FAILED',
-          )
-        }
-        const active = this.runtimes.get(server.id)
-        adapter = active?.adapter ?? await this.createAdapter(server, {})
-        let tools
-        if (typeof adapter.probe === 'function') {
-          tools = await adapter.probe()
-        } else {
-          // A custom adapter without a dedicated probe must still establish a
-          // fresh transport. Reading listTools() from the active capture is not
-          // a health check.
-          if (active?.adapter === adapter) adapter = await this.createAdapter(server, {})
-          await adapter.start?.()
-          tools = await adapter.listTools()
-        }
-        if (!Array.isArray(tools)) throw new TypeError(`MCP server ${server.id} listTools() must return an array`)
-        if (active !== undefined) {
-          active.lastCheckedAt = nowIso(this.now)
-          active.lastProbeAtMs = nowMilliseconds(this.now)
-          active.latencyMs = Date.now() - started
-          active.adapter.reconcileProbe?.(tools)
-          const live = active.adapter.connectionState?.()
-          active.healthy = live === undefined || live.connected === true
-          active.status = active.healthy ? 'connected' : 'degraded'
-          if (active.healthy) active.lastError = undefined
-          else if (live?.error !== undefined) {
-            active.lastError = {
-              code: boundedSafeErrorCode(live.error, 'MCP_CONNECTION_UNHEALTHY'),
-              message: boundedSafeError(live.error),
-            }
-          }
-          this.syncExposure()
-        }
-        const probeRuntime = { server, tools: new Map() }
-        this.setRuntimeTools(probeRuntime, tools)
-        const normalizedTools = [...probeRuntime.tools.values()]
-        return {
-          ok: true,
-          serverId: server.id,
-          status: active === undefined || active.healthy ? 'connected' : 'reachable',
-          latencyMs: Date.now() - started,
-          toolCount: tools.length,
-          schemaTokensEstimated: normalizedTools.reduce(
-            (total, tool) => total + this.createManagedCandidate(server, undefined, tool).schemaTokensEstimated,
-            0,
-          ),
-        }
-      } catch (error) {
-        const active = this.runtimes.get(server.id)
-        if (active !== undefined) {
-          active.status = 'degraded'
-          active.healthy = false
-          active.lastCheckedAt = nowIso(this.now)
-          active.lastProbeAtMs = nowMilliseconds(this.now)
-          active.latencyMs = Date.now() - started
-          active.lastError = {
-            code: boundedSafeErrorCode(error, 'MCP_CONNECT_FAILED'),
-            message: boundedSafeError(error),
-          }
-          this.syncExposure()
-        }
-        return {
-          ok: false,
-          serverId: server.id,
-          status: 'error',
-          latencyMs: Date.now() - started,
-          error: {
-            code: boundedSafeErrorCode(error, 'MCP_CONNECT_FAILED'),
-            message: boundedSafeError(error),
-          },
-        }
-      } finally {
-        const active = this.runtimes.get(server.id)
-        if (adapter !== active?.adapter) {
-          await adapter?.close?.().catch(error => {
-            this.recordCleanupFailure(server, adapter, 'probe', error)
-          })
-        }
+      const active = this.runtimes.get(server.id)
+      const probeTools = options.probeTools !== false
+      const probeContent = options.probeContent !== false
+      const tools = !server.toolsEnabled
+        ? this.toolsHealthProjection(server, active)
+        : probeTools ? await this.probeToolsPlane(server) : this.toolsHealthProjection(server, active)
+      const contentEnabled = server.resourcesEnabled || server.promptsEnabled
+      const content = !contentEnabled
+        ? this.contentHealthProjection(server, active)
+        : probeContent ? await this.probeContentPlane(server) : this.contentHealthProjection(server, active)
+      const enabled = [tools, content].filter(plane => plane.enabled)
+      const ok = enabled.every(plane => plane.ok)
+      const status = enabled.length === 0
+        ? 'idle'
+        : ok ? 'connected'
+          : enabled.some(plane => plane.ok) ? 'degraded' : 'error'
+      const runtime = this.runtimes.get(server.id)
+      if (runtime !== undefined) runtime.latencyMs = Date.now() - started
+      const error = enabled.find(plane => !plane.ok)?.error
+      return {
+        ok,
+        serverId: server.id,
+        status,
+        latencyMs: Date.now() - started,
+        toolCount: tools.toolCount,
+        resourceCount: content.resourceCount,
+        resourceTemplateCount: content.resourceTemplateCount,
+        promptCount: content.promptCount,
+        schemaTokensEstimated: tools.schemaTokensEstimated,
+        tools,
+        content,
+        ...(error === undefined ? {} : { error }),
       }
     })
   }
@@ -918,6 +1514,8 @@ export class McpManager {
           runtime.lastConnectedAt = nowIso(this.now)
           runtime.lastCheckedAt = runtime.lastConnectedAt
           runtime.lastProbeAtMs = nowMilliseconds(this.now)
+          runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+          runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
           runtime.lastError = undefined
           this.syncExposure()
         } catch (error) {
@@ -925,6 +1523,8 @@ export class McpManager {
           runtime.healthy = false
           runtime.lastCheckedAt = nowIso(this.now)
           runtime.lastProbeAtMs = nowMilliseconds(this.now)
+          runtime.toolsLastCheckedAt = runtime.lastCheckedAt
+          runtime.toolsLastProbeAtMs = runtime.lastProbeAtMs
           runtime.lastError = {
             code: boundedSafeErrorCode(error, 'MCP_REFRESH_FAILED'),
             message: boundedSafeError(error),
@@ -935,6 +1535,64 @@ export class McpManager {
       }
       return this.toolSummaries(runtime.server, runtime)
     })
+  }
+
+  listContent(serverId, { refresh = false } = {}) {
+    return this.enqueue(async () => {
+      const runtime = this.runtimes.get(String(serverId))
+      if (runtime === undefined) return { resources: [], resourceTemplates: [], prompts: [] }
+      if (refresh) {
+        if (runtime.contentAdapter === undefined) {
+          throw new DeepSeekEyesError(
+            `MCP Content plane for ${runtime.server.id} is not enabled`,
+            'MCP_CONTENT_DISABLED',
+          )
+        }
+        runtime.contentStatus = 'connecting'
+        runtime.contentHealthy = false
+        this.syncExposure()
+        try {
+          runtime.contentCatalog = await runtime.contentAdapter.refresh()
+          runtime.contentStatus = 'connected'
+          runtime.contentHealthy = true
+          runtime.contentLastError = undefined
+          runtime.contentLastConnectedAt = nowIso(this.now)
+          runtime.contentLastCheckedAt = runtime.contentLastConnectedAt
+          runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
+          this.syncExposure()
+        } catch (error) {
+          runtime.contentStatus = 'error'
+          runtime.contentHealthy = false
+          runtime.contentLastError = {
+            code: boundedSafeErrorCode(error, 'MCP_CONTENT_REFRESH_FAILED'),
+            message: boundedSafeError(error),
+          }
+          runtime.contentLastCheckedAt = nowIso(this.now)
+          runtime.contentLastProbeAtMs = nowMilliseconds(this.now)
+          this.syncExposure()
+          throw new DeepSeekEyesError(runtime.contentLastError.message, runtime.contentLastError.code)
+        }
+      }
+      return this.contentSummaries(runtime.server, runtime)
+    })
+  }
+
+  contentSummaries(server, runtime) {
+    const catalog = runtime?.contentCatalog ?? { resources: [], resourceTemplates: [], prompts: [] }
+    return {
+      resources: catalog.resources.map(resource => ({
+        ...resource,
+        allowed: contentPolicyDecision(server, 'resource', resource.uri).allowed,
+      })),
+      resourceTemplates: catalog.resourceTemplates.map(resource => ({
+        ...resource,
+        allowed: contentPolicyDecision(server, 'resource', resource.uriTemplate).allowed,
+      })),
+      prompts: catalog.prompts.map(prompt => ({
+        ...prompt,
+        allowed: contentPolicyDecision(server, 'prompt', prompt.name).allowed,
+      })),
+    }
   }
 
   toolSummaries(server, runtime) {
@@ -968,14 +1626,24 @@ export class McpManager {
     if (this.healthInFlight !== undefined) return this.healthInFlight
     if (!this.config.mcpEnabled) return Promise.resolve(this.snapshot())
     const checkedAt = nowMilliseconds(this.now)
-    const due = this.config.mcpServers.filter(server => {
-      if (!server.enabled) return false
+    const due = this.config.mcpServers.flatMap(server => {
+      if (!server.enabled) return []
       const runtime = this.runtimes.get(server.id)
-      return runtime?.lastProbeAtMs === undefined
-        || checkedAt - runtime.lastProbeAtMs >= this.healthProbeIntervalMs
+      const toolsDue = server.toolsEnabled && (
+        runtime?.toolsLastProbeAtMs === undefined
+        || checkedAt - runtime.toolsLastProbeAtMs >= this.healthProbeIntervalMs
+      )
+      const contentDue = (server.resourcesEnabled || server.promptsEnabled) && (
+        runtime?.contentLastProbeAtMs === undefined
+        || checkedAt - runtime.contentLastProbeAtMs >= this.healthProbeIntervalMs
+      )
+      return toolsDue || contentDue ? [{ server, toolsDue, contentDue }] : []
     })
     if (due.length === 0) return Promise.resolve(this.snapshot())
-    const run = Promise.all(due.map(server => this.testConnection(server.id)))
+    const run = Promise.all(due.map(({ server, toolsDue, contentDue }) => this.testConnection(server.id, {
+      probeTools: toolsDue,
+      probeContent: contentDue,
+    })))
       .then(() => this.snapshot())
     const settled = run.then(
       value => {
@@ -995,27 +1663,71 @@ export class McpManager {
     const servers = this.config.mcpServers.map(server => {
       const runtime = this.runtimes.get(server.id)
       const cleanupFailure = this.cleanupFailures.get(server.id)
+      const contentCleanupFailure = this.contentCleanupFailures.get(server.id)
       const tools = this.toolSummaries(server, runtime)
       const exposedTools = tools.filter(tool => tool.exposed)
+      const enabledPlaneStates = [
+        ...(server.toolsEnabled ? [runtime?.status ?? 'idle'] : []),
+        ...(server.resourcesEnabled || server.promptsEnabled ? [runtime?.contentStatus ?? 'idle'] : []),
+      ]
       const status = !this.config.mcpEnabled || !server.enabled
         ? 'disabled'
-        : runtime?.status ?? (cleanupFailure === undefined ? 'idle' : 'error')
-      const lastError = runtime?.lastError ?? cleanupFailure?.lastError
+        : (cleanupFailure !== undefined || contentCleanupFailure !== undefined) && runtime === undefined ? 'error'
+          : enabledPlaneStates.length === 0 ? 'idle'
+            : enabledPlaneStates.every(value => value === 'connected') ? 'connected'
+              : enabledPlaneStates.some(value => value === 'connected') ? 'degraded'
+                : enabledPlaneStates.includes('error') ? 'error'
+                  : enabledPlaneStates.includes('connecting') ? 'connecting' : 'degraded'
+      const lastError = runtime?.lastError
+        ?? runtime?.contentLastError
+        ?? cleanupFailure?.lastError
+        ?? contentCleanupFailure?.lastError
+      const content = runtime?.contentCatalog ?? { resources: [], resourceTemplates: [], prompts: [] }
       return {
         id: server.id,
         name: server.name,
         enabled: server.enabled,
         transport: server.transport,
         status,
-        healthy: status === 'connected' && runtime?.healthy === true,
+        healthy: status === 'connected',
+        toolsEnabled: server.toolsEnabled,
+        resourcesEnabled: server.resourcesEnabled,
+        promptsEnabled: server.promptsEnabled,
+        toolsStatus: server.toolsEnabled ? runtime?.status ?? 'idle' : 'disabled',
+        toolsHealthy: server.toolsEnabled ? runtime?.healthy === true : false,
+        contentStatus: server.resourcesEnabled || server.promptsEnabled
+          ? runtime?.contentStatus ?? 'idle'
+          : 'disabled',
+        contentHealthy: runtime?.contentHealthy === true,
         ...(runtime?.latencyMs === undefined ? {} : { latencyMs: runtime.latencyMs }),
+        ...(runtime?.toolsLatencyMs === undefined ? {} : { toolsLatencyMs: runtime.toolsLatencyMs }),
+        ...(runtime?.contentLatencyMs === undefined ? {} : { contentLatencyMs: runtime.contentLatencyMs }),
         toolCount: tools.length,
         exposedToolCount: exposedTools.length,
+        resourceCount: content.resources.length,
+        resourceTemplateCount: content.resourceTemplates.length,
+        promptCount: content.prompts.length,
         schemaTokensEstimated: exposedTools.reduce((total, tool) => total + tool.schemaTokensEstimated, 0),
         ...(runtime?.lastConnectedAt === undefined ? {} : { lastConnectedAt: runtime.lastConnectedAt }),
         ...(runtime?.lastCheckedAt === undefined ? {} : { lastCheckedAt: runtime.lastCheckedAt }),
+        ...(runtime?.toolsLastCheckedAt === undefined ? {} : { toolsLastCheckedAt: runtime.toolsLastCheckedAt }),
+        ...(runtime?.contentLastCheckedAt === undefined ? {} : { contentLastCheckedAt: runtime.contentLastCheckedAt }),
         ...(lastError === undefined ? {} : { lastError: { ...lastError } }),
+        ...(runtime?.lastError === undefined ? {} : { toolsLastError: { ...runtime.lastError } }),
+        ...(runtime?.contentLastError === undefined ? {} : { contentLastError: { ...runtime.contentLastError } }),
         tools,
+        resources: content.resources.map(resource => ({
+          ...resource,
+          allowed: contentPolicyDecision(server, 'resource', resource.uri).allowed,
+        })),
+        resourceTemplates: content.resourceTemplates.map(resource => ({
+          ...resource,
+          allowed: contentPolicyDecision(server, 'resource', resource.uriTemplate).allowed,
+        })),
+        prompts: content.prompts.map(prompt => ({
+          ...prompt,
+          allowed: contentPolicyDecision(server, 'prompt', prompt.name).allowed,
+        })),
       }
     })
     const enabledServers = servers.filter(server => server.enabled)
@@ -1027,9 +1739,13 @@ export class McpManager {
         enabledServers: enabledServers.length,
         connectedServers: servers.filter(server => server.status === 'connected').length,
         exposedTools: this.exposed.size,
-        cleanupFailures: this.cleanupFailures.size,
-        schemaTokensEstimated: servers.reduce((total, server) => total + server.schemaTokensEstimated, 0),
-        schemaTokenEstimate: servers.reduce((total, server) => total + server.schemaTokensEstimated, 0),
+        exposedContentTools: this.contentExposed.size,
+        exposedSchemas: this.exposed.size + this.contentExposed.size,
+        cleanupFailures: this.cleanupFailures.size + this.contentCleanupFailures.size,
+        schemaTokensEstimated: servers.reduce((total, server) => total + server.schemaTokensEstimated, 0)
+          + [...this.contentExposed.values()].reduce((total, entry) => total + entry.schemaTokensEstimated, 0),
+        schemaTokenEstimate: servers.reduce((total, server) => total + server.schemaTokensEstimated, 0)
+          + [...this.contentExposed.values()].reduce((total, entry) => total + entry.schemaTokensEstimated, 0),
       },
       limits: {
         maxTools: this.config.mcpMaxTools,
@@ -1039,12 +1755,22 @@ export class McpManager {
         toolCallTimeoutMs: this.config.mcpToolCallTimeoutMs,
       },
       servers,
-      cleanupErrors: [...this.cleanupFailures.values()].map(failure => ({
-        serverId: failure.server.id,
-        phase: failure.phase,
-        at: failure.at,
-        error: { ...failure.lastError },
-      })).sort((left, right) => left.serverId.localeCompare(right.serverId)),
+      cleanupErrors: [
+        ...[...this.cleanupFailures.values()].map(failure => ({
+          serverId: failure.server.id,
+          plane: 'tools',
+          phase: failure.phase,
+          at: failure.at,
+          error: { ...failure.lastError },
+        })),
+        ...[...this.contentCleanupFailures.values()].map(failure => ({
+          serverId: failure.server.id,
+          plane: 'content',
+          phase: failure.phase,
+          at: failure.at,
+          error: { ...failure.lastError },
+        })),
+      ].sort((left, right) => left.serverId.localeCompare(right.serverId) || left.plane.localeCompare(right.plane)),
       audit: this.config.mcpAudit ? [...this.audit] : [],
     }
   }
@@ -1060,7 +1786,11 @@ export class McpManager {
       try {
         const runtimes = [...this.runtimes.values()]
         for (const runtime of runtimes) await this.closeRuntime(runtime)
-        for (const serverId of [...this.cleanupFailures.keys()]) await this.retryCleanup(serverId)
+        const failedServerIds = new Set([
+          ...this.cleanupFailures.keys(),
+          ...this.contentCleanupFailures.keys(),
+        ])
+        for (const serverId of failedServerIds) await this.retryServerCleanup(serverId)
       } finally {
         this.externalCallsByCodeRun.clear()
         this.started = false

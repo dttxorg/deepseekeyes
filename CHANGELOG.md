@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 - 2026-08-21
+
+- Add an opt-in MCP Content plane for Resources, Resource Templates and Prompts while keeping Tools entirely on DSH's official `@deepseek-ai/dsh-mcp-client`.
+- Resolve `Client`, `StdioClientTransport` and `StreamableHTTPClientTransport` from the exact protocol SDK dependency owned by the canonical Host client; no second MCP SDK enters the plugin runtime.
+- Add per-server `toolsEnabled`, `resourcesEnabled` and `promptsEnabled` switches plus independent allow/deny lists. Resources and Prompts default off and produce zero Content connections, generic schemas or model calls while disabled.
+- Add fixed Content discovery limits of 256 total entries, 256 pages, 1,000,000 serialized characters and 4,000,000 UTF-8 bytes, including cursor-loop and invalid-entry rejection.
+- Expose only two static bounded schemas—`mcp__deepseekeyes__resource` and `mcp__deepseekeyes__prompt`—when corresponding discovered entries are explicitly allowed; catalogs never enter the system prompt.
+- Validate Resource URIs/templates and Prompt names/declared arguments before dispatch, then reuse existing hard result admission, bounded preview/artifact handling, image attachment bridge, deferred Code Mode context, external-call quota, Token accounting and privacy-reduced audit.
+- Extend the native settings card with capability switches, Content health/counts, manual allow/deny editors, exact discovered Resource/Prompt checkboxes and a model-free `mcp.content` refresh RPC.
+- Extend doctor/package verification to require the Content adapter and Host SDK exports.
+- Probe Tools and Content independently on mixed-capability servers, expose per-plane status/latency/error timestamps, and serialize Content transport notifications through the manager lifecycle queue.
+- Persist failed Content transport cleanup separately from Tools cleanup, withdraw affected schemas immediately, block duplicate probes/reconnects, and retry the retained close handle before creating a replacement generation.
+- Add unit and real-protocol acceptance for text/image Resources, Resource Templates and parameterized/image Prompts over both stdio and loopback Streamable HTTP, plus full DSH model-call acceptance.
+
 ## 0.6.1 - 2026-08-20
 
 - Split desktop screenshots against the active Harness attachment service's byte, per-side dimension, decoded-pixel, image-count and aggregate-byte limits instead of using compressed byte size alone. Compressible 5K/ultra-wide screens now remain exact lossless PNG tiles rather than failing DSH rc.8's 2,000px side admission.

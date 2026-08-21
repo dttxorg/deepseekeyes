@@ -78,3 +78,38 @@ export async function loadHostDshMcpClient(ctx) {
   }
   return client
 }
+
+/**
+ * Load the protocol SDK owned by the active DSH MCP Client installation.
+ *
+ * DeepSeekEyes intentionally does not bundle another SDK copy: Tools continue
+ * through the official Host client, while the optional Resources/Prompts plane
+ * resolves the exact transitive SDK beside that Host package.
+ */
+export async function loadHostMcpSdk(ctx) {
+  const hostClientEntry = await resolveHostModulePath(ctx, '@deepseek-ai/dsh-mcp-client')
+  try {
+    const requireFromHostClient = createRequire(hostClientEntry)
+    const [client, stdio, http] = await Promise.all([
+      import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/index.js')).href),
+      import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/stdio.js')).href),
+      import(pathToFileURL(requireFromHostClient.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js')).href),
+    ])
+    if (typeof client?.Client !== 'function'
+      || typeof stdio?.StdioClientTransport !== 'function'
+      || typeof http?.StreamableHTTPClientTransport !== 'function') {
+      throw new Error('required MCP SDK client exports are missing')
+    }
+    return Object.freeze({
+      Client: client.Client,
+      StdioClientTransport: stdio.StdioClientTransport,
+      StreamableHTTPClientTransport: http.StreamableHTTPClientTransport,
+    })
+  } catch (cause) {
+    throw new DeepSeekEyesError(
+      'The active DSH MCP client does not expose its managed protocol SDK',
+      'MCP_HOST_SDK_INVALID',
+      { cause },
+    )
+  }
+}

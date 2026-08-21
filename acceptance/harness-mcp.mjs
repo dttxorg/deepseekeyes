@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createTemporaryMcpServer } from './helpers/temporary-mcp-server.mjs'
+import { createTemporaryMcpContentServer } from './helpers/temporary-mcp-content-server.mjs'
 
 const [baseURL, settingsPath] = process.argv.slice(2)
 if (!baseURL) {
@@ -103,6 +104,10 @@ for (const marker of [
   'deepseekeyes-mcp-header-add-',
   'deepseekeyes-mcp-allow-',
   'deepseekeyes-mcp-deny-',
+  'deepseekeyes-mcp-resource-allow-',
+  'deepseekeyes-mcp-resource-deny-',
+  'deepseekeyes-mcp-prompt-allow-',
+  'deepseekeyes-mcp-prompt-deny-',
   '/deepseekeyes',
   'mcp.status',
   'mcp.${method}',
@@ -124,6 +129,7 @@ assert.equal(disabled.summary.configuredServers, 0)
 assert.equal(disabled.summary.exposedTools, 0)
 
 const fixture = await createTemporaryMcpServer()
+const contentFixture = await createTemporaryMcpContentServer()
 const server = {
   id: 'acceptance',
   name: 'Acceptance stdio',
@@ -144,6 +150,9 @@ let testResult
 let toolList
 let reconnected
 let events
+let contentStatus
+let contentList
+let contentEvents
 try {
   await mutate([
     { op: 'set', path: ['upstreamProvider'], value: 'mock-deepseek' },
@@ -220,6 +229,60 @@ try {
   assert.ok(events.some(event => (
     event.type === 'tool/call' && event.data.name === 'mcp__acceptance__echo'
   )))
+
+  const contentServer = {
+    id: 'content_acceptance',
+    name: 'Content acceptance stdio',
+    enabled: true,
+    toolsEnabled: false,
+    resourcesEnabled: true,
+    promptsEnabled: true,
+    transport: 'stdio',
+    command: process.execPath,
+    args: [contentFixture.script],
+    env: {},
+    allowedTools: [],
+    denyTools: [],
+    allowedResources: ['notes://welcome', 'image://pixel', 'notes://{slug}'],
+    denyResources: [],
+    allowedPrompts: ['describe-pixel'],
+    denyPrompts: [],
+    timeoutMs: 10_000,
+  }
+  await mutate([{ op: 'set', path: ['mcpServers'], value: [contentServer] }])
+  contentStatus = await waitForMcp(
+    value => value.servers[0]?.contentStatus === 'connected' && value.summary.exposedContentTools === 2,
+    'temporary MCP Content stdio server did not connect and expose bounded generic tools',
+  )
+  assert.equal(contentStatus.servers[0].toolsStatus, 'disabled')
+  assert.equal(contentStatus.servers[0].resourceCount, 2)
+  assert.equal(contentStatus.servers[0].resourceTemplateCount, 1)
+  assert.equal(contentStatus.servers[0].promptCount, 1)
+  assert.equal(contentStatus.summary.exposedTools, 0)
+  assert.equal(contentStatus.summary.exposedContentTools, 2)
+  contentList = await mcp('mcp.content', { serverId: 'content_acceptance', refresh: true })
+  assert.equal(contentList.resources.length, 2)
+  assert.equal(contentList.resourceTemplates.length, 1)
+  assert.equal(contentList.prompts.length, 1)
+  assert.equal(contentList.resources.find(item => item.uri === 'notes://welcome').allowed, true)
+  assert.equal(contentList.prompts[0].allowed, true)
+
+  const contentSessionId = `mcp-content-stdio-${Date.now()}`
+  await rpc('session.create', { sessionId: contentSessionId })
+  await rpc('session.selectModel', {
+    sessionId: contentSessionId,
+    provider: 'deepseekeyes',
+    model: 'mock-deepseek-model',
+  })
+  await rpc('session.prompt', {
+    sessionId: contentSessionId,
+    mode: 'queue',
+    content: [{ type: 'text', text: 'MCP_CONTENT_ACCEPTANCE' }],
+  })
+  contentEvents = await waitForTurn(contentSessionId)
+  assert.match(assistantText(contentEvents), /MCP_CONTENT_ACCEPTANCE_OK/)
+  assert.ok(contentEvents.some(event => event.type === 'tool/call' && event.data.name === 'mcp__deepseekeyes__resource'))
+  assert.ok(contentEvents.some(event => event.type === 'tool/call' && event.data.name === 'mcp__deepseekeyes__prompt'))
   assert.ok(events.some(event => (
     event.type === 'tool/result'
       && JSON.stringify(event.data.message).includes('echo:verified')
@@ -230,10 +293,14 @@ try {
     for (const literal of [
       'mcpEnabled: true',
       'mcpServers:',
-      'id: acceptance',
+      'id: content_acceptance',
       'transport: stdio',
-      'allowedTools:',
-      '- echo',
+      'resourcesEnabled: true',
+      'promptsEnabled: true',
+      'allowedResources:',
+      '- notes://welcome',
+      'allowedPrompts:',
+      '- describe-pixel',
     ]) assert.ok(yaml.includes(literal), `settings.yaml is missing ${literal}`)
   }
 
@@ -257,6 +324,14 @@ try {
     allowlistedExposedTools: exposed.summary.exposedTools,
     modelToolCall: 'mcp__acceptance__echo',
     modelResult: 'MCP_STDIO_ACCEPTANCE_OK',
+    contentPlane: {
+      resources: contentStatus.servers[0].resourceCount,
+      templates: contentStatus.servers[0].resourceTemplateCount,
+      prompts: contentStatus.servers[0].promptCount,
+      exposedSchemas: contentStatus.summary.exposedContentTools,
+      refresh: true,
+      modelResult: 'MCP_CONTENT_ACCEPTANCE_OK',
+    },
   }, null, 2))
 } finally {
   await mutate([
@@ -268,4 +343,5 @@ try {
     'MCP runtime did not stop after acceptance cleanup',
   ).catch(() => {})
   await fixture.cleanup()
+  await contentFixture.cleanup()
 }

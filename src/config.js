@@ -6,6 +6,8 @@ import {
   DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
   DEFAULT_MCP_MAX_TOOLS,
   DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+  DEFAULT_MCP_RISK_POLICY,
+  MCP_RISK_POLICIES,
   MCP_SERVER_ID_PATTERN,
   MCP_TRANSPORTS,
 } from './mcp/config.js'
@@ -19,6 +21,8 @@ export {
   DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
   DEFAULT_MCP_MAX_TOOLS,
   DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+  DEFAULT_MCP_RISK_POLICY,
+  MCP_RISK_POLICIES,
   MCP_TRANSPORTS,
 } from './mcp/config.js'
 
@@ -65,6 +69,7 @@ const MCP_SERVER_FIELDS = new Set([
   'toolsEnabled',
   'resourcesEnabled',
   'promptsEnabled',
+  'riskPolicy',
   'allowedTools',
   'denyTools',
   'allowedResources',
@@ -296,6 +301,7 @@ function resolveMcpServer(value, index) {
   const name = requiredString(source.name, `${field}.name`)
   const transport = choiceValue(source.transport, `${field}.transport`, undefined, MCP_TRANSPORTS)
   const enabled = booleanValue(source.enabled, `${field}.enabled`, true)
+  const riskPolicy = choiceValue(source.riskPolicy, `${field}.riskPolicy`, DEFAULT_MCP_RISK_POLICY, MCP_RISK_POLICIES)
   const toolsEnabled = booleanValue(source.toolsEnabled, `${field}.toolsEnabled`, true)
   const resourcesEnabled = booleanValue(source.resourcesEnabled, `${field}.resourcesEnabled`, false)
   const promptsEnabled = booleanValue(source.promptsEnabled, `${field}.promptsEnabled`, false)
@@ -330,6 +336,7 @@ function resolveMcpServer(value, index) {
     toolsEnabled,
     resourcesEnabled,
     promptsEnabled,
+    riskPolicy,
     transport,
     allowedTools,
     denyTools,

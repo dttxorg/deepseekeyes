@@ -218,6 +218,8 @@ DeepSeekEyes 0.8 builds on the complete 0.7 MCP product layer around DSH's offic
 - Tools and Content for one OAuth server share one in-memory provider and bearer-token lifecycle. Expiration, token refresh, discovery failures and transport failures appear in the MCP health snapshot and privacy-reduced audit ring without exposing credentials or token values. OAuth is opt-in and ordinary text, vision, Browser, Desktop and non-OAuth MCP routes keep their existing path and Token behavior.
 - A headless YAML starting point is available at [`examples/mcp-oauth.patch.yml`](examples/mcp-oauth.patch.yml); the native settings card remains the preferred path and writes the same validated shape.
 - Expose zero tools by default; each new allowlist starts empty, and a deny selector always wins over an allow selector.
+- Choose a per-server `riskPolicy`: `allow` preserves the existing allowlist behavior, while `read-only` withdraws write, destructive and unknown-write tools before their schemas reach model context. For protocol names that contain punctuation (for example `read.file`), DeepSeekEyes performs a bounded metadata pass when the allow/deny selector needs the original name. Catalog generations are identity-checked again before transport dispatch, so a stale definition cannot execute a replacement tool; stale/direct policy calls return a bounded MCP error.
+- Allow/deny-only edits update the live adapter policy without needlessly reconnecting the MCP transport. During a required metadata refresh, the affected schemas are withdrawn rather than exposed through an inferred name; failed metadata cleanup is retained for a later close/retry.
 - Enable Tools, Resources and Prompts independently per server. Tools default on for backward compatibility; Resources and Prompts default off and create **zero Content connections, zero generic schemas and zero model calls** while disabled.
 - Discover Resources, Resource Templates and Prompts under fixed 256-entry / 256-page / 1,000,000-character / 4,000,000-byte catalog limits. Their allowlists also start empty and deny selectors win.
 - Expose only two bounded generic Content schemas—`mcp__deepseekeyes__resource` and `mcp__deepseekeyes__prompt`—and only when at least one corresponding discovered item is explicitly allowed. Catalog contents are not copied into the system prompt.
@@ -295,7 +297,7 @@ The common route and automation settings are available in the GUI. Headless depl
 | History bounds | `historyImageLimit`, `historySummaryChars`, `browserHistoryLimit`, `desktopHistoryLimit` |
 | Browser | `browserComputerUse`, channel/executable, viewport, timeout and observation bounds |
 | Desktop | `desktopComputerUse`, `desktopVisualMode`, `desktopSemantic`, `desktopMaxElements`, timeout, settle delay, display, PowerShell and evidence directory |
-| MCP | `mcpEnabled`, `mcpServers`, per-server Tools/Resources/Prompts switches and allow/deny lists, optional OAuth client-credentials env refs for Streamable HTTP, `mcpMaxTools`, `mcpMaxSchemaTokens`, `mcpMaxResultChars`, `mcpMaxExternalCallsPerRun`, timeout, audit and artifact directory |
+| MCP | `mcpEnabled`, `mcpServers`, per-server Tools/Resources/Prompts switches, `riskPolicy` and allow/deny lists, optional OAuth client-credentials env refs for Streamable HTTP, `mcpMaxTools`, `mcpMaxSchemaTokens`, `mcpMaxResultChars`, `mcpMaxExternalCallsPerRun`, timeout, audit and artifact directory |
 | Usage | `usageStats`, `usageStatsPath` |
 
 See the [complete Chinese configuration reference](README.zh-CN.md#配置字段) for every field and default.

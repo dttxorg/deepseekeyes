@@ -20,6 +20,8 @@ export function mcpAuditSummary({
     tool: tool.rawName ?? tool.name,
     publicName: tool.publicName,
     risk: classification.risk,
+    riskPolicy: server.riskPolicy ?? 'allow',
+    riskPolicyAllowed: server.riskPolicy !== 'read-only' || classification.risk === 'read',
     openWorld: classification.openWorld,
     status: error === undefined ? 'success' : 'error',
     durationMs: Math.max(0, Math.round(Number(durationMs) || 0)),

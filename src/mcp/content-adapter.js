@@ -219,6 +219,10 @@ export class McpContentAdapter {
     })
   }
 
+  updateServer(server) {
+    this.server = server
+  }
+
   notify(reason) {
     this.onChanged?.(this.catalog(), Object.freeze({ ...this.state(), reason }))
   }
@@ -251,7 +255,7 @@ export class McpContentAdapter {
       const sdk = await this.loadSdk()
       this.oauth?.credentials()
       client = new sdk.Client(
-        { name: 'deepseekeyes-content', version: '0.8.0' },
+        { name: 'deepseekeyes-content', version: '0.8.1' },
         { capabilities: {} },
       )
       const transport = transportFor(sdk, this.server, this.environment, this.oauth)

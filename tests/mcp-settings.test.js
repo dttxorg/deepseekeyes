@@ -117,6 +117,7 @@ test('MCP stdio and Streamable HTTP servers resolve into deeply immutable allowl
   }, {}, '/tmp')
 
   assert.equal(config.mcpServers.length, 2)
+  assert.equal(config.mcpServers[0].riskPolicy, 'allow')
   assert.deepEqual(config.mcpServers[0].allowedTools, ['read_file', 'list_directory'])
   assert.deepEqual(config.mcpServers[0].denyTools, ['delete_file'])
   assert.deepEqual(config.mcpServers[0].env.MCP_LOG_LEVEL, {
@@ -137,6 +138,16 @@ test('MCP stdio and Streamable HTTP servers resolve into deeply immutable allowl
   assert.equal(Object.isFrozen(config.mcpServers[0].env), true)
   assert.equal(Object.isFrozen(config.mcpServers[0].env.MCP_LOG_LEVEL), true)
   assert.equal(Object.isFrozen(config.mcpServers[1].headers.Authorization), true)
+})
+
+test('MCP server riskPolicy is strict and defaults to allow', () => {
+  const base = { id: 'fixture', name: 'Fixture', transport: 'stdio', command: 'node' }
+  assert.equal(resolveConfig({ mcpServers: [base] }, {}, '/tmp').mcpServers[0].riskPolicy, 'allow')
+  assert.equal(resolveConfig({ mcpServers: [{ ...base, riskPolicy: 'read-only' }] }, {}, '/tmp').mcpServers[0].riskPolicy, 'read-only')
+  assert.throws(
+    () => resolveConfig({ mcpServers: [{ ...base, riskPolicy: 'prompt' }] }, {}, '/tmp'),
+    /riskPolicy must be one of allow, read-only/,
+  )
 })
 
 test('MCP server validation rejects ambiguous transports, duplicates, plaintext credentials, and unsafe overlap', () => {

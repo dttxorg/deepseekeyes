@@ -23,6 +23,7 @@ import {
   DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN,
   DEFAULT_MCP_MAX_TOOLS,
   DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+  DEFAULT_MCP_RISK_POLICY,
   DEFAULT_HISTORY_IMAGE_LIMIT,
   DEFAULT_HISTORY_SUMMARY_CHARS,
   DEFAULT_TARGET_MAX_TOKENS,
@@ -116,6 +117,10 @@ export const McpServerConfig = z.object({
   toolsEnabled: z.boolean().default(true),
   resourcesEnabled: z.boolean().default(false),
   promptsEnabled: z.boolean().default(false),
+  riskPolicy: z.union([
+    z.const('allow'),
+    z.const('read-only'),
+  ]).default(DEFAULT_MCP_RISK_POLICY),
   transport: z.union([
     z.const('stdio'),
     z.const('streamable-http'),

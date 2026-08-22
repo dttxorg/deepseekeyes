@@ -1,8 +1,8 @@
 import { DeepSeekEyesError } from '../error.js'
 import { randomUUID } from 'node:crypto'
-import { boundedUnicode, safeError } from './canonical.js'
+import { boundedUnicode, hashValue, safeError } from './canonical.js'
 import { loadHostDshMcpClient, loadHostMcpSdk } from './host-runtime.js'
-import { publicMcpToolName } from './policy.js'
+import { normalizeToolAnnotations, publicMcpToolName } from './policy.js'
 import { isMcpOAuthEnabled, McpOAuthSessionRegistry } from './oauth.js'
 
 export const DEFAULT_MCP_CATALOG_LIMITS = Object.freeze({
@@ -324,6 +324,40 @@ function inferredRawName(serverId, publicName) {
   return publicName.startsWith(prefix) ? publicName.slice(prefix.length) : publicName
 }
 
+// A public DSH tool name is sanitized and may include a hash, so it cannot
+// recover protocol names such as `read.file`. When an allow/deny selector uses
+// a character that the public-name contract normalizes, the independent
+// tools/list metadata pass is required even outside read-only risk mode.
+function requiresRawNameMetadata(server) {
+  return [...(server.allowedTools ?? []), ...(server.denyTools ?? [])]
+    .some(selector => {
+      const value = String(selector)
+      if (value.startsWith(`mcp__${server.id}__`)) return false
+      const qualifiedPrefix = [`${server.id}/`, `${server.name}/`].find(prefix => value.startsWith(prefix))
+      const raw = qualifiedPrefix === undefined ? value : value.slice(qualifiedPrefix.length)
+      const publicPrefixLength = `mcp__${server.id}__`.length
+      const maxUnhashedRawLength = Math.max(0, 64 - publicPrefixLength)
+      // The ordinary `*` allowlist and short alphanumeric names are fully
+      // recoverable from the Host public name. Metadata is required only when
+      // the raw selector can be transformed (punctuation), truncated/hashed
+      // (long names), or wildcard-matched against such a transformed name.
+      return /[^A-Za-z0-9_*-]/.test(raw)
+        || raw.length > maxUnhashedRawLength
+        || (/[?*]/.test(raw) && raw !== '*')
+    })
+}
+
+function catalogToolFingerprint(tool) {
+  return hashValue({
+    rawName: tool.rawName ?? tool.name,
+    publicName: tool.publicName,
+    description: tool.description ?? '',
+    inputSchema: tool.inputSchema ?? {},
+    outputSchema: tool.outputSchema ?? null,
+    annotations: tool.annotations ?? null,
+  })
+}
+
 class CaptureRegistry {
   constructor(server, onToolsChanged, limits) {
     this.server = server
@@ -331,6 +365,7 @@ class CaptureRegistry {
     this.budget = new McpCatalogBudget(limits)
     this.definitions = new Map()
     this.costs = new Map()
+    this.metadata = new Map()
     this.pending = false
     this.accepting = true
     this.error = undefined
@@ -348,8 +383,33 @@ class CaptureRegistry {
   clear() {
     this.definitions.clear()
     this.costs.clear()
+    this.metadata.clear()
     this.budget.reset()
     this.notify()
+  }
+
+  clearMetadata() {
+    this.metadata.clear()
+  }
+
+  setMetadata(entries, { notify = true } = {}) {
+    const expected = new Map([...this.definitions.values()].map(definition => {
+      return [definition.name, hashValue({
+        name: definition.name,
+        description: definition.description ?? '',
+        inputSchema: definition.parameters ?? {},
+      })]
+    }))
+    if (expected.size !== entries.size || [...expected].some(([rawName, fingerprint]) => {
+      return entries.get(rawName)?.fingerprint !== fingerprint
+    })) {
+      throw new DeepSeekEyesError(
+        `MCP server ${this.server.id} risk metadata does not match the active tool catalog`,
+        'MCP_RISK_METADATA_MISMATCH',
+      )
+    }
+    this.metadata = new Map(entries)
+    if (notify) this.notify()
   }
 
   suspend() {
@@ -411,18 +471,21 @@ class CaptureRegistry {
   }
 
   list() {
-    return [...this.definitions.values()].map(definition => ({
-      name: inferredRawName(this.server.id, definition.name),
-      rawName: inferredRawName(this.server.id, definition.name),
-      publicName: definition.name,
-      description: definition.description ?? '',
-      inputSchema: definition.parameters ?? {},
-      outputSchema: definition.output?.schema,
-      // The verified dsh-mcp-client does not forward MCP annotations. Missing data is
-      // intentionally classified as unknown-write by DeepSeekEyes.
-      annotations: definition.annotations,
-      definition,
-    })).sort((left, right) => left.publicName.localeCompare(right.publicName))
+    return [...this.definitions.values()].map(definition => {
+      const publicName = definition.name
+      const metadata = this.metadata.get(publicName)
+      const rawName = metadata?.rawName ?? inferredRawName(this.server.id, publicName)
+      return {
+        name: rawName,
+        rawName,
+        publicName,
+        description: definition.description ?? '',
+        inputSchema: definition.parameters ?? {},
+        outputSchema: definition.output?.schema,
+        annotations: metadata?.annotations ?? normalizeToolAnnotations(definition.annotations),
+        definition,
+      }
+    }).sort((left, right) => left.publicName.localeCompare(right.publicName))
   }
 }
 
@@ -430,7 +493,9 @@ export class DshMcpClientAdapter {
   constructor(ctx, server, options = {}) {
     this.ctx = ctx
     this.server = server
+    this.wrapperName = options.wrapperName ?? this.server.id
     this.loadPlugin = options.loadPlugin ?? (() => loadHostDshMcpClient(ctx))
+    this.loadSdk = options.loadSdk ?? (() => loadHostMcpSdk(ctx))
     this.environment = options.environment ?? process.env
     this.onToolsChanged = options.onToolsChanged
     this.onProbeCleanupFailure = options.onProbeCleanupFailure
@@ -445,12 +510,20 @@ export class DshMcpClientAdapter {
     this.suppressNotifications = 0
     this.pendingNotification = undefined
     this.lastToolCount = 0
+    this.catalogGeneration = 0
     this.refreshing = undefined
+    this.riskMetadataGeneration = 0
+    this.riskMetadataInFlight = undefined
+    this.metadataCleanupFailure = undefined
     this.probeCleanupFailures = new Map()
     this.probeCleanupRetry = undefined
     this.probeCleanupHandle = Object.freeze({
       close: () => this.retryProbeCleanup(),
     })
+  }
+
+  metadataRequired() {
+    return this.server.riskPolicy === 'read-only' || requiresRawNameMetadata(this.server)
   }
 
   connectionState() {
@@ -466,6 +539,9 @@ export class DshMcpClientAdapter {
       ...(probeCleanup?.lastError === undefined && this.lastError === undefined ? {} : {
         error: probeCleanup?.lastError ?? this.lastError,
       }),
+      ...(this.metadataCleanupFailure?.lastError === undefined ? {} : {
+        metadataCleanupFailure: this.metadataCleanupFailure.lastError,
+      }),
       reconnect: Object.freeze({ ...this.server.reconnect }),
     })
   }
@@ -479,10 +555,14 @@ export class DshMcpClientAdapter {
       this.pendingNotification = { tools, connection }
       return
     }
-    this.onToolsChanged?.(tools, connection)
+    this.onToolsChanged?.(
+      tools.map(tool => ({ ...tool, catalogGeneration: this.catalogGeneration })),
+      connection,
+    )
   }
 
   captureChanged(tools, captureState = {}) {
+    this.catalogGeneration += 1
     const previousCount = this.lastToolCount
     this.lastToolCount = tools.length
     let reason = 'tools-changed'
@@ -514,6 +594,24 @@ export class DshMcpClientAdapter {
       this.connected = true
       this.lastError = undefined
     }
+    if (this.metadataRequired()) {
+      if (!this.startedOnce || tools.length === 0 || captureState.error !== undefined || this.closed || !this.capture.accepting) {
+        this.capture.clearMetadata()
+        this.riskMetadataGeneration += 1
+      } else {
+        this.capture.clearMetadata()
+        const generation = ++this.riskMetadataGeneration
+        // Do not publish the inferred catalog as healthy while the required
+        // raw-name/annotation pass is in flight. The manager must withdraw
+        // schemas until the replacement metadata has been verified.
+        this.status = 'unknown'
+        this.connected = false
+        this.lastError = undefined
+        this.notify(this.capture.list(), 'risk-metadata-pending')
+        void this.refreshRiskMetadata(tools, generation).catch(() => {})
+        return
+      }
+    }
     this.notify(tools, reason)
   }
 
@@ -536,7 +634,7 @@ export class DshMcpClientAdapter {
     const capture = this.capture
     const officialConfig = materializeDshMcpConfig(this.server, this.environment)
     const wrapper = {
-      name: `deepseekeyes-mcp-${this.server.id}`,
+      name: `deepseekeyes-mcp-${this.wrapperName}`,
       inject: plugin.inject ?? ['tools'],
       apply(child) {
         return plugin.apply(child.extend({ tools: capture }), officialConfig)
@@ -566,14 +664,206 @@ export class DshMcpClientAdapter {
     this.status = 'connected'
     this.connected = true
     this.startedOnce = true
+    if (this.metadataRequired()) {
+      // rc.8's Host bridge may sanitize protocol names and drop MCP
+      // ToolAnnotations. Read-only mode must not guess, and an explicit
+      // allow/deny selector containing sanitized characters cannot match an
+      // inferred name. Obtain the protocol metadata through one short-lived,
+      // SDK-owned tools/list pass before publishing the active capture. The
+      // call transport remains the Host-managed bridge; this side channel
+      // carries metadata and raw names only.
+      const generation = ++this.riskMetadataGeneration
+      await this.refreshRiskMetadata(this.capture.list(), generation)
+    }
     this.lastToolCount = this.capture.definitions.size
     this.lastError = undefined
     this.notify(this.capture.list(), 'connected')
     return this
   }
 
+  async readRiskAnnotations() {
+    await this.retryMetadataCleanup()
+    const sdk = await this.loadSdk()
+    const config = materializeDshMcpConfig(this.server, this.environment)
+    const client = new sdk.Client(
+      { name: 'deepseekeyes-mcp-risk-metadata', version: '0.8.1' },
+      { capabilities: {} },
+    )
+    const transport = this.server.transport === 'stdio'
+      ? new sdk.StdioClientTransport({
+          command: config.command,
+          args: config.args,
+          env: { ...config.env },
+          cwd: config.cwd,
+        })
+      : new sdk.StreamableHTTPClientTransport(
+          new URL(config.url),
+          { requestInit: { headers: config.headers } },
+        )
+    let operationError
+    try {
+      await client.connect(transport)
+      const metadata = new Map()
+      const budget = new McpCatalogBudget(this.catalogLimits)
+      let cursor
+      const cursors = new Set()
+      let complete = false
+      for (let page = 0; page < this.catalogLimits.maxTools; page += 1) {
+        const response = await client.request(
+          { method: 'tools/list', ...(cursor === undefined ? {} : { params: { cursor } }) },
+          sdk.ListToolsResultSchema,
+          { timeout: this.server.timeoutMs },
+        )
+        for (const tool of response.tools) {
+          const rawName = String(tool.name)
+          const publicName = publicMcpToolName(this.server.id, rawName)
+          budget.admit({
+            name: publicName,
+            description: tool.description ?? '',
+            parameters: tool.inputSchema ?? {},
+            outputSchema: tool.outputSchema ?? null,
+          })
+          if (metadata.has(publicName)) {
+            throw new DeepSeekEyesError(
+              `MCP server ${this.server.id} risk metadata contains duplicate public tool ${publicName}`,
+              'MCP_CATALOG_DUPLICATE_TOOL',
+            )
+          }
+          metadata.set(publicName, {
+            rawName,
+            // Retain only the bounded boolean risk surface consumed by the
+            // manager. Protocol annotation extensions (for example an
+            // unbounded title) never enter the long-lived capture.
+            annotations: normalizeToolAnnotations(tool.annotations),
+            fingerprint: hashValue({
+              name: publicName,
+              description: tool.description ?? '',
+              inputSchema: tool.inputSchema ?? {},
+            }),
+          })
+        }
+        const next = typeof response.nextCursor === 'string' && response.nextCursor !== ''
+          ? response.nextCursor
+          : undefined
+        if (next === undefined) {
+          complete = true
+          break
+        }
+        if (cursors.has(next)) {
+          throw new DeepSeekEyesError('MCP risk metadata tools/list repeated a cursor', 'MCP_CATALOG_CURSOR_LOOP')
+        }
+        cursors.add(next)
+        cursor = next
+      }
+      if (!complete) {
+        throw new DeepSeekEyesError('MCP risk metadata tools/list exceeded the page limit', 'MCP_CATALOG_PAGE_LIMIT')
+      }
+      return metadata
+    } catch (error) {
+      operationError = error
+      throw error
+    } finally {
+      try {
+        await client.close()
+        this.metadataCleanupFailure = undefined
+      } catch (closeError) {
+        this.metadataCleanupFailure = {
+          client,
+          lastError: Object.freeze({
+            code: boundedAdapterErrorCode(closeError, 'MCP_RISK_METADATA_CLEANUP_FAILED'),
+            message: boundedAdapterError(closeError) || 'MCP risk metadata cleanup failed',
+          }),
+        }
+        if (operationError === undefined) {
+          throw new DeepSeekEyesError(
+            'MCP risk metadata cleanup failed',
+            'MCP_RISK_METADATA_CLEANUP_FAILED',
+            { cause: closeError },
+          )
+        }
+        throw new DeepSeekEyesError(
+          'MCP risk metadata request and cleanup both failed',
+          'MCP_RISK_METADATA_CLEANUP_FAILED',
+          { cause: closeError },
+        )
+      }
+    }
+  }
+
+  async retryMetadataCleanup() {
+    const failure = this.metadataCleanupFailure
+    if (failure === undefined) return true
+    try {
+      await failure.client?.close?.()
+      if (this.metadataCleanupFailure === failure) this.metadataCleanupFailure = undefined
+      return true
+    } catch (error) {
+      const detail = adapterErrorState(
+        error,
+        'MCP_RISK_METADATA_CLEANUP_FAILED',
+        'MCP risk metadata cleanup failed',
+      )
+      failure.lastError = Object.freeze({ code: detail.code, message: detail.message })
+      throw new DeepSeekEyesError(detail.message, 'MCP_RISK_METADATA_CLEANUP_FAILED', { cause: error })
+    }
+  }
+
+  updateServer(server) {
+    if (this.server === server) return
+    this.server = server
+    if (this.closed || !this.metadataRequired()) return
+    this.capture.clearMetadata()
+    const generation = ++this.riskMetadataGeneration
+    this.status = 'unknown'
+    this.connected = false
+    this.lastError = undefined
+    this.notify(this.capture.list(), 'risk-metadata-pending')
+    void this.refreshRiskMetadata(this.capture.list(), generation).catch(() => {})
+  }
+
+  async refreshRiskMetadata(tools, generation) {
+    if (this.riskMetadataInFlight !== undefined) {
+      try {
+        await this.riskMetadataInFlight
+      } catch {}
+      if (generation !== this.riskMetadataGeneration) return
+    }
+    const run = (async () => {
+      try {
+        const metadata = await this.readRiskAnnotations()
+        if (generation !== this.riskMetadataGeneration || this.closed) return
+        // The active Host capture may have changed while the independent
+        // metadata connection was draining. setMetadata validates names and
+        // schema fingerprints before making the hints visible.
+        this.capture.setMetadata(metadata, { notify: false })
+        this.status = 'connected'
+        this.connected = true
+        this.lastError = undefined
+        this.notify(this.capture.list(), 'risk-metadata-ready')
+      } catch (error) {
+        if (generation !== this.riskMetadataGeneration || this.closed) return
+        this.capture.clearMetadata()
+        this.status = 'unknown'
+        this.connected = false
+        this.lastError = adapterErrorState(
+          error,
+          'MCP_RISK_METADATA_FAILED',
+          'MCP read-only risk metadata could not be verified',
+        )
+        this.notify(this.capture.list(), 'risk-metadata-failed')
+        throw error
+      }
+    })()
+    this.riskMetadataInFlight = run
+    try {
+      await run
+    } finally {
+      if (this.riskMetadataInFlight === run) this.riskMetadataInFlight = undefined
+    }
+  }
+
   async listTools() {
-    return this.capture.list()
+    return this.capture.list().map(tool => ({ ...tool, catalogGeneration: this.catalogGeneration }))
   }
 
   /**
@@ -592,9 +882,12 @@ export class DshMcpClientAdapter {
     const probeServer = Object.freeze({ ...this.server, id: probeId })
     const probe = new DshMcpClientAdapter(this.ctx, probeServer, {
       loadPlugin: this.loadPlugin,
+      loadSdk: this.loadSdk,
+      wrapperName: probeId,
       environment: this.environment,
       mcpCatalogLimits: this.catalogLimits,
     })
+    probe.probeKey = probeId
     try {
       await probe.start()
       return (await probe.listTools()).map(tool => ({
@@ -621,7 +914,7 @@ export class DshMcpClientAdapter {
       `MCP server ${this.server.id} probe transport cleanup failed: ${detail.message}`,
       'MCP_ADAPTER_CLOSE_FAILED',
     )
-    this.probeCleanupFailures.set(probe.server.id, {
+    this.probeCleanupFailures.set(probe.probeKey ?? probe.server.id, {
       adapter: probe,
       lastError: Object.freeze({ code: failure.code, message: failure.message }),
     })
@@ -728,8 +1021,16 @@ export class DshMcpClientAdapter {
   async callTool(tool, args, exec = {}) {
     const publicName = tool.publicName ?? tool.name
     const definition = this.capture.definitions.get(publicName)
-    if (definition === undefined) {
-      throw new DeepSeekEyesError(`MCP tool ${publicName} is no longer available`, 'MCP_TOOL_UNAVAILABLE')
+    // A Host catalog callback and the manager's serialized catalog update are
+    // separated by microtasks. Refuse a stale tool object here instead of
+    // looking up the same public name and accidentally executing the newer
+    // generation (for example an old read hint dispatching a new write tool).
+    if (definition === undefined
+      || (tool.definition !== undefined && definition !== tool.definition)
+      || (tool.catalogGeneration !== undefined && tool.catalogGeneration !== this.catalogGeneration)) {
+      const error = new DeepSeekEyesError(`MCP tool ${publicName} is no longer available`, 'MCP_TOOL_UNAVAILABLE')
+      error.beforeTransport = true
+      throw error
     }
     return definition.execute(args, {
       ...exec,
@@ -738,11 +1039,39 @@ export class DshMcpClientAdapter {
   }
 
   async close() {
+    // Enter the terminal state before the first await. A metadata refresh can
+    // be started by a Host catalog callback while close is waiting for another
+    // child/probe cleanup; marking the adapter closed and suspending capture
+    // first prevents that late refresh from allocating a new client after the
+    // close snapshot was taken.
+    if (!this.closed) {
+      this.closed = true
+      this.status = 'closed'
+      this.connected = false
+      this.riskMetadataGeneration += 1
+      this.capture.suspend()
+      this.notify([], 'closed')
+    }
+    let metadataInFlightFailure
+    const metadataRun = this.riskMetadataInFlight
+    if (metadataRun !== undefined) {
+      try {
+        await metadataRun
+      } catch (error) {
+        metadataInFlightFailure = error
+      }
+    }
     let probeFailure
     try {
       await this.retryProbeCleanup()
     } catch (error) {
       probeFailure = error
+    }
+    let metadataFailure
+    try {
+      await this.retryMetadataCleanup()
+    } catch (error) {
+      metadataFailure = error
     }
     let runtimeFailure
     try {
@@ -752,6 +1081,10 @@ export class DshMcpClientAdapter {
     }
     if (runtimeFailure !== undefined) throw runtimeFailure
     if (probeFailure !== undefined) throw probeFailure
+    if (metadataFailure !== undefined) throw metadataFailure
+    if (metadataInFlightFailure !== undefined && this.metadataCleanupFailure !== undefined) {
+      throw metadataInFlightFailure
+    }
   }
 
   async disposeFiber({ permanent }) {
@@ -814,6 +1147,7 @@ export class McpOAuthClientAdapter {
     this.closed = false
     this.startedOnce = false
     this.refreshing = undefined
+    this.catalogGeneration = 0
     this.onclose = () => {
       if (this.closed) return
       this.status = 'disconnected'
@@ -836,6 +1170,10 @@ export class McpOAuthClientAdapter {
     })
   }
 
+  updateServer(server) {
+    this.server = server
+  }
+
   notify(reason) {
     this.onToolsChanged?.(this.tools, Object.freeze({ ...this.connectionState(), reason }))
   }
@@ -851,7 +1189,7 @@ export class McpOAuthClientAdapter {
       const sdk = await this.loadSdk()
       const config = materializeDshMcpConfig(this.server, this.environment)
       const client = new sdk.Client(
-        { name: 'deepseekeyes-mcp-oauth', version: '0.8.0' },
+        { name: 'deepseekeyes-mcp-oauth', version: '0.8.1' },
         { capabilities: {} },
       )
       this.client = client
@@ -928,6 +1266,7 @@ export class McpOAuthClientAdapter {
       for (const tool of response.tools) {
         const rawName = String(tool.name)
         const publicName = publicMcpToolName(this.server.id, rawName)
+        const annotations = normalizeToolAnnotations(tool.annotations)
         budget.admit({
           name: publicName,
           description: tool.description ?? '',
@@ -941,7 +1280,15 @@ export class McpOAuthClientAdapter {
           description: typeof tool.description === 'string' ? tool.description : '',
           inputSchema: tool.inputSchema ?? {},
           outputSchema: tool.outputSchema,
-          annotations: tool.annotations,
+          annotations,
+          catalogFingerprint: catalogToolFingerprint({
+            rawName,
+            publicName,
+            description: typeof tool.description === 'string' ? tool.description : '',
+            inputSchema: tool.inputSchema ?? {},
+            outputSchema: tool.outputSchema,
+            annotations,
+          }),
         }))
       }
       const next = typeof response.nextCursor === 'string' && response.nextCursor !== ''
@@ -971,7 +1318,8 @@ export class McpOAuthClientAdapter {
     this.refreshing = (async () => {
       const next = await this.readTools()
       const hadTools = this.tools.length > 0
-      this.tools = next
+      this.catalogGeneration += 1
+      this.tools = next.map(tool => ({ ...tool, catalogGeneration: this.catalogGeneration }))
       if (this.startedOnce && hadTools && next.length === 0) this.status = 'unknown'
       else this.status = 'connected'
       this.lastError = undefined
@@ -990,10 +1338,33 @@ export class McpOAuthClientAdapter {
   }
 
   async callTool(tool, args, exec = {}) {
+    const current = this.tools.find(entry => entry.publicName === (tool.publicName ?? tool.name))
     if (this.client === undefined || this.status !== 'connected') {
       throw new DeepSeekEyesError(`MCP OAuth server ${this.server.id} is not connected`, 'MCP_CONNECTION_UNHEALTHY')
     }
+    const sameCatalogTool = current !== undefined && (
+      (typeof tool.catalogFingerprint === 'string' && tool.catalogFingerprint === current.catalogFingerprint)
+      || (tool.catalogFingerprint === undefined && tool.catalogGeneration === current.catalogGeneration)
+    )
+    if (!sameCatalogTool) {
+      const error = new DeepSeekEyesError(`MCP OAuth tool ${tool.publicName ?? tool.name} is no longer available`, 'MCP_TOOL_UNAVAILABLE')
+      error.beforeTransport = true
+      throw error
+    }
     const sdk = await this.loadSdk()
+    // Loading the Host SDK yields to catalog notifications. Re-resolve the
+    // identity after that boundary so a concurrent refresh cannot dispatch an
+    // old definition through the new OAuth transport generation.
+    const latest = this.tools.find(entry => entry.publicName === (tool.publicName ?? tool.name))
+    const latestMatches = latest !== undefined && (
+      (typeof tool.catalogFingerprint === 'string' && tool.catalogFingerprint === latest.catalogFingerprint)
+      || (tool.catalogFingerprint === undefined && tool.catalogGeneration === latest.catalogGeneration)
+    )
+    if (this.client === undefined || this.status !== 'connected' || !latestMatches) {
+      const error = new DeepSeekEyesError(`MCP OAuth tool ${tool.publicName ?? tool.name} is no longer available`, 'MCP_TOOL_UNAVAILABLE')
+      error.beforeTransport = true
+      throw error
+    }
     try {
       return await this.client.request(
         {

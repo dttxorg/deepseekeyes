@@ -26,6 +26,8 @@ import { McpOAuthSessionRegistry } from './oauth.js'
 import {
   classifyToolRisk,
   contentPolicyDecision,
+  mcpRiskPolicyDecision,
+  normalizeToolAnnotations,
   publicMcpToolName,
   toolPolicyDecision,
 } from './policy.js'
@@ -82,8 +84,10 @@ function normalizeTool(server, tool) {
     description: typeof tool.description === 'string' ? tool.description : '',
     inputSchema: tool.inputSchema ?? tool.parameters ?? tool.definition?.parameters ?? {},
     outputSchema: tool.outputSchema ?? tool.definition?.output?.schema,
-    annotations: tool.annotations,
+    annotations: normalizeToolAnnotations(tool.annotations),
     definition: tool.definition,
+    ...(Number.isSafeInteger(tool.catalogGeneration) ? { catalogGeneration: tool.catalogGeneration } : {}),
+    ...(typeof tool.catalogFingerprint === 'string' ? { catalogFingerprint: tool.catalogFingerprint } : {}),
   })
 }
 
@@ -117,6 +121,14 @@ function boundedSafeErrorCode(error, fallback, maximum = 100) {
   if (bounded.trim() === '') return fallback
   const code = safeError(bounded, maximum)
   return code === '' ? fallback : code
+}
+
+function isBeforeTransportError(error) {
+  try {
+    return error?.beforeTransport === true
+  } catch {
+    return false
+  }
 }
 
 function publicCallInput(args) {
@@ -588,6 +600,12 @@ export class McpManager {
         runtime.schemaTokensEstimated.set(tool.publicName, candidate.schemaTokensEstimated)
         const policy = toolPolicyDecision(server, tool)
         if (!policy.allowed) continue
+        const riskPolicy = mcpRiskPolicyDecision(server, classifyToolRisk(tool.annotations))
+        if (!riskPolicy.allowed) {
+          runtime.blocked ??= new Map()
+          runtime.blocked.set(tool.publicName, `risk-policy-${riskPolicy.reason}`)
+          continue
+        }
         let blockedReason
         if (seen.has(tool.publicName)) blockedReason = 'duplicate-public-name'
         else if (this.config.mcpMaxTools !== 0 && usedTools >= this.config.mcpMaxTools) blockedReason = 'max-tools'
@@ -804,7 +822,7 @@ export class McpManager {
 
   async consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall) {
     const maximum = this.config.mcpMaxExternalCallsPerRun
-    if (maximum === 0 || exec.parent === undefined) return
+    if (maximum === 0 || exec.parent === undefined) return false
     const parent = exec.parent
     if (!this.externalCallsByCodeRun.has(parent)) {
       this.externalCallsByCodeRun.set(parent, 0)
@@ -826,6 +844,16 @@ export class McpManager {
       )
     }
     this.externalCallsByCodeRun.set(parent, used + 1)
+    return true
+  }
+
+  releaseCodeRunExternalCall(exec) {
+    const parent = exec.parent
+    if (parent === undefined) return
+    const used = this.externalCallsByCodeRun.get(parent)
+    if (used === undefined) return
+    if (used <= 1) this.externalCallsByCodeRun.delete(parent)
+    else this.externalCallsByCodeRun.set(parent, used - 1)
   }
 
   async executeManaged(serverId, publicName, args, exec = {}) {
@@ -847,48 +875,99 @@ export class McpManager {
       deferContext({ errorCode: code })
       throw error
     }
-    const runtime = this.runtimes.get(serverId)
-    const server = runtime?.server
-    const tool = runtime?.tools.get(publicName)
-    if (!this.config.mcpEnabled || !server?.enabled || runtime?.status !== 'connected' || tool === undefined) {
-      rejectBeforeCall(`MCP tool ${publicName} is not currently available`, 'MCP_TOOL_UNAVAILABLE')
+    // Resolve the live runtime immediately before every asynchronous boundary.
+    // Settings/reconnect work revokes schemas synchronously, but an invocation
+    // that already entered this function can otherwise resume with a stale
+    // server/tool pair after an await and reach the external transport.
+    const resolveCurrentCall = () => {
+      const liveRuntime = this.runtimes.get(serverId)
+      const liveServer = liveRuntime?.server
+      const liveTool = liveRuntime?.tools.get(publicName)
+      if (
+        !this.config.mcpEnabled
+        || !liveServer?.enabled
+        || liveRuntime?.status !== 'connected'
+        || liveTool === undefined
+      ) {
+        rejectBeforeCall(`MCP tool ${publicName} is not currently available`, 'MCP_TOOL_UNAVAILABLE')
+      }
+      const liveClassification = classifyToolRisk(liveTool.annotations)
+      const liveRiskPolicy = mcpRiskPolicyDecision(liveServer, liveClassification)
+      if (!liveRiskPolicy.allowed) {
+        rejectBeforeCall(
+          `MCP tool ${publicName} is blocked by the ${liveRiskPolicy.policy} risk policy`,
+          'MCP_TOOL_RISK_BLOCKED',
+        )
+      }
+      // The identity check prevents a catalog refresh from allowing an old
+      // definition to call after its replacement has been exposed.
+      if (
+        !toolPolicyDecision(liveServer, liveTool).allowed
+        || this.exposed.get(publicName)?.tool !== liveTool
+      ) {
+        rejectBeforeCall(`MCP tool ${publicName} is not allowed by current settings`, 'MCP_TOOL_NOT_ALLOWED')
+      }
+      return {
+        runtime: liveRuntime,
+        server: liveServer,
+        tool: liveTool,
+        classification: liveClassification,
+      }
     }
-    if (!toolPolicyDecision(server, tool).allowed || !this.exposed.has(publicName)) {
-      rejectBeforeCall(`MCP tool ${publicName} is not allowed by current settings`, 'MCP_TOOL_NOT_ALLOWED')
-    }
-    const classification = classifyToolRisk(tool.annotations)
+    let active = resolveCurrentCall()
     if (this.authorize !== undefined) {
       let allowed
       try {
-        allowed = await this.authorize({ server, tool, classification, args, exec })
+        allowed = await this.authorize({
+          server: active.server,
+          tool: active.tool,
+          classification: active.classification,
+          args,
+          exec,
+        })
       } catch (error) {
         const failure = managedMcpError(error, publicName, 'MCP_TOOL_NOT_APPROVED')
         deferContext({ errorCode: failure.code })
         throw failure
       }
       if (!allowed) rejectBeforeCall(`MCP tool ${publicName} was not approved`, 'MCP_TOOL_NOT_APPROVED')
+      active = resolveCurrentCall()
     }
-    await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
+    const externalCallCounted = await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
+    // consumeCodeRunExternalCall is asynchronous even when it only increments
+    // an in-memory counter. Re-check after it yields and immediately before the
+    // transport call so a queued reconfigure/reconnect cannot race past policy.
+    try {
+      active = resolveCurrentCall()
+    } catch (error) {
+      // The final preflight is still before transport. A concurrent lifecycle
+      // change must not burn the caller's Code Mode budget when it revokes the
+      // invocation during the asynchronous counter boundary.
+      if (externalCallCounted) this.releaseCodeRunExternalCall(exec)
+      throw error
+    }
     const started = Date.now()
     let bounded
     let failure
+    let transportDispatched = false
     let failureCode = 'MCP_TOOL_CALL_FAILED'
     try {
-      const raw = typeof runtime.adapter.callTool === 'function'
-        ? await runtime.adapter.callTool(tool, args, exec)
-        : await tool.definition.execute(args, exec)
+      transportDispatched = true
+      const raw = typeof active.runtime.adapter.callTool === 'function'
+        ? await active.runtime.adapter.callTool(active.tool, args, exec)
+        : await active.tool.definition.execute(args, exec)
       failureCode = 'MCP_TOOL_RESULT_FAILED'
       const admission = admitMcpResult(raw)
       const images = await saveMcpResultImages(this.ctx, raw, {
         serverId,
-        toolName: tool.rawName,
+        toolName: active.tool.rawName,
         admission,
       })
       bounded = await boundMcpResult(raw, {
         maxChars: this.config.mcpMaxResultChars,
         artifactDir: this.config.mcpArtifactDir,
         serverId,
-        toolName: tool.rawName,
+        toolName: active.tool.rawName,
         images,
         admission,
       })
@@ -905,12 +984,19 @@ export class McpManager {
         ? { ...bounded, images: [] }
         : bounded
     } catch (error) {
+      if (isBeforeTransportError(error)) {
+        transportDispatched = false
+        if (externalCallCounted) this.releaseCodeRunExternalCall(exec)
+        failure = error
+        deferContext({ errorCode: error.code ?? 'MCP_TOOL_UNAVAILABLE' })
+        throw error
+      }
       failure = managedMcpError(error, publicName, failureCode)
       deferContext({ errorCode: failure.code })
       throw failure
     } finally {
       const sessionId = exec.agent?.id ?? exec.agent?.session?.id
-      if (this.usageTracker?.recordMcpExternalCall !== undefined) {
+      if (transportDispatched && this.usageTracker?.recordMcpExternalCall !== undefined) {
         const resultTokens = bounded === undefined
           ? 0
           : estimateMcpResultTokens(bounded)
@@ -925,8 +1011,8 @@ export class McpManager {
           const event = mcpAuditSummary({
             id: randomUUID(),
             at: nowIso(this.now),
-            server,
-            tool,
+            server: active.server,
+            tool: active.tool,
             args,
             result: bounded,
             error: failure,
@@ -970,70 +1056,90 @@ export class McpManager {
     if (serverId === '' || identity === '') {
       rejectBeforeCall(`MCP ${kind} requires a non-empty serverId and ${kind === 'resource' ? 'uri' : 'name'}`, 'MCP_CONTENT_INPUT_INVALID')
     }
-    const runtime = this.runtimes.get(serverId)
-    const server = runtime?.server
-    if (!this.config.mcpEnabled || !server?.enabled || runtime?.contentStatus !== 'connected') {
-      rejectBeforeCall(`MCP ${kind} ${identity} is not currently available`, 'MCP_CONTENT_UNAVAILABLE')
-    }
-    let catalogEntry
-    if (kind === 'resource') {
-      if (!server.resourcesEnabled || !this.contentExposed.has(publicName)) {
-        rejectBeforeCall(`MCP Resource ${identity} is disabled`, 'MCP_RESOURCES_DISABLED')
-      }
-      catalogEntry = resourceCatalogEntry(runtime, identity)
-      if (catalogEntry === undefined) {
-        rejectBeforeCall(`MCP Resource ${identity} is not present in the discovered catalog`, 'MCP_RESOURCE_UNKNOWN')
-      }
-      const direct = contentPolicyDecision(server, 'resource', identity)
-      const templateIdentity = catalogEntry.uriTemplate
-      const template = templateIdentity === undefined
-        ? undefined
-        : contentPolicyDecision(server, 'resource', templateIdentity)
-      if (direct.reason === 'denylist' || template?.reason === 'denylist'
-        || (!direct.allowed && template?.allowed !== true)) {
-        rejectBeforeCall(`MCP Resource ${identity} is not allowed by current settings`, 'MCP_RESOURCE_NOT_ALLOWED')
-      }
-    } else {
-      if (!server.promptsEnabled || !this.contentExposed.has(publicName)) {
-        rejectBeforeCall(`MCP Prompt ${identity} is disabled`, 'MCP_PROMPTS_DISABLED')
-      }
-      catalogEntry = runtime.contentCatalog.prompts.find(prompt => prompt.name === identity)
-      if (catalogEntry === undefined) {
-        rejectBeforeCall(`MCP Prompt ${identity} is not present in the discovered catalog`, 'MCP_PROMPT_UNKNOWN')
-      }
-      if (!contentPolicyDecision(server, 'prompt', identity).allowed) {
-        rejectBeforeCall(`MCP Prompt ${identity} is not allowed by current settings`, 'MCP_PROMPT_NOT_ALLOWED')
-      }
-      const promptArgs = args?.arguments ?? {}
-      if (promptArgs === null || typeof promptArgs !== 'object' || Array.isArray(promptArgs)) {
-        rejectBeforeCall('MCP Prompt arguments must be an object', 'MCP_CONTENT_INPUT_INVALID')
-      }
-      const declared = new Map(catalogEntry.arguments.map(argument => [argument.name, argument]))
-      for (const [name, value] of Object.entries(promptArgs)) {
-        if (!declared.has(name) || typeof value !== 'string') {
-          rejectBeforeCall(`MCP Prompt argument ${name} is not a declared string argument`, 'MCP_PROMPT_ARGUMENT_INVALID')
-        }
-      }
-      const missing = catalogEntry.arguments.find(argument => argument.required && !Object.hasOwn(promptArgs, argument.name))
-      if (missing !== undefined) {
-        rejectBeforeCall(`MCP Prompt argument ${missing.name} is required`, 'MCP_PROMPT_ARGUMENT_REQUIRED')
-      }
-    }
-
     const auditTool = contentAuditTool(publicName, kind)
     const classification = classifyToolRisk(auditTool.annotations)
+
+    // Resolve the current Content generation at every asynchronous boundary.
+    // An approval hook or the Code Mode quota check can yield while settings
+    // reconfiguration revokes an allowlist, replaces a transport, or clears
+    // the exposed generic Resource/Prompt tool. Never dispatch through the
+    // runtime and catalog captured before that lifecycle change.
+    const resolveCurrentContentCall = () => {
+      const liveRuntime = this.runtimes.get(serverId)
+      const liveServer = liveRuntime?.server
+      if (!this.config.mcpEnabled || !liveServer?.enabled || liveRuntime?.contentStatus !== 'connected') {
+        rejectBeforeCall(`MCP ${kind} ${identity} is not currently available`, 'MCP_CONTENT_UNAVAILABLE')
+      }
+      let liveCatalogEntry
+      if (kind === 'resource') {
+        if (!liveServer.resourcesEnabled || !this.contentExposed.has(publicName)) {
+          rejectBeforeCall(`MCP Resource ${identity} is disabled`, 'MCP_RESOURCES_DISABLED')
+        }
+        liveCatalogEntry = resourceCatalogEntry(liveRuntime, identity)
+        if (liveCatalogEntry === undefined) {
+          rejectBeforeCall(`MCP Resource ${identity} is not present in the discovered catalog`, 'MCP_RESOURCE_UNKNOWN')
+        }
+        const direct = contentPolicyDecision(liveServer, 'resource', identity)
+        const templateIdentity = liveCatalogEntry.uriTemplate
+        const template = templateIdentity === undefined
+          ? undefined
+          : contentPolicyDecision(liveServer, 'resource', templateIdentity)
+        if (direct.reason === 'denylist' || template?.reason === 'denylist'
+          || (!direct.allowed && template?.allowed !== true)) {
+          rejectBeforeCall(`MCP Resource ${identity} is not allowed by current settings`, 'MCP_RESOURCE_NOT_ALLOWED')
+        }
+      } else {
+        if (!liveServer.promptsEnabled || !this.contentExposed.has(publicName)) {
+          rejectBeforeCall(`MCP Prompt ${identity} is disabled`, 'MCP_PROMPTS_DISABLED')
+        }
+        liveCatalogEntry = liveRuntime.contentCatalog.prompts.find(prompt => prompt.name === identity)
+        if (liveCatalogEntry === undefined) {
+          rejectBeforeCall(`MCP Prompt ${identity} is not present in the discovered catalog`, 'MCP_PROMPT_UNKNOWN')
+        }
+        if (!contentPolicyDecision(liveServer, 'prompt', identity).allowed) {
+          rejectBeforeCall(`MCP Prompt ${identity} is not allowed by current settings`, 'MCP_PROMPT_NOT_ALLOWED')
+        }
+        const promptArgs = args?.arguments ?? {}
+        if (promptArgs === null || typeof promptArgs !== 'object' || Array.isArray(promptArgs)) {
+          rejectBeforeCall('MCP Prompt arguments must be an object', 'MCP_CONTENT_INPUT_INVALID')
+        }
+        const declared = new Map(liveCatalogEntry.arguments.map(argument => [argument.name, argument]))
+        for (const [name, value] of Object.entries(promptArgs)) {
+          if (!declared.has(name) || typeof value !== 'string') {
+            rejectBeforeCall(`MCP Prompt argument ${name} is not a declared string argument`, 'MCP_PROMPT_ARGUMENT_INVALID')
+          }
+        }
+        const missing = liveCatalogEntry.arguments.find(argument => argument.required && !Object.hasOwn(promptArgs, argument.name))
+        if (missing !== undefined) {
+          rejectBeforeCall(`MCP Prompt argument ${missing.name} is required`, 'MCP_PROMPT_ARGUMENT_REQUIRED')
+        }
+      }
+      return { runtime: liveRuntime, server: liveServer, catalogEntry: liveCatalogEntry }
+    }
+
+    let active = resolveCurrentContentCall()
     if (this.authorize !== undefined) {
       let allowed
       try {
-        allowed = await this.authorize({ server, tool: auditTool, classification, args, exec })
+        allowed = await this.authorize({ server: active.server, tool: auditTool, classification, args, exec })
       } catch (error) {
         const failure = managedMcpError(error, publicName, 'MCP_TOOL_NOT_APPROVED')
         deferContext({ errorCode: failure.code })
         throw failure
       }
       if (!allowed) rejectBeforeCall(`MCP ${kind} ${identity} was not approved`, 'MCP_TOOL_NOT_APPROVED')
+      active = resolveCurrentContentCall()
     }
-    await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
+    const externalCallCounted = await this.consumeCodeRunExternalCall(exec, publicName, rejectBeforeCall)
+    // consumeCodeRunExternalCall yields even for an in-memory counter. Recheck
+    // once more so a queued lifecycle change cannot consume quota and then
+    // dispatch a revoked Resource/Prompt through its old adapter.
+    try {
+      active = resolveCurrentContentCall()
+    } catch (error) {
+      if (externalCallCounted) this.releaseCodeRunExternalCall(exec)
+      throw error
+    }
 
     const started = Date.now()
     let bounded
@@ -1041,8 +1147,8 @@ export class McpManager {
     let failureCode = kind === 'resource' ? 'MCP_RESOURCE_READ_FAILED' : 'MCP_PROMPT_GET_FAILED'
     try {
       const response = kind === 'resource'
-        ? await runtime.contentAdapter.readResource(identity, exec)
-        : await runtime.contentAdapter.getPrompt(identity, args.arguments ?? {}, exec)
+        ? await active.runtime.contentAdapter.readResource(identity, exec)
+        : await active.runtime.contentAdapter.getPrompt(identity, args.arguments ?? {}, exec)
       const raw = kind === 'resource' ? mcpResourceResult(response) : mcpPromptResult(response)
       failureCode = 'MCP_CONTENT_RESULT_FAILED'
       const admission = admitMcpResult(raw)
@@ -1083,7 +1189,7 @@ export class McpManager {
           const event = mcpAuditSummary({
             id: randomUUID(),
             at: nowIso(this.now),
-            server,
+            server: active.server,
             tool: auditTool,
             args,
             result: bounded,
@@ -1208,6 +1314,48 @@ export class McpManager {
             else blockedReplacement.add(runtime.server.id)
           } else {
             runtime.server = replacement
+            runtime.adapter?.updateServer?.(replacement)
+            runtime.contentAdapter?.updateServer?.(replacement)
+            const connection = runtime.adapter?.connectionState?.()
+            // `connectionState()` is the public transport health contract, but
+            // the official DSH adapters also expose a live status field. During
+            // risk-metadata refresh the adapter deliberately reports
+            // `unknown`/`connecting` while a stale catalog is withdrawn. A
+            // policy-only reconfigure must not return a connected snapshot (or
+            // re-expose that stale schema) during that window, even if a custom
+            // adapter's connectionState still reports connected.
+            const adapterStatus = runtime.adapter?.status
+            const connectionStatus = typeof connection?.status === 'string' ? connection.status : undefined
+            // Custom adapters may legitimately omit both optional health
+            // projections. In that case retain the already-connected runtime
+            // state instead of treating a policy-only update as a disconnect.
+            const connectionUnhealthy = connection?.connected === false
+              || (connectionStatus !== undefined && connectionStatus !== 'connected')
+            const adapterUnhealthy = connectionUnhealthy
+              || (typeof adapterStatus === 'string' && adapterStatus !== 'connected')
+            if (adapterUnhealthy) {
+              const failureStatus = connectionStatus ?? adapterStatus
+              runtime.status = failureStatus === 'error'
+                || failureStatus === 'catalog-rejected'
+                || failureStatus === 'cleanup-failed'
+                ? 'error'
+                : 'degraded'
+              runtime.healthy = false
+              runtime.lastError = connection?.error === undefined && connection?.metadataCleanupFailure === undefined
+                ? {
+                    code: 'MCP_CONNECTION_UNHEALTHY',
+                    message: 'The MCP transport is not connected while policy metadata is being verified.',
+                  }
+                : {
+                    code: boundedSafeErrorCode(
+                      connection.error ?? connection.metadataCleanupFailure,
+                      'MCP_CONNECTION_UNHEALTHY',
+                    ),
+                    message: boundedSafeError(
+                      connection.error ?? connection.metadataCleanupFailure,
+                    ),
+                  }
+            }
           }
         }
         if (next.mcpEnabled) {
@@ -1608,6 +1756,7 @@ export class McpManager {
     return [...(runtime?.tools.values() ?? [])].map(tool => {
       const policy = toolPolicyDecision(server, tool)
       const classification = classifyToolRisk(tool.annotations)
+      const riskPolicy = mcpRiskPolicyDecision(server, classification)
       const exposed = this.exposed.has(tool.publicName)
       return {
         name: tool.rawName,
@@ -1620,6 +1769,8 @@ export class McpManager {
         }),
         risk: classification.risk,
         requiresApproval: classification.requiresApproval,
+        riskPolicy: riskPolicy.policy,
+        riskPolicyAllowed: riskPolicy.allowed,
         schemaTokensEstimated: runtime?.schemaTokensEstimated?.get(tool.publicName)
           ?? this.createManagedCandidate(server, runtime, tool).schemaTokensEstimated,
       }
@@ -1697,6 +1848,7 @@ export class McpManager {
         name: server.name,
         enabled: server.enabled,
         transport: server.transport,
+        riskPolicy: server.riskPolicy,
         status,
         healthy: status === 'connected',
         toolsEnabled: server.toolsEnabled,

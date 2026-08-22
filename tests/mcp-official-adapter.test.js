@@ -4,10 +4,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import {
+  CallToolResultSchema,
+  ListToolsResultSchema,
+  ToolListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 import {
   DshMcpClientAdapter,
   materializeDshMcpConfig,
   normalizeMcpConfig,
+  publicMcpToolName,
 } from '../src/mcp/index.js'
 
 const loadSourceMcpClient = () => import('@deepseek-ai/dsh-mcp-client')
@@ -94,6 +103,192 @@ test('official adapter captures DSH tool definitions without registering them gl
   await adapter.close()
   await new Promise(resolve => queueMicrotask(resolve))
   assert.equal(changed.at(-1).length, 0)
+})
+
+test('official adapter rejects a stale same-name definition before it can dispatch a replacement', async () => {
+  let captureTools
+  let unregister
+  let writes = 0
+  const fakePlugin = {
+    inject: [],
+    async apply(child) {
+      captureTools = child.tools
+      unregister = captureTools.register({
+        name: 'mcp__fixture__search',
+        description: 'Read',
+        parameters: { type: 'object' },
+        output: { schema: {} },
+        async execute() { return { content: [{ type: 'text', text: 'read' }] } },
+      })
+    },
+  }
+  const adapter = new DshMcpClientAdapter(syntheticPluginContext(), normalizedServer({ env: {}, allowedTools: ['*'] }), {
+    loadPlugin: async () => fakePlugin,
+  })
+  await adapter.start()
+  const [stale] = await adapter.listTools()
+  unregister()
+  captureTools.register({
+    name: 'mcp__fixture__search',
+    description: 'Write',
+    parameters: { type: 'object' },
+    output: { schema: {} },
+    async execute() {
+      writes += 1
+      return { content: [{ type: 'text', text: 'write' }] }
+    },
+  })
+  await assert.rejects(
+    adapter.callTool(stale, {}),
+    error => error.code === 'MCP_TOOL_UNAVAILABLE',
+  )
+  assert.equal(writes, 0)
+  await adapter.close()
+})
+
+test('official adapter preserves punctuation raw names in allow mode when an explicit selector needs metadata', async () => {
+  const publicName = publicMcpToolName('fixture', 'read.file')
+  const fakePlugin = registeringPlugin([{
+    name: publicName,
+    description: 'Read a file',
+    async execute() { return { content: [{ type: 'text', text: 'read-ok' }] } },
+  }])
+  class FakeClient {
+    async connect() {}
+    async request() {
+      return {
+        tools: [{
+          name: 'read.file',
+          description: 'Read a file',
+          inputSchema: { type: 'object' },
+          annotations: { readOnlyHint: true },
+        }],
+      }
+    }
+    async close() {}
+  }
+  class FakeTransport {
+    constructor() {}
+  }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new DshMcpClientAdapter(
+    syntheticPluginContext(),
+    normalizedServer({ env: {}, allowedTools: ['read.file'], riskPolicy: 'allow' }),
+    {
+      loadPlugin: async () => fakePlugin,
+      loadSdk: async () => ({
+        Client: FakeClient,
+        StdioClientTransport: FakeTransport,
+        StreamableHTTPClientTransport: FakeTransport,
+        ListToolsResultSchema: passthrough,
+      }),
+    },
+  )
+  await adapter.start()
+  const [tool] = await adapter.listTools()
+  assert.equal(tool.rawName, 'read.file')
+  assert.equal(tool.annotations.readOnlyHint, true)
+  assert.deepEqual(await adapter.callTool(tool, {}), {
+    content: [{ type: 'text', text: 'read-ok' }],
+  })
+  await adapter.close()
+})
+
+test('official adapter recovers metadata for long raw names before applying selectors', async () => {
+  const rawName = 'long-' + 'a'.repeat(82)
+  const publicName = publicMcpToolName('fixture', rawName)
+  const fakePlugin = registeringPlugin([{
+    name: publicName,
+    description: 'Long read',
+    async execute() { return { content: [{ type: 'text', text: 'long-ok' }] } },
+  }])
+  let sdkLoads = 0
+  class FakeClient {
+    async connect() {}
+    async request() {
+      return {
+        tools: [{
+          name: rawName,
+          description: 'Long read',
+          inputSchema: { type: 'object' },
+          annotations: { readOnlyHint: true },
+        }],
+      }
+    }
+    async close() {}
+  }
+  class FakeTransport { constructor() {} }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new DshMcpClientAdapter(
+    syntheticPluginContext(),
+    normalizedServer({ env: {}, allowedTools: [rawName], riskPolicy: 'allow' }),
+    {
+      loadPlugin: async () => fakePlugin,
+      loadSdk: async () => {
+        sdkLoads += 1
+        return {
+          Client: FakeClient,
+          StdioClientTransport: FakeTransport,
+          StreamableHTTPClientTransport: FakeTransport,
+          ListToolsResultSchema: passthrough,
+        }
+      },
+    },
+  )
+  await adapter.start()
+  const [tool] = await adapter.listTools()
+  assert.equal(sdkLoads, 1)
+  assert.equal(tool.rawName, rawName)
+  assert.deepEqual(await adapter.callTool(tool, {}), {
+    content: [{ type: 'text', text: 'long-ok' }],
+  })
+  await adapter.close()
+})
+
+test('official adapter fails closed when the metadata client cannot be closed', async () => {
+  const fakePlugin = registeringPlugin([{
+    name: 'mcp__fixture__search',
+    description: 'Search',
+  }])
+  let closeAttempts = 0
+  class CloseFailClient {
+    async connect() {}
+    async request() {
+      return {
+        tools: [{ name: 'search', description: 'Search', inputSchema: { type: 'object' } }],
+      }
+    }
+    async close() {
+      closeAttempts += 1
+      if (closeAttempts === 1) {
+        throw Object.assign(new Error('metadata close failed'), { code: 'MCP_METADATA_CLOSE_FAILED' })
+      }
+    }
+  }
+  class FakeTransport {
+    constructor() {}
+  }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new DshMcpClientAdapter(
+    syntheticPluginContext(),
+    normalizedServer({ env: {}, riskPolicy: 'read-only', allowedTools: ['search'] }),
+    {
+      loadPlugin: async () => fakePlugin,
+      loadSdk: async () => ({
+        Client: CloseFailClient,
+        StdioClientTransport: FakeTransport,
+        StreamableHTTPClientTransport: FakeTransport,
+        ListToolsResultSchema: passthrough,
+      }),
+    },
+  )
+  await assert.rejects(
+    adapter.start(),
+    error => error.code === 'MCP_RISK_METADATA_CLEANUP_FAILED',
+  )
+  assert.equal(adapter.connectionState().status, 'unknown')
+  await adapter.close()
+  assert.equal(closeAttempts, 2, 'failed metadata cleanup must be retried during adapter close')
 })
 
 function syntheticPluginContext({ disposeError } = {}) {
@@ -489,6 +684,267 @@ test('official adapter runs capture through a real Cordis child fiber and dispos
   assert.deepEqual(changes.at(-1), [])
 })
 
+test('read-only official adapter refreshes risk metadata for every Host catalog generation', async () => {
+  const effects = []
+  const registered = []
+  let unregister
+  let captureTools
+  let metadata = {
+    description: 'Read',
+    annotations: { readOnlyHint: true, title: 'x'.repeat(1_000_000) },
+  }
+  const ctx = {
+    tools: {
+      register(definition) {
+        registered.push(definition)
+        return () => {
+          const index = registered.indexOf(definition)
+          if (index >= 0) registered.splice(index, 1)
+        }
+      },
+    },
+    plugin(wrapper) {
+      const child = {
+        extend(next) { return { ...this, ...next } },
+        effect(callback) { effects.push(callback()) },
+      }
+      const promise = Promise.resolve(wrapper.apply(child))
+      promise.dispose = async () => {
+        for (const dispose of effects.splice(0).reverse()) await dispose?.()
+      }
+      return promise
+    },
+  }
+  const fakePlugin = {
+    inject: [],
+    async apply(child) {
+      captureTools = child.tools
+      const register = () => child.tools.register({
+        name: 'mcp__fixture__dynamic',
+        description: metadata.description,
+        parameters: { type: 'object' },
+        output: { schema: {} },
+        async execute() { return { content: [{ type: 'text', text: 'ok' }] } },
+      })
+      unregister = register()
+      child.effect(() => () => unregister?.())
+    },
+  }
+  class FakeClient {
+    async connect() {}
+    async request() {
+      return {
+        tools: [{
+          name: 'dynamic',
+          description: metadata.description,
+          inputSchema: { type: 'object' },
+          annotations: metadata.annotations,
+        }],
+      }
+    }
+    async close() {}
+  }
+  class FakeTransport {
+    constructor(options) { this.options = options }
+  }
+  const sdk = {
+    Client: FakeClient,
+    StdioClientTransport: FakeTransport,
+    StreamableHTTPClientTransport: FakeTransport,
+    ListToolsResultSchema: {},
+    CallToolResultSchema: {},
+    ToolListChangedNotificationSchema: {},
+  }
+  const server = normalizedServer({ env: {}, riskPolicy: 'read-only' })
+  const adapter = new DshMcpClientAdapter(ctx, server, {
+    loadPlugin: async () => fakePlugin,
+    loadSdk: async () => sdk,
+  })
+  await adapter.start()
+  let [tool] = await adapter.listTools()
+  assert.equal(tool.annotations.readOnlyHint, true)
+  assert.equal(tool.annotations.title, undefined, 'unbounded annotation extensions must not be retained')
+
+  metadata = { description: 'Write', annotations: { readOnlyHint: false } }
+  unregister()
+  unregister = captureTools.register({
+    name: 'mcp__fixture__dynamic',
+    description: metadata.description,
+    parameters: { type: 'object' },
+    output: { schema: {} },
+    async execute() { return { content: [{ type: 'text', text: 'wrote' }] } },
+  })
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2))
+    ;[tool] = await adapter.listTools()
+    if (tool?.annotations?.readOnlyHint === false) break
+  }
+  assert.equal(tool.description, 'Write')
+  assert.equal(tool.annotations.readOnlyHint, false)
+  assert.equal(adapter.connectionState().status, 'connected')
+  await adapter.close()
+})
+
+test('official adapter withdraws a transformed catalog while replacement metadata is pending', async () => {
+  let captureTools
+  let unregister
+  let requestCount = 0
+  let releasePending
+  const pending = new Promise(resolve => { releasePending = resolve })
+  const fakePlugin = {
+    inject: [],
+    async apply(child) {
+      captureTools = child.tools
+      unregister = captureTools.register({
+        name: 'mcp__fixture__dynamic',
+        description: 'Read',
+        parameters: { type: 'object' },
+        async execute() { return { content: [{ type: 'text', text: 'ok' }] } },
+      })
+    },
+  }
+  class FakeClient {
+    async connect() {}
+    async request() {
+      requestCount += 1
+      if (requestCount === 1) {
+        return {
+          tools: [{
+            name: 'dynamic',
+            description: 'Read',
+            inputSchema: { type: 'object' },
+            annotations: { readOnlyHint: true },
+          }],
+        }
+      }
+      return pending
+    }
+    async close() {}
+  }
+  class FakeTransport { constructor() {} }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new DshMcpClientAdapter(
+    syntheticPluginContext(),
+    normalizedServer({ env: {}, riskPolicy: 'read-only' }),
+    {
+      loadPlugin: async () => fakePlugin,
+      loadSdk: async () => ({
+        Client: FakeClient,
+        StdioClientTransport: FakeTransport,
+        StreamableHTTPClientTransport: FakeTransport,
+        ListToolsResultSchema: passthrough,
+      }),
+    },
+  )
+  await adapter.start()
+  unregister()
+  captureTools.register({
+    name: 'mcp__fixture__dynamic',
+    description: 'Write',
+    parameters: { type: 'object' },
+    async execute() { return { content: [{ type: 'text', text: 'write' }] } },
+  })
+  for (let attempt = 0; attempt < 20 && requestCount < 2; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.equal(requestCount, 2)
+  assert.equal(adapter.connectionState().status, 'unknown')
+  assert.equal((await adapter.listTools())[0].annotations.readOnlyHint, undefined)
+  releasePending({
+    tools: [{
+      name: 'dynamic',
+      description: 'Write',
+      inputSchema: { type: 'object' },
+      annotations: { readOnlyHint: false },
+    }],
+  })
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+    if (adapter.connectionState().status === 'connected') break
+  }
+  const [tool] = await adapter.listTools()
+  assert.equal(adapter.connectionState().status, 'connected')
+  assert.equal(tool.annotations.readOnlyHint, false)
+  await adapter.close()
+})
+
+test('official adapter blocks late metadata refreshes after close begins', async () => {
+  let requestCount = 0
+  let releasePending
+  let pendingRequest
+  let closeCount = 0
+  const fakePlugin = registeringPlugin([{
+    name: 'mcp__fixture__dynamic',
+    description: 'Read',
+    async execute() { return { content: [{ type: 'text', text: 'ok' }] } },
+  }])
+  class FakeClient {
+    async connect() {}
+    async request() {
+      requestCount += 1
+      if (requestCount === 1) {
+        return {
+          tools: [{
+            name: 'dynamic',
+            description: 'Read',
+            inputSchema: { type: 'object' },
+            annotations: { readOnlyHint: true },
+          }],
+        }
+      }
+      pendingRequest = new Promise(resolve => { releasePending = resolve })
+      return pendingRequest
+    }
+    async close() { closeCount += 1 }
+  }
+  class FakeTransport { constructor() {} }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new DshMcpClientAdapter(
+    syntheticPluginContext(),
+    normalizedServer({ env: {}, riskPolicy: 'read-only' }),
+    {
+      loadPlugin: async () => fakePlugin,
+      loadSdk: async () => ({
+        Client: FakeClient,
+        StdioClientTransport: FakeTransport,
+        StreamableHTTPClientTransport: FakeTransport,
+        ListToolsResultSchema: passthrough,
+      }),
+    },
+  )
+  await adapter.start()
+  assert.equal(requestCount, 1)
+
+  adapter.updateServer(normalizedServer({ env: {}, riskPolicy: 'read-only', name: 'refresh' }))
+  for (let attempt = 0; attempt < 20 && requestCount < 2; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.equal(requestCount, 2)
+  let closeSettled = false
+  const closing = adapter.close().then(() => { closeSettled = true })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(closeSettled, false, 'close must wait for the in-flight metadata client')
+  const requestsAtClose = requestCount
+
+  // A second Host update arrives while close is waiting. It must not allocate
+  // another SDK client or leave a late cleanup handle behind.
+  adapter.updateServer(normalizedServer({ env: {}, riskPolicy: 'read-only', name: 'late' }))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(requestCount, requestsAtClose)
+  releasePending({
+    tools: [{
+      name: 'dynamic',
+      description: 'Read',
+      inputSchema: { type: 'object' },
+      annotations: { readOnlyHint: true },
+    }],
+  })
+  await closing
+  assert.equal(closeSettled, true)
+  assert.equal(adapter.connectionState().status, 'closed')
+  assert.equal(closeCount, 2, 'both metadata clients must be closed exactly once')
+})
+
 test('official DSH MCP client connects through stdio, discovers, calls, and disposes a real MCP server', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'deepseekeyes-real-mcp-'))
   const script = join(directory, 'server.mjs')
@@ -506,8 +962,8 @@ const server = new Server(
 )
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{
-    name: 'echo',
-    description: 'Echo one value',
+    name: 'read.file',
+    description: 'Read one value',
     inputSchema: {
       type: 'object',
       properties: { text: { type: 'string' } },
@@ -531,13 +987,29 @@ await server.connect(new StdioServerTransport())
       return () => globalDefinitions.delete(definition.name)
     },
   })
-  const server = normalizedServer({ command: process.execPath, args: [script], env: {} })
-  const adapter = new DshMcpClientAdapter(root, server, { loadPlugin: loadSourceMcpClient })
+  const server = normalizedServer({
+    command: process.execPath,
+    args: [script],
+    env: {},
+    riskPolicy: 'read-only',
+  })
+  const adapter = new DshMcpClientAdapter(root, server, {
+    loadPlugin: loadSourceMcpClient,
+    loadSdk: async () => ({
+      Client,
+      StdioClientTransport,
+      StreamableHTTPClientTransport,
+      ListToolsResultSchema,
+      CallToolResultSchema,
+      ToolListChangedNotificationSchema,
+    }),
+  })
   try {
     await adapter.start()
     const discovered = await adapter.listTools()
     assert.equal(discovered.length, 1)
-    assert.equal(discovered[0].rawName, 'echo')
+    assert.equal(discovered[0].publicName, publicMcpToolName('fixture', 'read.file'))
+    assert.equal(discovered[0].annotations.readOnlyHint, true)
     assert.equal(globalDefinitions.size, 0)
     const result = await adapter.callTool(discovered[0], { text: 'verified' }, {
       signal: new AbortController().signal,
@@ -546,13 +1018,12 @@ await server.connect(new StdioServerTransport())
 
     const probed = await adapter.probe()
     assert.equal(probed.length, 1)
-    assert.equal(probed[0].rawName, 'echo')
-    assert.equal(probed[0].publicName, 'mcp__fixture__echo')
+    assert.equal(probed[0].publicName, publicMcpToolName('fixture', 'read.file'))
     assert.equal(adapter.connectionState().connected, true)
 
     const refreshed = await adapter.refresh()
     assert.equal(refreshed.length, 1)
-    assert.equal(refreshed[0].rawName, 'echo')
+    assert.equal(refreshed[0].publicName, publicMcpToolName('fixture', 'read.file'))
     assert.equal(adapter.connectionState().connected, true)
     assert.deepEqual(
       (await adapter.callTool(refreshed[0], { text: 'after-refresh' }, {

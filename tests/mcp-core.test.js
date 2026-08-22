@@ -19,6 +19,7 @@ import {
   MCP_RESULT_OUTPUT,
   mcpArgsContainInlineCredentials,
   mcpAuditSummary,
+  mcpRiskPolicyDecision,
   normalizeMcpConfig,
   publicMcpToolName,
   renderMcpResult,
@@ -365,10 +366,30 @@ test('MCP annotations conservatively classify missing metadata as unknown-write'
   assert.equal(classifyToolRisk({ readOnlyHint: true, destructiveHint: true }).risk, 'destructive')
 })
 
+test('MCP risk policy allows reads and blocks non-read tools only in read-only mode', () => {
+  assert.deepEqual(mcpRiskPolicyDecision({ riskPolicy: 'allow' }, classifyToolRisk()), {
+    allowed: true,
+    reason: 'policy',
+    policy: 'allow',
+  })
+  assert.deepEqual(mcpRiskPolicyDecision({ riskPolicy: 'read-only' }, classifyToolRisk({ readOnlyHint: true })), {
+    allowed: true,
+    reason: 'policy',
+    policy: 'read-only',
+  })
+  assert.deepEqual(mcpRiskPolicyDecision({ riskPolicy: 'read-only' }, classifyToolRisk({ readOnlyHint: false })), {
+    allowed: false,
+    reason: 'read-only',
+    policy: 'read-only',
+  })
+})
+
 test('strict MCP normalization is the single plaintext and transport boundary', () => {
   const strict = value => normalizeMcpConfig({ mcpServers: [value] }, { strict: true })
   const base = { id: 'fixture', name: 'Fixture', transport: 'stdio', command: 'node' }
   assert.doesNotThrow(() => strict({ ...base, env: { TOKEN: { env: 'FIXTURE_TOKEN' } } }))
+  assert.deepEqual(strict({ ...base, riskPolicy: 'read-only' }).mcpServers[0].riskPolicy, 'read-only')
+  assert.throws(() => strict({ ...base, riskPolicy: 'prompt' }), /riskPolicy must be one of allow, read-only/)
   assert.throws(() => strict({ ...base, env: { TOKEN: 'plaintext-or-reference' } }), /env reference/)
   assert.throws(() => strict({ ...base, unknown: true }), /unknown field/)
   assert.throws(() => strict({ ...base, name: undefined }), /name must be/)
@@ -725,6 +746,8 @@ test('MCP audit contains hashes and risk but no arguments or result payload', ()
     durationMs: 8.4,
   })
   assert.equal(event.risk, 'unknown-write')
+  assert.equal(event.riskPolicy, 'allow')
+  assert.equal(event.riskPolicyAllowed, true)
   assert.equal(event.durationMs, 8)
   assert.match(event.argsSha256, /^[a-f0-9]{64}$/)
   assert.equal(JSON.stringify(event).includes('sensitive-value'), false)

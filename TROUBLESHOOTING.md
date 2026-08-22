@@ -1,5 +1,9 @@
 # Troubleshooting
 
+## `MCP_TOOL_RISK_BLOCKED`
+
+The selected MCP Server uses `riskPolicy: read-only`, and the requested tool is annotated as `write`, `destructive`, or `unknown-write`. The tool is removed from the model-facing schema and the runtime stops before transport dispatch. Select **工具风险策略 → 允许已选工具（兼容模式）** only for a Server whose allowlist and credentials are intentionally scoped, or choose a read-only tool with `readOnlyHint: true`.
+
 Start with the scoped package doctor:
 
 ```bash
@@ -17,7 +21,7 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 Restart `dsh web` once after installation or upgrade. The installer migrates the old unscoped `deepseekeyes` profile dependency after the scoped package is added successfully.
 
-DeepSeekEyes 0.7.x is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair plus its protocol SDK only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries, Tools renderer and all three Content SDK exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
+DeepSeekEyes 0.8.1 is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair plus its protocol SDK only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries, Tools renderer and all three Content SDK exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
 
 ## An MCP server connects but exposes no tools
 
@@ -28,6 +32,8 @@ This is the expected safe state for a new server: its `allowedTools` list is emp
 3. Select only the tools required for the task, then save again. A deny selector always overrides an allow selector.
 4. Check the global **Maximum exposed tools** and **Maximum Schema Tokens** counters. A discovered tool can be shown as blocked when either budget is exhausted.
 5. Select the `DeepSeekEyes` virtual Provider in the conversation. Managed MCP tools deliberately reject calls from a native Provider with `MCP_REQUIRES_DEEPSEEKEYES`.
+
+If a selected tool shows **风险策略已拦截**, inspect the Server's **工具风险策略**. `read-only` exposes only tools with `readOnlyHint: true`; switch to the compatibility mode only when the allowlist and credentials are intentionally scoped.
 
 Disabling MCP, disabling the server or clearing its allowlist unregisters the managed definitions and MCP prompt section. When MCP is enabled for DeepSeekEyes, prompt assembly still strips those schemas and guidance from every non-DeepSeekEyes Provider, and execution rejects wrong-Provider or agentless calls. Ordinary text, image, Browser and Desktop routes are unaffected.
 

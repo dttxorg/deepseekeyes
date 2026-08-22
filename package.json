@@ -1,6 +1,6 @@
 {
   "name": "@dttxorg/deepseekeyes",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Auditable vision and cross-platform Computer Use runtime for DeepSeek Harness with source-preserving evidence.",
   "type": "module",
   "main": "./dsh/index.js",

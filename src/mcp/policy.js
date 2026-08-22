@@ -95,3 +95,12 @@ export function classifyToolRisk(annotations) {
     annotations: normalized,
   })
 }
+
+/** Apply the configured per-server risk policy after allow/deny selectors. */
+export function mcpRiskPolicyDecision(server, classification) {
+  const policy = server?.riskPolicy ?? 'allow'
+  if (policy === 'read-only' && classification?.risk !== 'read') {
+    return Object.freeze({ allowed: false, reason: 'read-only', policy })
+  }
+  return Object.freeze({ allowed: true, reason: 'policy', policy })
+}

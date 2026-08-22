@@ -123,6 +123,7 @@ export function createMcpServerDraft(index = 1) {
     toolsEnabled: true,
     resourcesEnabled: false,
     promptsEnabled: false,
+    riskPolicy: 'allow',
     allowedTools: [],
     denyTools: [],
     allowedResources: [],
@@ -258,6 +259,7 @@ export function normalizeMcpServer(value = {}, index = 0) {
     toolsEnabled: value.toolsEnabled !== false,
     resourcesEnabled: value.resourcesEnabled === true,
     promptsEnabled: value.promptsEnabled === true,
+    riskPolicy: value.riskPolicy === 'read-only' ? 'read-only' : 'allow',
     allowedTools: normalizedStringList(value.allowedTools),
     denyTools: normalizedStringList(value.denyTools),
     allowedResources: normalizedStringList(value.allowedResources),
@@ -398,6 +400,7 @@ export function settingsDraftFailure(draft, providerId = 'deepseekeyes', upstrea
     if (serverNames.has(normalizedName)) return 'mcpServerNameDuplicate'
     serverNames.add(normalizedName)
     if (!['stdio', 'streamable-http'].includes(server.transport)) return 'mcpServerTransportInvalid'
+    if (!['allow', 'read-only'].includes(server.riskPolicy)) return 'mcpServerRiskPolicyInvalid'
     if (server.transport === 'stdio' && (typeof server.command !== 'string' || server.command.trim() === '')) {
       return 'mcpServerCommandRequired'
     }

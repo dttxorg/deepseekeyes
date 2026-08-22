@@ -53,6 +53,7 @@ function fakeFactory(definitions = []) {
         },
         async listTools() { return this.tools },
         connectionState() { return { connected: this.connected, toolCount: this.tools.length } },
+        updateServer(server) { this.server = server },
         async probe() {
           state.probes += 1
           return this.tools.map(value => structuredClone(value))
@@ -329,6 +330,148 @@ test('MCP managed tools enforce the Eyes route, bound output, preserve images, a
   assert.equal(usage[1].resultTokens, estimateMcpResultTokens(imageResult))
   assert.ok(usage[1].resultTokens > usage[0].resultTokens)
   await manager.stop()
+})
+
+test('MCP read-only risk policy withdraws non-read schemas and blocks direct stale calls before transport', async () => {
+  const ctx = mockContext()
+  const factory = fakeFactory(tools)
+  const manager = new McpManager(ctx, config({}, {
+    allowedTools: ['search', 'write'],
+    riskPolicy: 'read-only',
+  }), { adapterFactory: factory })
+  await manager.start()
+
+  const snapshot = manager.snapshot()
+  const searchSummary = snapshot.servers[0].tools.find(tool => tool.name === 'search')
+  const writeSummary = snapshot.servers[0].tools.find(tool => tool.name === 'write')
+  assert.equal(searchSummary.riskPolicy, 'read-only')
+  assert.equal(searchSummary.riskPolicyAllowed, true)
+  assert.equal(searchSummary.exposed, true)
+  assert.equal(writeSummary.risk, 'unknown-write')
+  assert.equal(writeSummary.riskPolicyAllowed, false)
+  assert.equal(writeSummary.blockedReason, 'risk-policy-read-only')
+  assert.equal(ctx.tools.get('mcp__fixture__write'), undefined)
+  assert.ok(ctx.tools.get('mcp__fixture__search'))
+
+  await assert.rejects(
+    manager.executeManaged('fixture', 'mcp__fixture__write', {}, {
+      agent: { id: 'risk-session', options: { provider: 'deepseekeyes' } },
+      signal: new AbortController().signal,
+    }),
+    error => error.code === 'MCP_TOOL_RISK_BLOCKED',
+  )
+  assert.deepEqual(factory.state.calls, [])
+  await manager.stop()
+})
+
+test('MCP stale policy rejection refunds the Code Mode external-call budget', async () => {
+  const ctx = mockContext()
+  const factory = fakeFactory(tools)
+  const parent = 'risk-budget-run'
+  const manager = new McpManager(ctx, config({ mcpMaxExternalCallsPerRun: 1 }, {
+    allowedTools: ['search', 'write'],
+  }), { adapterFactory: factory })
+  await manager.start()
+
+  const originalConsume = manager.consumeCodeRunExternalCall.bind(manager)
+  let reconfigured
+  manager.consumeCodeRunExternalCall = async (...args) => {
+    const counted = await originalConsume(...args)
+    if (counted && reconfigured === undefined) {
+      reconfigured = manager.reconfigure(config({ mcpMaxExternalCallsPerRun: 1 }, {
+        allowedTools: ['search', 'write'],
+        riskPolicy: 'read-only',
+      }))
+      await reconfigured
+    }
+    return counted
+  }
+  const exec = {
+    parent,
+    agent: { id: parent, options: { provider: 'deepseekeyes' } },
+    signal: new AbortController().signal,
+    deferContext() {},
+  }
+  await assert.rejects(
+    manager.executeManaged('fixture', 'mcp__fixture__write', {}, exec),
+    error => error.code === 'MCP_TOOL_RISK_BLOCKED',
+  )
+  assert.equal(factory.state.calls.length, 0)
+  assert.equal(manager.externalCallsByCodeRun.get(parent), undefined)
+
+  await manager.reconfigure(config({ mcpMaxExternalCallsPerRun: 1 }, {
+    allowedTools: ['search', 'write'],
+    riskPolicy: 'allow',
+  }))
+  const search = ctx.tools.get('mcp__fixture__search')
+  const result = await search.execute({ query: 'after-refund' }, exec)
+  assert.equal(result.preview, 'result:after-refund')
+  assert.equal(factory.state.calls.length, 1)
+  await manager.stop()
+})
+
+test('MCP Resource and Prompt lifecycle revocation happens before transport and refunds Code Mode quota', async () => {
+  for (const kind of ['resource', 'prompt']) {
+    let releaseApproval
+    let approvalEntered
+    const approvalGate = new Promise(resolve => { releaseApproval = resolve })
+    const approvalStarted = new Promise(resolve => { approvalEntered = resolve })
+    let approvals = 0
+    const contentFactory = fakeContentFactory()
+    const server = {
+      toolsEnabled: false,
+      resourcesEnabled: kind === 'resource',
+      promptsEnabled: kind === 'prompt',
+      allowedResources: kind === 'resource' ? ['notes://welcome'] : [],
+      allowedPrompts: kind === 'prompt' ? ['summarize'] : [],
+    }
+    const ctx = mockContext()
+    const manager = new McpManager(ctx, config({ mcpMaxExternalCallsPerRun: 1 }, server), {
+      adapterFactory: fakeFactory([]),
+      contentAdapterFactory: contentFactory,
+      authorize: async () => {
+        approvals += 1
+        if (approvals === 1) {
+          approvalEntered()
+          await approvalGate
+        }
+        return true
+      },
+    })
+    await manager.start()
+    const parent = `${kind}-stale-content-run`
+    const exec = {
+      parent,
+      agent: { id: parent, options: { provider: 'deepseekeyes' } },
+      signal: new AbortController().signal,
+      deferContext() {},
+    }
+    const definition = ctx.tools.get(kind === 'resource' ? MCP_RESOURCE_TOOL_NAME : MCP_PROMPT_TOOL_NAME)
+    const args = kind === 'resource'
+      ? { serverId: 'fixture', uri: 'notes://welcome' }
+      : { serverId: 'fixture', name: 'summarize', arguments: { style: 'short' } }
+    const pending = definition.execute(args, exec)
+    await approvalStarted
+    await manager.reconfigure(config({ mcpMaxExternalCallsPerRun: 1 }, {
+      ...server,
+      allowedResources: [],
+      allowedPrompts: [],
+    }))
+    releaseApproval()
+    await assert.rejects(
+      pending,
+      error => error.code === (kind === 'resource' ? 'MCP_RESOURCES_DISABLED' : 'MCP_PROMPTS_DISABLED'),
+      `${kind} must be re-resolved after approval`,
+    )
+    assert.equal(contentFactory.state.reads.length, 0)
+    assert.equal(contentFactory.state.prompts.length, 0)
+    assert.equal(manager.externalCallsByCodeRun.get(parent), undefined)
+
+    await manager.reconfigure(config({ mcpMaxExternalCallsPerRun: 1 }, server))
+    const recovered = await definition.execute(args, exec)
+    assert.match(recovered.preview, kind === 'resource' ? /resource:notes/ : /prompt:short/)
+    await manager.stop()
+  }
 })
 
 test('MCP unknown annotations present as edit and failures remain hash-only audited and accounted', async () => {
@@ -608,6 +751,19 @@ test('MCP policy-only reconfiguration avoids reconnect while connection changes 
   await manager.reconfigure(config({}, { allowedTools: ['search'] }))
   assert.equal(factory.state.created.length, 1)
   assert.ok(ctx.tools.get('mcp__fixture__search'))
+  const staleDefinition = ctx.tools.get('mcp__fixture__search')
+  await manager.reconfigure(config({}, { allowedTools: ['search'], denyTools: ['search'] }))
+  assert.equal(factory.state.created.length, 1)
+  assert.deepEqual(factory.state.created[0].server.denyTools, ['search'])
+  assert.equal(ctx.tools.get('mcp__fixture__search'), undefined)
+  await assert.rejects(
+    staleDefinition.execute({ query: 'blocked' }, {
+      agent: { id: 'session-1', options: { provider: 'deepseekeyes' } },
+      signal: new AbortController().signal,
+    }),
+    error => error.code === 'MCP_TOOL_NOT_ALLOWED',
+  )
+  assert.equal(factory.state.calls.length, 0)
   await manager.reconfigure(config({}, { command: 'new-command', allowedTools: ['search'] }))
   assert.equal(factory.state.created.length, 2)
   assert.equal(factory.state.closed, 1)
@@ -615,6 +771,73 @@ test('MCP policy-only reconfiguration avoids reconnect while connection changes 
   await manager.reconfigure(config({ mcpEnabled: false }, { allowedTools: ['search'] }))
   assert.equal(ctx.tools.get('mcp__fixture__search'), undefined)
   assert.equal(ctx.systemPrompt.sections.size, 0)
+  await manager.stop()
+})
+
+test('MCP policy-only reconfiguration withdraws schemas when the live adapter status is unknown', async () => {
+  const ctx = mockContext()
+  const state = { adapter: undefined, created: 0 }
+  const adapterFactory = {
+    create(server, hooks) {
+      const adapter = {
+        server,
+        status: 'connected',
+        tools: [{ name: 'search', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }],
+        async start() {
+          state.created += 1
+          hooks.onToolsChanged?.(this.tools, { connected: true, status: 'connected', reason: 'connected' })
+        },
+        async listTools() { return this.tools },
+        // Deliberately keep the transport projection stale to prove that the
+        // manager also checks the official adapter's live status field.
+        connectionState() { return { connected: true, status: 'connected' } },
+        updateServer(next) { this.server = next },
+        async callTool() { return { content: [{ type: 'text', text: 'ok' }] } },
+        async close() { this.status = 'closed' },
+      }
+      state.adapter = adapter
+      return adapter
+    },
+  }
+  const manager = new McpManager(ctx, config({}, { allowedTools: ['search'] }), { adapterFactory })
+  await manager.start()
+  assert.equal(state.created, 1)
+  assert.equal(manager.snapshot().servers[0].status, 'connected')
+  assert.equal(manager.snapshot().summary.exposedTools, 1)
+
+  state.adapter.status = 'unknown'
+  const withdrawn = await manager.reconfigure(config({}, { allowedTools: ['search'], denyTools: [] }))
+  assert.equal(withdrawn.servers[0].status, 'degraded')
+  assert.equal(withdrawn.servers[0].healthy, false)
+  assert.equal(withdrawn.servers[0].exposedToolCount, 0)
+  assert.equal(withdrawn.summary.exposedTools, 0)
+  assert.equal(ctx.tools.get('mcp__fixture__search'), undefined)
+  await manager.stop()
+})
+
+test('MCP policy-only reconfiguration preserves a healthy adapter without optional health projections', async () => {
+  const ctx = mockContext()
+  const adapterFactory = {
+    create(server, hooks) {
+      const tools = [{ name: 'search', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }]
+      return {
+        server,
+        async start() {
+          hooks.onToolsChanged?.(tools, { connected: true, status: 'connected', reason: 'connected' })
+        },
+        async listTools() { return tools },
+        async callTool() { return { content: [{ type: 'text', text: 'ok' }] } },
+        async close() {},
+      }
+    },
+  }
+  const manager = new McpManager(ctx, config({}, { allowedTools: ['search'] }), { adapterFactory })
+  await manager.start()
+  const reconfigured = await manager.reconfigure(config({}, { allowedTools: ['search'] }))
+  assert.equal(reconfigured.servers[0].status, 'connected')
+  assert.equal(reconfigured.servers[0].healthy, true)
+  assert.equal(reconfigured.summary.exposedTools, 1)
+  assert.ok(ctx.tools.get('mcp__fixture__search'))
   await manager.stop()
 })
 

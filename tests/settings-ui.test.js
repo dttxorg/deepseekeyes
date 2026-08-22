@@ -75,6 +75,7 @@ test('MCP settings default off, expose no tools, and emit minimal nested server 
     env: { GITHUB_TOKEN: { env: 'GH_TOKEN' } },
   }
   assert.deepEqual(server.allowedTools, [])
+  assert.equal(server.riskPolicy, 'allow')
   assert.equal(server.timeoutMs, undefined)
   const current = normalizeSettingsDraft({ upstreamProvider: 'text-a' })
   const draft = { ...current, mcpEnabled: true, mcpServers: [server] }
@@ -99,6 +100,7 @@ test('MCP settings normalize credential references and reject unsafe or expensiv
   assert.deepEqual(normalized.env, {})
   assert.deepEqual(normalized.headers, { Authorization: { env: 'REMOTE_AUTHORIZATION' } })
   assert.deepEqual(normalized.allowedTools, ['search'])
+  assert.equal(normalized.riskPolicy, 'allow')
   const local = normalizeMcpServer({
     id: 'local',
     name: 'Local',
@@ -158,6 +160,10 @@ test('MCP settings normalize credential references and reject unsafe or expensiv
     ...base,
     mcpServers: [{ ...normalized, allowedTools: ['search'], denyTools: ['search'] }],
   }), 'mcpServerToolsConflict')
+  assert.equal(settingsDraftFailure({
+    ...base,
+    mcpServers: [{ ...normalized, riskPolicy: 'unexpected' }],
+  }), 'mcpServerRiskPolicyInvalid')
 
   const localDraft = normalizeSettingsDraft({
     upstreamProvider: 'text-a',

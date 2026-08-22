@@ -13,11 +13,13 @@ export const DEFAULT_MCP_MAX_RESULT_CHARS = 20_000
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 30_000
 export const DEFAULT_MCP_MAX_EXTERNAL_CALLS_PER_RUN = 64
 export const DEFAULT_MCP_AUDIT_LIMIT = 200
+export const MCP_RISK_POLICIES = Object.freeze(['allow', 'read-only'])
+export const DEFAULT_MCP_RISK_POLICY = 'allow'
 export const MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 export const MCP_TRANSPORTS = Object.freeze(['stdio', 'streamable-http'])
 const MCP_PUBLIC_SERVER_FIELDS = new Set([
   'id', 'name', 'enabled', 'transport', 'command', 'args', 'cwd', 'url',
-  'env', 'headers', 'toolsEnabled', 'resourcesEnabled', 'promptsEnabled',
+  'env', 'headers', 'toolsEnabled', 'resourcesEnabled', 'promptsEnabled', 'riskPolicy',
   'allowedTools', 'denyTools', 'allowedResources', 'denyResources',
   'allowedPrompts', 'denyPrompts', 'timeoutMs', 'oauth',
 ])
@@ -172,6 +174,7 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
     toolsEnabled: booleanValue(source.toolsEnabled, `mcpServers[${index}].toolsEnabled`, true),
     resourcesEnabled: booleanValue(source.resourcesEnabled, `mcpServers[${index}].resourcesEnabled`, false),
     promptsEnabled: booleanValue(source.promptsEnabled, `mcpServers[${index}].promptsEnabled`, false),
+    riskPolicy: stringValue(source.riskPolicy, `mcpServers[${index}].riskPolicy`) ?? DEFAULT_MCP_RISK_POLICY,
     transport,
     allowedTools: stringList(source.allowedTools ?? source.allowlist, `mcpServers[${index}].allowedTools`, strict),
     denyTools: stringList(source.denyTools ?? source.deniedTools ?? source.denylist, `mcpServers[${index}].denyTools`, strict),
@@ -184,6 +187,11 @@ export function normalizeMcpServer(input, index = 0, defaults = {}) {
       failOnStartupError: booleanValue(source.failOnStartupError, `mcpServers[${index}].failOnStartupError`, false),
       reconnect: reconnectValue(source.reconnect, `mcpServers[${index}].reconnect`),
     }),
+  }
+  if (!MCP_RISK_POLICIES.includes(common.riskPolicy)) {
+    throw new TypeError(
+      `deepseekeyes: mcpServers[${index}].riskPolicy must be one of ${MCP_RISK_POLICIES.join(', ')}`,
+    )
   }
   if (strict) {
     for (const [allowField, denyField] of [

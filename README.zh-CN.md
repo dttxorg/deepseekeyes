@@ -204,7 +204,7 @@ Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或�
 
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
-## MCP 应用执行层 0.8（默认关闭）
+## MCP 应用执行层 0.8.1（默认关闭）
 
 DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有完整的 Content 设置界面。DeepSeekEyes 0.8 从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client`、匹配的 `@deepseek-ai/dsh-tools` 以及该 Host Client 自己依赖的协议 SDK，并将入口 canonicalize 到 Host 真实安装路径；插件不会再打包第二份 MCP SDK。普通 Tools 继续完全走官方 DSH Client，启用 OAuth 的 Streamable HTTP Server 则使用同一 Host SDK 的 OAuth transport 适配器；Resources 与 Prompts 进入独立、显式启用的 Content Plane。即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
 
@@ -215,6 +215,8 @@ DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有�
 - 同一 OAuth Server 的 Tools 与 Content 共用一份内存 OAuth provider 和 Bearer 生命周期。Token 过期、刷新、发现或传输失败会进入 MCP 健康快照和隐私降级审计，不返回凭据或 Token 原文；未启用 OAuth 的普通 MCP、视觉、Browser、Desktop 和文字路径保持原有调用与 Token 行为；
 - 无界面部署可直接参考 [`examples/mcp-oauth.patch.yml`](examples/mcp-oauth.patch.yml)；GUI 与该示例使用同一套严格校验。
 - 新 Server 的工具允许列表默认为空，只有明确选择的工具才会注册给模型；拒绝规则始终优先于允许规则；
+- 每个 Server 可选择“允许已选工具”或“仅允许只读工具”风险策略。只读策略会在 Schema 暴露前排除 `write`、`destructive` 与 `unknown-write`，并在执行入口再次校验；过期/直接调用会以 `MCP_TOOL_RISK_BLOCKED` 停止，不接触外部 Server；默认策略保持兼容行为；
+- 只修改 allow/deny 时会原地更新适配器策略，不重复建立 MCP 传输；需要重新读取原始名称/注解时，刷新期间会先撤回 Schema，失败的元数据清理句柄会保留到后续关闭重试；
 - 每个 Server 可独立启用 Tools、Resources 和 Prompts。Tools 为兼容旧配置默认开启；Resources/Prompts 默认关闭，关闭时 **不建立 Content 连接、不增加通用 Schema，也不触发模型调用**；
 - Resources、Resource Templates 与 Prompts 的发现目录共享固定上限：最多 256 条、256 页、1,000,000 字符、4,000,000 字节；三类 allowlist 均默认空，deny 始终优先；
 - 只有至少一个发现项被明确允许时，才暴露两个有界通用工具：`mcp__deepseekeyes__resource` 与 `mcp__deepseekeyes__prompt`。目录内容不会整批写进系统提示；
@@ -474,7 +476,7 @@ $DSH_HOME/deepseekeyes/evidence/
 | `desktopWindowsPowerShell` | `powershell.exe` | Windows PowerShell 可执行文件；GUI 可填完整路径 |
 | `desktopArtifactsDir` | DSH/Home 路径 | 原始桌面 PNG、无损附件状态和 JSON 测试报告目录 |
 | `mcpEnabled` | `false` | 是否启用 MCP 应用执行层；关闭时不连接 Server、不注册 MCP 工具 |
-| `mcpServers` | `[]` | stdio/Streamable HTTP Server 列表；每项含 Tools/Resources/Prompts 独立开关及三组 allow/deny；远端 URL 强制 HTTPS，HTTP 仅限显式 loopback；stdio `env`/HTTP Header 的凭据值只接受 `{env: "VAR_NAME"}`，连接时从 `dsh web` 进程环境解析 |
+| `mcpServers` | `[]` | stdio/Streamable HTTP Server 列表；每项含 Tools/Resources/Prompts 独立开关、`riskPolicy`（`allow` / `read-only`）及三组 allow/deny；远端 URL 强制 HTTPS，HTTP 仅限显式 loopback；stdio `env`/HTTP Header 的凭据值只接受 `{env: "VAR_NAME"}`，连接时从 `dsh web` 进程环境解析 |
 | `mcpMaxTools` | `16` | capture 后跨 Server 最多暴露工具数；`0` 只取消暴露预算，固定 256-tool/catalog 复杂度上限仍生效，允许列表仍默认空 |
 | `mcpMaxSchemaTokens` | `12000` | 所有已暴露 MCP 工具的 Schema Token 预算；`0` 表示不限制 |
 | `mcpMaxResultChars` | `20000` | 固定原始结果硬准入之后的单次模型 preview 字符上限；超出后返回预览、哈希及可用时的本地产物引用 |

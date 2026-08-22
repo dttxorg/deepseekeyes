@@ -136,7 +136,7 @@ test('settings card inherits Harness theme tokens and top-aligns side-by-side fi
   assert.doesNotMatch(source, /key = `\$\{baseKey\}-\$\{suffix\+\+\}`/)
   assert.match(source, /mcpToolAllowedInDraft\(server, tool\)/)
   assert.match(source, /updateMcpToolSelection\(server, tool, allowed\)/)
-  assert.match(source, /tool\.exposed \? 'mcpToolExposed' : tool\.allowed \? 'mcpToolAllowedNotExposed'/)
+  assert.match(source, /tool\.exposed \? 'mcpToolExposed' : tool\.riskPolicyAllowed === false \? 'mcpToolRiskBlocked' : tool\.allowed \? 'mcpToolAllowedNotExposed'/)
   assert.match(source, /id="deepseekeyes-mcp-max-tools"/)
   assert.match(source, /id="deepseekeyes-mcp-schema-budget"/)
   assert.match(source, /id="deepseekeyes-mcp-result-chars"/)

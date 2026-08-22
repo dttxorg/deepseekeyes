@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.1 - 2026-08-22
+
+- Add a per-MCP-server `riskPolicy` setting with `allow` compatibility mode and `read-only` mode.
+- Revalidate Resource/Prompt generations and refund Code Mode quota when lifecycle changes revoke a call before transport.
+- Preserve punctuation-bearing MCP raw names for explicit allow/deny selectors, bound retained annotations to four booleans, and reject stale Tools/OAuth catalog generations before dispatch.
+- In `read-only` mode, expose only tools annotated as read-only; write, destructive and unknown-write tools are withdrawn before their schemas reach model context.
+- Re-check the risk policy at execution time so a stale/direct invocation is rejected before transport dispatch with `MCP_TOOL_RISK_BLOCKED`.
+- Recover `tools/list` annotations for non-OAuth Host-client transports through a bounded SDK metadata pass when `read-only` is selected; tool calls remain on the DSH-managed transport and metadata failure fails closed.
+- Refund a Code Mode MCP call-budget slot when a lifecycle change revokes the call during the final preflight, so a blocked stale call never consumes quota.
+- Show the active policy and blocked reason in the MCP health/tool snapshot, native settings card and privacy-reduced audit summaries.
+- Keep the default `allow` behavior unchanged for existing configurations.
+- Refresh adapter policy state in place for allow/deny-only settings edits, withdraw schemas while raw-name metadata is pending, and detect long or wildcard raw selectors before the public-name hash boundary.
+- Revalidate OAuth catalog identity after every asynchronous SDK load, refund a Code Mode slot for an adapter-level pre-transport stale rejection, retain failed metadata-client cleanup handles for retry, and advertise the 0.8.1 client identity consistently.
+
 ## 0.8.0 - 2026-08-22
 
 - Add optional OAuth 2.0 `client_credentials` for Streamable HTTP MCP servers, configured entirely from the native MCP settings card with environment-variable references for Client ID and Client Secret.

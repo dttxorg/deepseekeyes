@@ -178,6 +178,10 @@ const zh = {
   mcpResourcesEnabled: 'Resources：读取应用内容',
   mcpPromptsEnabled: 'Prompts：获取应用提示模板',
   mcpCapabilitiesHint: 'Resources 与 Prompts 默认关闭；关闭时不建立 Content 连接，也不增加 Schema 或模型调用。',
+  mcpRiskPolicy: '工具风险策略',
+  mcpRiskPolicyAllow: '允许已选工具（兼容模式）',
+  mcpRiskPolicyReadOnly: '仅允许只读工具',
+  mcpRiskPolicyHint: '只读策略会在 transport 前拦截 write、destructive 和 unknown-write 工具；读取工具与 Content 仍可用。',
   mcpServerId: 'Server ID',
   mcpServerName: '显示名称',
   mcpTransport: '传输方式',
@@ -246,6 +250,7 @@ const zh = {
   mcpSchemaTokens: 'Schema Token 估算',
   mcpToolExposed: '已暴露',
   mcpToolAllowedNotExposed: '已允许 / 未暴露',
+  mcpToolRiskBlocked: '风险策略已拦截',
   mcpToolNotAllowed: '未允许',
   mcpLastError: '最近错误',
   mcpTestConnection: '测试连接',
@@ -318,6 +323,7 @@ const zh = {
   mcpServerNameRequired: '每个 MCP Server 都必须填写显示名称。',
   mcpServerNameDuplicate: 'MCP Server 显示名称不能重复。',
   mcpServerTransportInvalid: 'MCP Server 传输方式无效。',
+  mcpServerRiskPolicyInvalid: 'MCP Server 风险策略无效。',
   mcpServerCommandRequired: 'stdio Server 必须填写启动命令。',
   mcpServerArgsInvalid: 'stdio 参数必须是字符串列表。',
   mcpServerArgsCredential: '启动参数疑似包含凭据，请改用环境变量引用。',
@@ -500,6 +506,10 @@ const en = {
   mcpResourcesEnabled: 'Resources: read application content',
   mcpPromptsEnabled: 'Prompts: get application prompt templates',
   mcpCapabilitiesHint: 'Resources and Prompts are off by default. While off, the Content plane opens no connection and adds no schema or model call.',
+  mcpRiskPolicy: 'Tool risk policy',
+  mcpRiskPolicyAllow: 'Allow selected tools (compatibility)',
+  mcpRiskPolicyReadOnly: 'Read-only tools only',
+  mcpRiskPolicyHint: 'Read-only policy blocks write, destructive, and unknown-write tools before transport; read tools and Content remain available.',
   mcpServerId: 'Server ID',
   mcpServerName: 'Display name',
   mcpTransport: 'Transport',
@@ -568,6 +578,7 @@ const en = {
   mcpSchemaTokens: 'Estimated schema tokens',
   mcpToolExposed: 'Exposed',
   mcpToolAllowedNotExposed: 'Allowed / not exposed',
+  mcpToolRiskBlocked: 'Blocked by risk policy',
   mcpToolNotAllowed: 'Not allowed',
   mcpLastError: 'Latest error',
   mcpTestConnection: 'Test connection',
@@ -640,6 +651,7 @@ const en = {
   mcpServerNameRequired: 'Every MCP server needs a display name.',
   mcpServerNameDuplicate: 'MCP server display names must be unique.',
   mcpServerTransportInvalid: 'The MCP server transport is invalid.',
+  mcpServerRiskPolicyInvalid: 'The MCP server risk policy is invalid.',
   mcpServerCommandRequired: 'A stdio server requires a launch command.',
   mcpServerArgsInvalid: 'stdio arguments must be a list of strings.',
   mcpServerArgsCredential: 'A launch argument appears to contain a credential. Use an environment reference instead.',
@@ -995,6 +1007,21 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
       </div>
       <p style={styles.hint}>{t('mcpCapabilitiesHint')}</p>
 
+      <div style={styles.field}>
+        <label style={styles.label} htmlFor={`deepseekeyes-mcp-risk-policy-${index}`}>{t('mcpRiskPolicy')}</label>
+        <select
+          id={`deepseekeyes-mcp-risk-policy-${index}`}
+          style={styles.input}
+          value={server.riskPolicy}
+          disabled={serverDisabled || !server.toolsEnabled}
+          onChange={event => onChange({ ...server, riskPolicy: event.target.value })}
+        >
+          <option value="allow">{t('mcpRiskPolicyAllow')}</option>
+          <option value="read-only">{t('mcpRiskPolicyReadOnly')}</option>
+        </select>
+        <small style={styles.hint}>{t('mcpRiskPolicyHint')}</small>
+      </div>
+
       <div style={styles.grid}>
         <div style={styles.field}>
           <label style={styles.label} htmlFor={`deepseekeyes-mcp-id-${index}`}>{t('mcpServerId')}</label>
@@ -1188,11 +1215,11 @@ function McpServerEditor({ server, index, runtimeServer, disabled, busy, onChang
                   <span style={styles.toolName}>{tool.name}</span>
                   {tool.description ? <span style={styles.toolDescription}>{tool.description}</span> : null}
                 </span>
-                <span style={styles.toolMeta}>
-                  <span style={styles.statusBadge}>{formatCount(tool.schemaTokensEstimated)}</span>
-                  <span style={{ ...styles.statusBadge, ...(tool.exposed ? styles.statusBadgeOk : tool.allowed ? styles.statusBadgeWarn : undefined) }}>
-                    {t(tool.exposed ? 'mcpToolExposed' : tool.allowed ? 'mcpToolAllowedNotExposed' : 'mcpToolNotAllowed')}
-                  </span>
+                  <span style={styles.toolMeta}>
+                    <span style={styles.statusBadge}>{formatCount(tool.schemaTokensEstimated)}</span>
+                    <span style={{ ...styles.statusBadge, ...(tool.exposed ? styles.statusBadgeOk : tool.riskPolicyAllowed === false ? styles.statusBadgeError : tool.allowed ? styles.statusBadgeWarn : undefined) }}>
+                    {t(tool.exposed ? 'mcpToolExposed' : tool.riskPolicyAllowed === false ? 'mcpToolRiskBlocked' : tool.allowed ? 'mcpToolAllowedNotExposed' : 'mcpToolNotAllowed')}
+                    </span>
                 </span>
               </label>
             ))}

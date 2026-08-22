@@ -198,6 +198,122 @@ test('Tools and Content use one shared process-local OAuth provider and bearer t
   await toolAdapter.close()
 })
 
+test('OAuth adapter rejects a stale changed catalog before issuing tools/call', async () => {
+  const server = oauthServer({ resourcesEnabled: false, promptsEnabled: false })
+  const state = { catalog: 'Read', calls: 0 }
+  class FakeTransport {
+    constructor() {}
+    async close() {}
+  }
+  class FakeClient {
+    async connect() {}
+    async request(request) {
+      if (request.method === 'tools/list') {
+        return {
+          tools: [{
+            name: 'search',
+            description: state.catalog,
+            inputSchema: { type: 'object' },
+          }],
+        }
+      }
+      if (request.method === 'tools/call') {
+        state.calls += 1
+        return { content: [{ type: 'text', text: 'unexpected dispatch' }] }
+      }
+      throw new Error(`unexpected method ${request.method}`)
+    }
+    async close() {}
+  }
+  const passthrough = { parse(value) { return value } }
+  const adapter = new McpOAuthClientAdapter({}, server, {
+    environment: {
+      FIXTURE_OAUTH_CLIENT_ID: 'fixture-client',
+      FIXTURE_OAUTH_CLIENT_SECRET: 'fixture-secret',
+    },
+    loadSdk: async () => ({
+      Client: FakeClient,
+      StreamableHTTPClientTransport: FakeTransport,
+      ListToolsResultSchema: passthrough,
+      CallToolResultSchema: passthrough,
+    }),
+  })
+  await adapter.start()
+  const [stale] = await adapter.listTools()
+  state.catalog = 'Write'
+  await adapter.refresh()
+  await assert.rejects(
+    adapter.callTool(stale, {}),
+    error => error.code === 'MCP_TOOL_UNAVAILABLE',
+  )
+  assert.equal(state.calls, 0)
+  await adapter.close()
+})
+
+test('OAuth adapter rechecks catalog identity after the SDK load boundary', async () => {
+  const server = oauthServer({ resourcesEnabled: false, promptsEnabled: false })
+  const state = { catalog: 'Read', calls: 0 }
+  let deferNextLoad = false
+  let releaseLoad
+  class FakeTransport {
+    constructor() {}
+    async close() {}
+  }
+  class FakeClient {
+    async connect() {}
+    async request(request) {
+      if (request.method === 'tools/list') {
+        return {
+          tools: [{
+            name: 'search',
+            description: state.catalog,
+            inputSchema: { type: 'object' },
+          }],
+        }
+      }
+      if (request.method === 'tools/call') {
+        state.calls += 1
+        return { content: [{ type: 'text', text: 'unexpected dispatch' }] }
+      }
+      throw new Error(`unexpected method ${request.method}`)
+    }
+    async close() {}
+  }
+  const passthrough = { parse(value) { return value } }
+  const sdk = {
+    Client: FakeClient,
+    StreamableHTTPClientTransport: FakeTransport,
+    ListToolsResultSchema: passthrough,
+    CallToolResultSchema: passthrough,
+  }
+  const adapter = new McpOAuthClientAdapter({}, server, {
+    environment: {
+      FIXTURE_OAUTH_CLIENT_ID: 'fixture-client',
+      FIXTURE_OAUTH_CLIENT_SECRET: 'fixture-secret',
+    },
+    loadSdk: async () => {
+      if (deferNextLoad) {
+        deferNextLoad = false
+        await new Promise(resolve => { releaseLoad = resolve })
+      }
+      return sdk
+    },
+  })
+  await adapter.start()
+  const [stale] = await adapter.listTools()
+  deferNextLoad = true
+  const call = adapter.callTool(stale, {})
+  for (let attempt = 0; attempt < 20 && releaseLoad === undefined; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  state.catalog = 'Write'
+  await adapter.refresh()
+  releaseLoad()
+  await assert.rejects(call, error => error.code === 'MCP_TOOL_UNAVAILABLE')
+  assert.equal(state.calls, 0)
+  await adapter.close()
+})
+
 /**
  * A real loopback Streamable HTTP server used to exercise the SDK's complete
  * 401 -> discovery -> client_credentials -> retry path. The server deliberately

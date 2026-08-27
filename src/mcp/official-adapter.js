@@ -686,7 +686,7 @@ export class DshMcpClientAdapter {
     const sdk = await this.loadSdk()
     const config = materializeDshMcpConfig(this.server, this.environment)
     const client = new sdk.Client(
-      { name: 'deepseekeyes-mcp-risk-metadata', version: '0.8.1' },
+      { name: 'deepseekeyes-mcp-risk-metadata', version: '0.8.2' },
       { capabilities: {} },
     )
     const transport = this.server.transport === 'stdio'
@@ -1189,7 +1189,7 @@ export class McpOAuthClientAdapter {
       const sdk = await this.loadSdk()
       const config = materializeDshMcpConfig(this.server, this.environment)
       const client = new sdk.Client(
-        { name: 'deepseekeyes-mcp-oauth', version: '0.8.1' },
+        { name: 'deepseekeyes-mcp-oauth', version: '0.8.2' },
         { capabilities: {} },
       )
       this.client = client

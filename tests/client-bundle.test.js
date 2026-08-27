@@ -65,6 +65,7 @@ test('prebuilt Harness web bundle registers the native DeepSeekEyes settings car
   client.apply(ctx)
   assert.equal(localeNamespace, 'deepseekeyes.settings')
   assert.equal(registered.options.name, 'settings.plugin.item')
+  assert.equal(registered.options.key, 'deepseekeyes')
   assert.equal(registered.options.id, 'deepseekeyes')
   assert.equal(registered.options.locale, 'deepseekeyes.settings')
   assert.equal(registered.options.inject().scope, scope)

@@ -204,7 +204,7 @@ Desktop Computer Use 默认关闭。关闭时不会注册 `computer` 工具或�
 
 macOS 第一次使用需要在 **系统设置 → 隐私与安全性** 中，为启动 `dsh web` 的终端授予**屏幕录制**和**辅助功能**权限。Windows 不需要安装浏览器自动化组件；如系统的 PowerShell 不在默认路径，可在插件设置卡中填写完整路径。
 
-## MCP 应用执行层 0.8.1（默认关闭）
+## MCP 应用执行层 0.8.2（默认关闭）
 
 DSH 已包含底层 MCP Client，但默认没有连接任何 Server，也没有完整的 Content 设置界面。DeepSeekEyes 0.8 从 DSH 管理的 `$DSH_HOME/profiles/node_modules` Host fallback 解析官方 `@deepseek-ai/dsh-mcp-client`、匹配的 `@deepseek-ai/dsh-tools` 以及该 Host Client 自己依赖的协议 SDK，并将入口 canonicalize 到 Host 真实安装路径；插件不会再打包第二份 MCP SDK。普通 Tools 继续完全走官方 DSH Client，启用 OAuth 的 Streamable HTTP Server 则使用同一 Host SDK 的 OAuth transport 适配器；Resources 与 Prompts 进入独立、显式启用的 Content Plane。即使同一 profile 里有其他插件带入同名副本，也不会拆分 Cordis 服务和工具调度器身份。原生设置卡里补齐了可直接使用的 **MCP 应用与工具**控制中心：
 

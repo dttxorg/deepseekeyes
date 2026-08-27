@@ -86,6 +86,18 @@ function lockedUpstreamModel(config, requestedModel) {
   return config.upstreamModel ?? requestedModel
 }
 
+async function resolveDeepSeekEyesModel(ctx, current, model, signal) {
+  const upstreamModel = lockedUpstreamModel(current.config, model)
+  const info = await ctx.llm.resolveModelInfo(
+    current.config.upstreamProvider,
+    upstreamModel,
+    signal,
+  )
+  if (acceptsNativeImages(info)) return nativeVisionWrappedModel(info, current.config)
+  const route = await current.router.resolve(signal)
+  return visionWrappedModel(info, current.config, route)
+}
+
 function createRuntime(ctx, rawConfig, logger) {
   const config = resolveConfig(rawConfig)
   const visionAttempts = new VisionAttemptTracker({
@@ -834,11 +846,28 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}, options = {}) {
     },
     async resolveModel(_provider, model, signal) {
       const current = runtime
-      const upstreamModel = lockedUpstreamModel(current.config, model)
-      const info = await ctx.llm.resolveModelInfo(current.config.upstreamProvider, upstreamModel, signal)
-      if (acceptsNativeImages(info)) return nativeVisionWrappedModel(info, current.config)
-      const route = await current.router.resolve(signal)
-      return visionWrappedModel(info, current.config, route)
+      return resolveDeepSeekEyesModel(ctx, current, model, signal)
+    },
+    async prepareCall(_provider, model, signal) {
+      // DSH 0.1.1 binds model metadata and dispatch through this method. Keep
+      // the runtime generation captured at preparation time so a live settings
+      // update cannot pair one generation's model identity with another's
+      // upstream route during the same request.
+      const preparedRuntime = runtime
+      const modelInfo = await resolveDeepSeekEyesModel(ctx, preparedRuntime, model, signal)
+      return {
+        model: modelInfo,
+        stream: options => bridgeStream(
+          ctx,
+          preparedRuntime,
+          options,
+          state.look,
+          state.usage,
+          state.automationGuard,
+          logger,
+          loadDshTools,
+        ),
+      }
     },
     stream(options) {
       return bridgeStream(

@@ -18,6 +18,10 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+function isSha256AttachmentId(value) {
+  return /^sha256:[0-9a-f]{64}$/.test(String(value ?? ''))
+}
+
 function cleanName(value, fallback) {
   const rendered = String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80)
   return rendered === '' ? fallback : rendered
@@ -618,10 +622,10 @@ export class DesktopSession {
           ? `desktop-${this.sequence}.png`
           : `desktop-${this.sequence}-tile-${index + 1}-x${tile.x}-y${tile.y}.png`,
       })
-      const expectedAttachmentId = `sha256:${tileDigest}`
-      if (String(image.attachmentId) !== expectedAttachmentId) {
+      const attachmentId = String(image?.attachmentId ?? '')
+      if (!isSha256AttachmentId(attachmentId)) {
         throw new DeepSeekEyesError(
-          `desktop screenshot tile attachment digest mismatch: ${image.attachmentId} != ${expectedAttachmentId}`,
+          `desktop screenshot tile attachment id is invalid: ${attachmentId || '[missing]'}; expected sha256:<64 hex>`,
           'DESKTOP_ATTACHMENT_DIGEST_MISMATCH',
         )
       }
@@ -635,7 +639,11 @@ export class DesktopSession {
         sha256: tileDigest,
         pixelSha256: tile.pixelSha256,
         bytes: tile.data.length,
-        attachmentId: String(image.attachmentId),
+        // The Host owns the canonical attachment identity and may normalize or
+        // re-encode PNG bytes before hashing. Keep the original tile digest and
+        // pixel digest above for auditability, while using the returned ID for
+        // every model-facing attachment reference.
+        attachmentId,
       })
     }
     const artifactPath = await this.saveScreenshot(this.sequence, digest, screenshot)

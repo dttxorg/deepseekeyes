@@ -147,6 +147,32 @@ test('text-only turns delegate directly without spending a visual call', async (
   assert.deepEqual(usage.sessions, [])
 })
 
+test('adapter prepareCall satisfies DSH 0.1.1 generation-bound dispatch', async () => {
+  let upstreamCalls = 0
+  const ctx = setupBridge({
+    visionHandler: () => jsonStream(validBaseEvidence()),
+    upstreamHandler: () => {
+      upstreamCalls += 1
+      return textStream('prepared call reached DeepSeek')
+    },
+  })
+  const prepared = await ctx.deepseekEyesState.adapter.prepareCall(
+    'deepseekeyes',
+    'deepseek-v4-flash',
+    new AbortController().signal,
+  )
+  assert.equal(prepared.model.provider, 'deepseekeyes')
+  assert.equal(prepared.model.id, 'deepseek-v4-flash')
+  assert.deepEqual(prepared.model.inputModalities, ['text', 'image'])
+  const result = await collectStream(prepared.stream({
+    provider: 'deepseekeyes',
+    model: 'deepseek-v4-flash',
+    messages: [userMessage([{ type: 'text', text: 'prepared request' }])],
+  }))
+  assert.equal(result.text, 'prepared call reached DeepSeek')
+  assert.equal(upstreamCalls, 1)
+})
+
 test('native multimodal upstream bypasses the second vision call and preserves the exact ImageBlock', async () => {
   const ctx = mockContext()
   let upstreamCalls = 0

@@ -143,6 +143,39 @@ test('desktop auto visual delivery falls back for sparse states and supports exp
   assert.equal(manualState.visualDelivery.reason, 'configured-manual')
 })
 
+test('desktop accepts a Host-normalized attachment id while preserving source digests', async () => {
+  const ctx = mockContext()
+  const canonicalId = `sha256:${'f'.repeat(64)}`
+  const originalSaveImage = ctx.attachments.saveImage.bind(ctx.attachments)
+  ctx.attachments.saveImage = async (input) => {
+    const original = await originalSaveImage(input)
+    const normalized = { ...original, attachmentId: canonicalId }
+    ctx.attachments.images.set(canonicalId, { ref: normalized, data: Buffer.from(input.data) })
+    return normalized
+  }
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const session = new DesktopSession(ctx, config, { driver: new FakeDesktopDriver() })
+
+  const observed = await session.execute(parseDesktopArgs({ action: 'observe' }))
+  assert.equal(observed.screenshot.attachmentId, canonicalId)
+  assert.equal(observed.image.attachmentId, canonicalId)
+  assert.equal(observed.screenshot.tiles[0].attachmentId, canonicalId)
+  assert.match(observed.screenshot.tiles[0].sha256, /^[a-f0-9]{64}$/)
+  assert.notEqual(observed.screenshot.tiles[0].sha256, canonicalId.slice('sha256:'.length))
+})
+
+test('desktop rejects a Host attachment id outside the sha256 contract', async () => {
+  const ctx = mockContext()
+  ctx.attachments.saveImage = async () => ({ attachmentId: 'fixture:normalized' })
+  const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
+  const session = new DesktopSession(ctx, config, { driver: new FakeDesktopDriver() })
+
+  await assert.rejects(
+    session.execute(parseDesktopArgs({ action: 'observe' })),
+    error => error.code === 'DESKTOP_ATTACHMENT_DIGEST_MISMATCH',
+  )
+})
+
 test('stale state is observed again without executing the requested mutation', async () => {
   const config = resolveConfig({ desktopArtifactsDir: false, desktopComputerUse: true }, {}, '/tmp')
   const driver = new FakeDesktopDriver()

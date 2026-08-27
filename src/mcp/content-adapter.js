@@ -255,7 +255,7 @@ export class McpContentAdapter {
       const sdk = await this.loadSdk()
       this.oauth?.credentials()
       client = new sdk.Client(
-        { name: 'deepseekeyes-content', version: '0.8.1' },
+        { name: 'deepseekeyes-content', version: '0.8.2' },
         { capabilities: {} },
       )
       const transport = transportFor(sdk, this.server, this.environment, this.oauth)

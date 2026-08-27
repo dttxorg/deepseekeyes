@@ -21,7 +21,7 @@ npx -y @dttxorg/deepseekeyes@latest upgrade
 
 Restart `dsh web` once after installation or upgrade. The installer migrates the old unscoped `deepseekeyes` profile dependency after the scoped package is added successfully.
 
-DeepSeekEyes 0.8.1 is verified with DeepSeek Harness `0.1.0-rc.8`, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair plus its protocol SDK only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries, Tools renderer and all three Content SDK exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
+DeepSeekEyes 0.8.2 is verified with DeepSeek Harness `0.1.0-rc.8` and the DSH `0.1.1-rc.2` LLM call/attachment contracts, accepts the compatible Host range `>=0.1.0-rc.6 <0.2.0`, and resolves the official MCP runtime pair plus its protocol SDK only from DSH's managed `$DSH_HOME/profiles/node_modules` Host fallback. Doctor verifies the optional Host-peer declarations, managed Host entries, Tools renderer and all three Content SDK exports; runtime resolution canonicalizes them so a profile-local copy cannot split Cordis or scheduler identity. If the MCP section or RPC controls are missing, run doctor, confirm those versions, upgrade the plugin and restart the same DSH profile named by `--profile`.
 
 ## An MCP server connects but exposes no tools
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2 - 2026-08-27
+
+- Add the required `key: deepseekeyes` to the Harness settings slot registration so the web client loads on DSH 0.1.1-rc.2 and later keyed-slot runtimes.
+- Implement the DSH 0.1.1 adapter `prepareCall` contract and bind each prepared stream to the runtime generation that resolved its model, preventing live settings changes from mixing model metadata and routes.
+- Accept Host-normalized content-addressed screenshot attachment IDs while retaining the original encoded and pixel SHA-256 values for Desktop Computer Use audit records; reject only IDs outside the `sha256:<64 hex>` contract.
+
 ## 0.8.1 - 2026-08-22
 
 - Add a per-MCP-server `riskPolicy` setting with `allow` compatibility mode and `read-only` mode.

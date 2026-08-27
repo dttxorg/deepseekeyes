@@ -2065,6 +2065,7 @@ export function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'deepseekeyes: settings locale')
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
     name: 'settings.plugin.item',
+    key: 'deepseekeyes',
     id: 'deepseekeyes',
     order: 30,
     locale: NS,

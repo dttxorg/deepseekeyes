@@ -29,6 +29,7 @@ import {
 } from '../src/protocol.js'
 import { applyLookTool } from '../src/look.js'
 import { applyMcpRuntime } from '../src/mcp/index.js'
+import { applyJevControl } from '../src/jev/index.js'
 import { loadHostDshTools } from '../src/mcp/host-runtime.js'
 import { compactSessionHistory, shadowSessionImages } from '../src/session.js'
 import { installHarnessSettings, SETTINGS_NAMESPACE } from '../src/settings.js'
@@ -797,6 +798,7 @@ export function createDeepSeekEyesAdapter(ctx, rawConfig = {}, options = {}) {
       state.usage.setEnabled(runtime.config.usageStats)
       state.browser?.reconfigure(runtime.config)
       state.desktop?.reconfigure(runtime.config)
+      state.jev?.reconfigure(runtime.config)
       if (state.mcp !== undefined) {
         void state.mcp.reconfigure(runtime.config).catch((error) => {
           logger.error?.(`deepseekeyes: MCP reconfiguration failed: ${boundedVisualFailure(error)}`)
@@ -892,6 +894,11 @@ export function apply(ctx, rawConfig = {}, options = {}) {
   state.look = applyLookTool(ctx, state)
   state.browser = applyBrowserComputerUse(ctx, state.config)
   state.desktop = applyDesktopComputerUse(ctx, state.config)
+  state.jev = applyJevControl(ctx, state.config, {
+    browser: state.browser,
+    desktop: state.desktop,
+    usageTracker: state.usage,
+  })
   state.mcp = applyMcpRuntime(ctx, state.config, {
     usageTracker: state.usage,
     logger: ctx.logger ?? console,

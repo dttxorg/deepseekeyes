@@ -17,6 +17,7 @@ export const USAGE_CATEGORIES = Object.freeze([
   'visionProbe',
   'visionBase',
   'visionTarget',
+  'jevControl',
   'upstreamClarification',
   'upstreamAutomation',
   'upstreamMcp',
@@ -103,11 +104,13 @@ function summary(aggregate) {
   const automation = normalizedUsage(aggregate.usage.upstreamAutomation)
   const mcp = normalizedUsage(aggregate.usage.upstreamMcp)
   const finalModel = normalizedUsage(aggregate.usage.upstreamFinal)
+  const jev = normalizedUsage(aggregate.usage.jevControl)
   const exactAdditionalUsage = zeroUsage()
   addUsage(exactAdditionalUsage, vision)
   addUsage(exactAdditionalUsage, upstreamClarification)
   addUsage(exactAdditionalUsage, automation)
   addUsage(exactAdditionalUsage, mcp)
+  addUsage(exactAdditionalUsage, jev)
   const exactAdditionalTokens = usageTotal(exactAdditionalUsage)
   return {
     ...structuredClone(aggregate),
@@ -120,6 +123,8 @@ function summary(aggregate) {
       automationTokens: usageTotal(automation),
       mcpUsage: mcp,
       mcpTokens: usageTotal(mcp),
+      jevUsage: jev,
+      jevTokens: usageTotal(jev),
       mcpSchemaInputTokensEstimated: aggregate.mcpSchemaInputTokensEstimated,
       mcpResultInputTokensEstimated: aggregate.mcpResultInputTokensEstimated,
       finalModelVisualTurnUsage: finalModel,

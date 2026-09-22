@@ -1,5 +1,6 @@
 import z from '@deepseek-ai/schemastery'
 import {
+  DEFAULT_JEV_ENDPOINT, DEFAULT_JEV_MODEL, DEFAULT_JEV_API_KEY_ENV, DEFAULT_JEV_MAX_STEPS, DEFAULT_JEV_DECISION_TIMEOUT_MS,
   DEFAULT_BASE_MAX_TOKENS,
   DEFAULT_AUTOMATION_CONTEXT_MAX_TOKENS,
   DEFAULT_AUTOMATION_MAX_CALLS_PER_TURN,
@@ -61,6 +62,7 @@ export const SETTINGS_FIELDS = Object.freeze([
   'automationMaxCallsPerTurn',
   'historyImageLimit',
   'historySummaryChars',
+  'jevEnabled', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv', 'jevMaxSteps', 'jevDecisionTimeoutMs',
   'browserHistoryLimit',
   'browserComputerUse',
   'browserHeadless',
@@ -143,6 +145,12 @@ export const McpServerConfig = z.object({
 
 /** Schemastery schema serialized by Harness and consumed by the native settings client. */
 export const SettingsConfig = z.object({
+  jevEnabled: z.boolean().default(false),
+  jevEndpoint: z.string().default(DEFAULT_JEV_ENDPOINT),
+  jevModel: z.string().default(DEFAULT_JEV_MODEL),
+  jevApiKeyEnv: z.string().default(DEFAULT_JEV_API_KEY_ENV),
+  jevMaxSteps: z.number().step(1).min(1).max(30).default(DEFAULT_JEV_MAX_STEPS),
+  jevDecisionTimeoutMs: z.number().step(1).min(1000).max(120000).default(DEFAULT_JEV_DECISION_TIMEOUT_MS),
   upstreamProvider: z.string().default(DEFAULT_UPSTREAM_PROVIDER),
   upstreamModel: z.string(),
   visionProvider: z.string(),

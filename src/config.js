@@ -55,6 +55,11 @@ export const DEFAULT_DESKTOP_SETTLE_MS = 300
 export const DEFAULT_DESKTOP_MAX_WINDOWS = 50
 export const DEFAULT_DESKTOP_MAX_ELEMENTS = 200
 export const DEFAULT_DESKTOP_MAC_DISPLAY = 1
+export const DEFAULT_JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
+export const DEFAULT_JEV_MODEL = 'jev-latest'
+export const DEFAULT_JEV_API_KEY_ENV = 'TYPESAFE_API_KEY'
+export const DEFAULT_JEV_MAX_STEPS = 12
+export const DEFAULT_JEV_DECISION_TIMEOUT_MS = 60_000
 const MCP_SERVER_FIELDS = new Set([
   'id',
   'name',
@@ -95,6 +100,14 @@ function requiredString(value, field, fallback) {
   const resolved = optionalString(value ?? fallback, field)
   if (resolved === undefined) {
     throw new TypeError(`deepseekeyes: ${field} must be a non-empty string`)
+  }
+  return resolved
+}
+
+function requiredEnvironmentName(value, field, fallback) {
+  const resolved = requiredString(value, field, fallback)
+  if (!ENVIRONMENT_NAME_PATTERN.test(resolved)) {
+    throw new TypeError(`deepseekeyes: ${field} must be an environment variable name`)
   }
   return resolved
 }
@@ -740,6 +753,42 @@ export function resolveConfig(input = {}, environment = process.env, home = home
       DEFAULT_BROWSER_MAX_TEXT_CHARS,
       1_000,
       100_000,
+    ),
+    jevEnabled: booleanValue(
+      input.jevEnabled
+        ?? environmentBoolean(environment.DEEPSEEKEYES_JEV_ENABLED, 'DEEPSEEKEYES_JEV_ENABLED'),
+      'jevEnabled',
+      false,
+    ),
+    jevEndpoint: validateHttpUrl(
+      input.jevEndpoint ?? environment.DEEPSEEKEYES_JEV_ENDPOINT ?? DEFAULT_JEV_ENDPOINT,
+      'jevEndpoint',
+    ),
+    jevModel: requiredString(
+      input.jevModel ?? environment.DEEPSEEKEYES_JEV_MODEL,
+      'jevModel',
+      DEFAULT_JEV_MODEL,
+    ),
+    jevApiKeyEnv: requiredEnvironmentName(
+      input.jevApiKeyEnv ?? environment.DEEPSEEKEYES_JEV_API_KEY_ENV,
+      'jevApiKeyEnv',
+      DEFAULT_JEV_API_KEY_ENV,
+    ),
+    jevMaxSteps: integerValue(
+      input.jevMaxSteps
+        ?? environmentInteger(environment.DEEPSEEKEYES_JEV_MAX_STEPS, 'DEEPSEEKEYES_JEV_MAX_STEPS'),
+      'jevMaxSteps',
+      DEFAULT_JEV_MAX_STEPS,
+      1,
+      30,
+    ),
+    jevDecisionTimeoutMs: integerValue(
+      input.jevDecisionTimeoutMs
+        ?? environmentInteger(environment.DEEPSEEKEYES_JEV_DECISION_TIMEOUT_MS, 'DEEPSEEKEYES_JEV_DECISION_TIMEOUT_MS'),
+      'jevDecisionTimeoutMs',
+      DEFAULT_JEV_DECISION_TIMEOUT_MS,
+      1_000,
+      120_000,
     ),
     desktopHistoryLimit: integerValue(
       input.desktopHistoryLimit,

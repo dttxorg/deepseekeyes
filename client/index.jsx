@@ -144,6 +144,14 @@ const zh = {
   browserViewportHeight: '视口高度',
   browserMaxElements: '每步最多控件数',
   browserMaxTextChars: '每步最多页面字符',
+  jevTitle: 'Jev 控制层（实验）',
+  jevEnabled: '启用 Jev 选择浏览器与应用动作',
+  jevEnabledHint: 'Jev 只接收有界文字和语义控件，不接收原图；DeepSeekEyes 仍负责 stateId 校验、执行和结果回读。默认先预览动作。',
+  jevEndpoint: 'Jev API 地址',
+  jevModel: 'Jev 模型',
+  jevApiKeyEnv: 'Jev API Key 环境变量名',
+  jevMaxSteps: '每次最多 Jev 步数',
+  jevDecisionTimeoutMs: 'Jev 决策超时（毫秒）',
   desktopComputerUse: '启用 Windows / macOS 桌面 Computer Use',
   desktopComputerUseHint: '在当前对话中注册 computer 工具；每步仍无损保存截图，但默认优先用语义控件和状态变化直达最终模型，只有确实需要像素时才调用视觉模型。',
   desktopVisualMode: '桌面截图交付策略',
@@ -472,6 +480,14 @@ const en = {
   browserViewportHeight: 'Viewport height',
   browserMaxElements: 'Maximum controls per step',
   browserMaxTextChars: 'Maximum page characters per step',
+  jevTitle: 'Jev control layer (experimental)',
+  jevEnabled: 'Enable Jev action selection for browser and apps',
+  jevEnabledHint: 'Jev receives bounded text and semantic controls only. DeepSeekEyes validates stateId, executes the action, and reads the result back. Actions preview by default.',
+  jevEndpoint: 'Jev API endpoint',
+  jevModel: 'Jev model',
+  jevApiKeyEnv: 'Jev API key environment variable',
+  jevMaxSteps: 'Maximum Jev steps per run',
+  jevDecisionTimeoutMs: 'Jev decision timeout (ms)',
   desktopComputerUse: 'Enable Windows / macOS desktop computer use',
   desktopComputerUseHint: 'Registers the computer tool in this conversation. Every step still preserves a lossless screenshot, while the default fast path sends semantic controls and state changes directly to the final model and invokes vision only when pixels are needed.',
   desktopVisualMode: 'Desktop screenshot delivery',
@@ -1877,6 +1893,38 @@ function DeepSeekEyesSettingsCard({ scope, api, usageRpc, t }) {
               <div style={styles.field}>
                 <label style={styles.label} htmlFor="deepseekeyes-browser-text">{t('browserMaxTextChars')}</label>
                 <input id="deepseekeyes-browser-text" style={styles.input} type="number" min="1000" max="100000" step="1" value={draft.browserMaxTextChars} disabled={saving || !snapshot.writable || !draft.browserComputerUse} onChange={event => update('browserMaxTextChars', numberFrom(event))} />
+              </div>
+            </div>
+            <div style={styles.divider} />
+            <label style={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={draft.jevEnabled}
+                disabled={saving || !snapshot.writable}
+                onChange={event => update('jevEnabled', event.target.checked)}
+              />
+              <span>{t('jevEnabled')}<br /><small style={styles.hint}>{t('jevEnabledHint')}</small></span>
+            </label>
+            <div style={{ ...styles.grid, marginTop: 14 }}>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-jev-endpoint">{t('jevEndpoint')}</label>
+                <input id="deepseekeyes-jev-endpoint" style={styles.input} type="url" value={draft.jevEndpoint} disabled={saving || !snapshot.writable || !draft.jevEnabled} onChange={event => update('jevEndpoint', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-jev-model">{t('jevModel')}</label>
+                <input id="deepseekeyes-jev-model" style={styles.input} type="text" value={draft.jevModel} disabled={saving || !snapshot.writable || !draft.jevEnabled} onChange={event => update('jevModel', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-jev-key-env">{t('jevApiKeyEnv')}</label>
+                <input id="deepseekeyes-jev-key-env" style={styles.input} type="text" value={draft.jevApiKeyEnv} disabled={saving || !snapshot.writable || !draft.jevEnabled} onChange={event => update('jevApiKeyEnv', event.target.value)} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-jev-max-steps">{t('jevMaxSteps')}</label>
+                <input id="deepseekeyes-jev-max-steps" style={styles.input} type="number" min="1" max="30" step="1" value={draft.jevMaxSteps} disabled={saving || !snapshot.writable || !draft.jevEnabled} onChange={event => update('jevMaxSteps', numberFrom(event))} />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label} htmlFor="deepseekeyes-jev-timeout">{t('jevDecisionTimeoutMs')}</label>
+                <input id="deepseekeyes-jev-timeout" style={styles.input} type="number" min="1000" max="120000" step="1" value={draft.jevDecisionTimeoutMs} disabled={saving || !snapshot.writable || !draft.jevEnabled} onChange={event => update('jevDecisionTimeoutMs', numberFrom(event))} />
               </div>
             </div>
             <div style={styles.divider} />

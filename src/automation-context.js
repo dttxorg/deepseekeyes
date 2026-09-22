@@ -8,7 +8,7 @@ import {
 import { DeepSeekEyesError } from './error.js'
 import { estimateRequestTokens } from './token-safety.js'
 
-export const AUTOMATION_KINDS = Object.freeze(['browser', 'desktop', 'mcp'])
+export const AUTOMATION_KINDS = Object.freeze(['browser', 'desktop', 'mcp', 'jev'])
 
 function blocksContainText(blocks, prefix) {
   if (!Array.isArray(blocks)) return false
@@ -28,6 +28,7 @@ function isMcpContextMessage(message) {
 function automationKindForTool(name) {
   if (typeof name !== 'string') return undefined
   if (name.startsWith('mcp__')) return 'mcp'
+  if (name === 'jev') return 'jev'
   if (name === 'computer') return 'desktop'
   if (name === 'browser') return 'browser'
   return undefined
@@ -51,6 +52,7 @@ function automationKindInBlocks(blocks, { allowMcpContext = false, calls = new M
     if (block?.type !== 'tool-result') continue
     const kind = automationKindForTool(block.toolName) ?? calls.get(block.toolCallId)
     if (kind === 'mcp') return 'mcp'
+    if (kind === 'jev') return 'jev'
     if (kind === 'desktop'
       && (block.isError === true || blocksContainText(block.content, DESKTOP_STATE_PREFIX))) return 'desktop'
     if (kind === 'browser'

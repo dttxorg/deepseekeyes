@@ -273,3 +273,9 @@
 - Persist SHA-256-bound base and targeted evidence records.
 - Add an internal DeepSeek-to-vision clarification loop with a strict round limit.
 - Stop the turn on visual, persistence or protocol failure.
+## Unreleased — 0.9 candidate
+
+- Integrate the Jev API as an opt-in decision layer for browser and native application control.
+- Keep Computer Use as the execution compatibility layer with fresh state binding after every action.
+- Add bounded semantic state, local prepared text slots, risk/low-confidence gates, dry-run mode and auditable Jev usage accounting.
+- Record Jev API usage under `jevControl` using a bounded semantic projection rather than full conversation history. Visible labels may contain private data.

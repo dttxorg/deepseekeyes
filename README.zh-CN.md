@@ -520,3 +520,15 @@ npx -y --package=@deepseek-ai/dsh dsh plugin --profile web remove @dttxorg/deeps
 ```
 
 卸载只移除 Bundle；Harness 会话中的原始附件保持原状。证据缓存可在确认不再需要后单独删除。
+
+## Jev API 控制层（0.9 候选版）
+
+插件直接调用 TypeSafe Jev API 选择动作和语义目标，原有浏览器与 Windows/macOS Computer Use 负责执行并返回新状态。不是只添加提示词，也不替换 DeepSeek 主模型。
+
+在 DSH「设置 → 插件 → DeepSeekEyes」启用 Jev，配置 API 地址、模型、密钥环境变量名、步骤上限与超时；DSH 进程需要读取 `TYPESAFE_API_KEY`，并开启对应浏览器或桌面执行能力。默认 `execute=false` 只预览；`execute=true` 执行。输入文本由主模型准备，Jev 不生成文本。
+
+```json
+{"surface":"browser","goal":"Open the Settings page","execute":false,"maxSteps":1}
+```
+
+只向 Jev 发送有界目标、控件标签和结构状态，不序列化整段对话、输入框值或截图。可见标签仍可能包含私人内容，应限定任务范围。低置信度、未知风险、失效目标会停止；完成信号标为 `done_unverified`，由主模型独立核验。Jev 的供应商回报 Token 单独计入 `jevControl`，不等同于 DeepSeek Token。真实平台端到端验收和 Sol 审核仍是发布前置条件。
